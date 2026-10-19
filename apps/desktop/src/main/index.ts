@@ -42,9 +42,22 @@ function createWindow(): void {
       console.error('[smoke] timeout waiting for renderer');
       app.exit(1);
     }, 20_000);
-    window.webContents.once('did-finish-load', () => {
+    window.webContents.once('did-finish-load', async () => {
       clearTimeout(timer);
       console.log('[smoke] renderer loaded');
+      const shot = process.env['SESSIONPORT_SMOKE_SHOT'];
+      if (shot) {
+        // 给 React 一点时间挂载并完成首屏数据加载，再截图
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        try {
+          const image = await window.webContents.capturePage();
+          const { writeFile } = await import('node:fs/promises');
+          await writeFile(shot, image.toPNG());
+          console.log('[smoke] screenshot saved:', shot);
+        } catch (error) {
+          console.error('[smoke] screenshot failed:', String(error));
+        }
+      }
       app.exit(0);
     });
     window.webContents.once('did-fail-load', (_event, code, description) => {
