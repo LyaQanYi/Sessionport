@@ -105,7 +105,9 @@ Reading and writing are asymmetric, so losses are tracked separately:
 
 Losses are either **accepted design trade-offs** (no mapping exists, or we deliberately don't carry it —
 e.g. model bindings are not migrated, the target keeps its own default model and system prompt) or
-**actionable capability gaps** (sub-agent sessions, image attachments, branch boundaries). The former is
+**actionable capability gaps** (sub-agent sessions, image attachments, branch boundaries). Injected harness
+messages (runtime context, skill catalogs, sub-agent notifications) are dropped by default because the target
+agent generates its own — pass `--keep-injected` to keep them. The former is
 reported but never "fixed"; the latter is roadmap work and must come with a verification case. See
 [DESIGN.md §6.1](./DESIGN.md).
 

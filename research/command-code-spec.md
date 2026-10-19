@@ -110,3 +110,16 @@ SESSIONPORT_CC_RESUME=1 node --test packages/adapters/command-code/test/*.test.t
 - `sessionport verify --agent command-code --id <真实 uuid>` -> 按 id 在 ~/.commandcode 解析后全 PASS。
 - 注：CLI 的 `packages/cli/node_modules/@sessionport/adapter-command-code` 链接与 package.json 依赖由 Lead 补齐；
   本 adapter 本身不依赖它。
+
+## 附录：sessionport 实测补充（2026-10-19）
+
+1. **超大历史会自动压缩**：把一份 424k token 的 DSH 会话导入后，`cmd -p --session <path>` 仍能 resume 成功；
+   CLI 在重放前做了 compaction（返回体里可见 `compaction.tokens ≈ 18044`），实际请求只有约 1.8 万 token。
+   因此不需要为「上下文上限」提前拒绝导入。
+2. **resume 之后 app 自己追加的行会有悬空 parentId**：续写的 assistant 行 `parentId` 可能指向压缩前的记录 id
+   （文件里已不存在）。这类文件仍可正常加载，但结构校验不能把「悬空」当断链——只把「首行 parentId 非 null /
+   中间出现 null」算作真正断链。
+3. **注入消息可以安全丢弃**：DSH 的 `user/message` 带 `source.kind`（`user` / `time-context` /
+   `runtime-context` / `skill-catalog` / `subagent-settled` / `agent-message` / `user-approval`）。
+   除 `user`、`agent-message`、`user-approval` 外都属于目标端会自行生成的运行时上下文，导入时默认丢弃
+   （`--keep-injected` 可保留）。

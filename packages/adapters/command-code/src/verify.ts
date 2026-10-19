@@ -112,14 +112,30 @@ export async function verifyCommandCodeSession(options: VerifyCommandCodeOptions
   const uniqueIds = new Set(ids);
   checks.push({ name: 'ids-unique', ok: uniqueIds.size === ids.length, detail: uniqueIds.size + '/' + ids.length });
 
+  // 严格链：我们写出的文件应当是线性链。但目标 app 自己续写（resume 之后）会产生
+  // 悬空 parentId（指向已被压缩/未持久化的记录）或分叉指向更早的记录 —— 这类不影响加载，
+  // 因此只把「首行 parentId 非 null / 中间出现 null」算作真正的断链。
   let chainBroken = 0;
+  let danglingParents = 0;
+  let branchedParents = 0;
+  const seenIds = new Set<string>();
   let previous: CcEntry | undefined;
   for (const entry of entries) {
     const expected = previous === undefined ? null : previous.id;
-    if (entry.parentId !== expected) chainBroken += 1;
+    if (entry.parentId !== expected) {
+      if (entry.parentId === null || entry.parentId === undefined) chainBroken += 1;
+      else if (seenIds.has(entry.parentId)) branchedParents += 1;
+      else danglingParents += 1;
+    }
+    seenIds.add(entry.id);
     previous = entry;
   }
-  checks.push({ name: 'parent-chain', ok: chainBroken === 0, detail: chainBroken + ' 处断链' });
+  const chainDetail = [
+    chainBroken + ' 处断链',
+    danglingParents > 0 ? danglingParents + ' 处悬空 parentId（目标 app 续写常见，不影响加载）' : '',
+    branchedParents > 0 ? branchedParents + ' 处指向更早记录的分叉' : '',
+  ].filter((part) => part.length > 0).join('，');
+  checks.push({ name: 'parent-chain', ok: chainBroken === 0, detail: chainDetail });
 
   const badTimestamps = entries.filter((entry) => !Number.isFinite(Date.parse(entry.timestamp)));
   checks.push({ name: 'timestamps-parseable', ok: badTimestamps.length === 0, detail: badTimestamps.length + ' 行时间戳非法' });
@@ -318,4 +334,3 @@ export function resumeSmokeCommandCode(options: ResumeSmokeOptions): Promise<Res
     });
   });
 }
-
