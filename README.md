@@ -121,6 +121,10 @@ cd apps/desktop && SESSIONPORT_SMOKE=1 ./node_modules/.bin/electron .
 Current screens: session browser (all agents), reader (IR events, notices, resume command), migration with
 dry-run loss preview before writing. IPC is a small typed allow-list with zod validation in the main process.
 
+![sessionport desktop — session browser](docs/desktop-sessions.png)
+
+_259 sessions from six agents on one machine; rows without a reader are listed read-only._
+
 ## Architecture
 
 ```
