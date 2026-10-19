@@ -53,4 +53,21 @@ CODEX_HOME=<iso> codex exec resume <id> --skip-git-repo-check --json "Reply with
 `--skip-git-repo-check` 在 cwd 不是受信任 git 仓库时必需。resume 会往同一 rollout 追加新行
 （`event_msg` / `turn_context` / `token_usage_record` / `world_state`），校验器需要容忍这些追加。
 
-> 具体逐字段探针记录见 `.spikes/codex-resume/evidence/variants*.json`（本地，gitignored）。
+## 4. 实现要点（spike 实测补充）
+
+完整契约见 [codex-spec.md](./codex-spec.md)，adapter 里已经落实的关键约束：
+
+- **最小会话 = 3 行**（session_meta + 一条 user + 一条 assistant），不需要预写 sqlite 或任何索引
+- `session_meta.payload` 必需 5 字段：`id` / `timestamp` / `cwd` / `cli_version` / `originator`；
+  `session_id`、`source`、`thread_source`、`model_provider`、`base_instructions` 可省
+- **每行都必须有顶层 timestamp**（缺了不报错，但该条历史会被静默丢弃）
+- user 消息的 content type 必须是 `input_text`、assistant 必须是 `output_text`（错配静默丢弃）
+- **session id 必须是合法 UUID**：非 UUID 时 `exec resume` 会静默新建线程（exit 0）
+- rollout 必须放在 `$CODEX_HOME/sessions/**` 下且 basename 匹配 `rollout-*.jsonl`（前缀后缀都是硬要求）
+- **resume 使用进程 cwd，忽略 rollout 里的 cwd** → 调用时必须 `cwd = session.cwd`
+- `--last` 依赖 `state_5.sqlite`，刚写入的新 rollout 需要先显式 resume 一次
+- **paginated 形态**（0.163 默认）：`history_mode="paginated"` + 每行递增 `ordinal`；
+  adapter 已支持 `historyMode` 选项，无需写投影库
+- 0.163 已忽略 `disable_response_storage`，`--json` 会多出非致命 error item，解析要容忍
+
+> 逐字段探针记录见 `.spikes/codex-resume/evidence/variants*.json`（本地，gitignored）。

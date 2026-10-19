@@ -185,3 +185,9 @@ export function resumeSmokeCodex(options: CodexResumeSmokeOptions): Promise<Code
     });
   });
 }
+/** 从 rollout 路径反推 CODEX_HOME（.../sessions/YYYY/MM/DD/rollout-*.jsonl 的上三级是 sessions 的父） */
+export function inferCodexHome(filePath: string): string | undefined {
+  const marker = filePath.split('/').lastIndexOf('sessions');
+  if (marker <= 0) return undefined;
+  return filePath.split('/').slice(0, marker).join('/');
+}

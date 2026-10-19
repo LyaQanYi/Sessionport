@@ -405,11 +405,22 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
       const mod = await import('@sessionport/adapter-codex');
       const file = typeof values.file === 'string' ? values.file : undefined;
       if (!file) fail('codex resume 冒烟需要 --file <rollout>');
-      const home = typeof opts.home === 'string' ? opts.home : (process.env.CODEX_HOME ?? '');
+      const home = typeof opts.home === 'string' ? opts.home : (mod.inferCodexHome(file) ?? process.env.CODEX_HOME ?? '');
       if (!home) fail('codex resume 冒烟需要 --home <CODEX_HOME>');
       const sessionId = mod.sessionIdFromRolloutPath(file) ?? file.split('/').pop()!.replace(/\.jsonl$/, '');
+      // resume 用进程 cwd，不用 rollout 里的 cwd；默认跟着会话走
+      let smokeCwd = typeof opts.cwd === 'string' ? opts.cwd : undefined;
+      if (smokeCwd === undefined) {
+        try {
+          const headerLine = readFileSync(file, 'utf8').split('\n', 1)[0] ?? '';
+          const header = JSON.parse(headerLine) as { payload?: { cwd?: string } };
+          smokeCwd = header.payload?.cwd;
+        } catch {
+          smokeCwd = undefined;
+        }
+      }
       process.stdout.write('\n无头 resume 冒烟测试…\n');
-      const smoke = await mod.resumeSmokeCodex({ home, sessionId, cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined });
+      const smoke = await mod.resumeSmokeCodex({ home, sessionId, cwd: smokeCwd });
       process.stdout.write('command: ' + smoke.command + '\n');
       if (smoke.stdout) process.stdout.write('stdout: ' + String(smoke.stdout).slice(-1200) + '\n');
       if (smoke.stderr) process.stdout.write('stderr: ' + String(smoke.stderr).slice(-1200) + '\n');
