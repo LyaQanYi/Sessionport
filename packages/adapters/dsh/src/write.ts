@@ -598,6 +598,22 @@ async function writeOneSession(session: IrSession, options: {
   return { filePath, sessionDir, header, rows: ctx.rows, counts };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * DSH 的约定：根会话 id 是 `session-<uuid>`，子代理由裸 uuid 表示。
+ * 源端（如 Kimi）的子会话 id 可能是 `session_<uuid>`，这里统一剥成裸 uuid；
+ * 不是 uuid 形状的源 id 就新生成一个，避免目录名/头字段不符合 DSH 规则。
+ */
+function normalizeChildId(raw: string | undefined, rootId: string, used: Set<string>): string {
+  let candidate = raw ?? '';
+  if (candidate.startsWith('session-')) candidate = candidate.slice('session-'.length);
+  if (candidate.startsWith('session_')) candidate = candidate.slice('session_'.length);
+  if (!UUID_RE.test(candidate) || candidate === rootId || used.has(candidate)) candidate = randomUuid();
+  used.add(candidate);
+  return candidate;
+}
+
 /**
  * 把一个 IrBundle 写成 DSH v4 会话目录。默认只写根会话；子代理会话需 includeChildren。
  * 不写 projcache（应用会重建）；workspace.json 注册可选（应用启动也会重建）。
@@ -636,8 +652,9 @@ export async function writeDshSession(bundle: IrBundle, options: WriteDshOptions
   const children: Array<{ sessionId: string; filePath: string }> = [];
   if (bundle.children.length > 0) {
     if (options.includeChildren === true) {
+      const usedChildIds = new Set<string>();
       for (const child of bundle.children) {
-        const childId = child.session.source.nativeSessionId !== undefined ? child.session.source.nativeSessionId : randomUuid();
+        const childId = normalizeChildId(child.session.source.nativeSessionId, sessionId, usedChildIds);
         try {
           const writtenChild = await writeOneSession(child.session, {
             home,

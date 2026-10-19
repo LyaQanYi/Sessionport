@@ -177,7 +177,9 @@ sessionport scan                             # 会话内容 secret 扫描
 | 类别 | 含义 | 例子 |
 |---|---|---|
 | **设计取舍（accepted）** | 目标端没有对应概念，或刻意不迁移；永远存在，不需要修 | 模型绑定不迁移、thinking 块丢弃（无法伪造 Anthropic 签名）、目标端使用自身 system prompt、源端 UI 镜像/运行时事件不入 IR |
-| **能力缺口（actionable）** | 现在做不到但可以补，属于 roadmap | 子代理会话未导出、图片附件未映射、fork/undo 边界被压平、Codex/opencode adapter 缺失 |
+| **能力缺口（actionable）** | 现在做不到但可以补，属于 roadmap | 图片附件未映射、fork/undo 边界被压平、Codex/opencode adapter 缺失 |
+
+子代理会话（2026-10-19 已交付）：DSH 目标写成原生父子树；Claude / Command Code 没有父子概念，退化为独立会话（内容保留、关系丢失，损失清单会说明）。
 
 原则：**设计取舍也要报，但不承诺修复**；能力缺口必须进 roadmap 并配验证用例。
 ## 7. 安全与隐私
