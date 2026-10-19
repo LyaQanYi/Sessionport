@@ -1,0 +1,19 @@
+{
+  "name": "@sessionport/adapter-command-code",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./read": "./src/read.ts",
+    "./write": "./src/write.ts",
+    "./verify": "./src/verify.ts",
+    "./wire": "./src/wire.ts"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@sessionport/core": "workspace:*"
+  }
+}
