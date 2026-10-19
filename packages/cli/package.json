@@ -14,6 +14,7 @@
     "@sessionport/adapter-kimi-code": "workspace:*",
     "@sessionport/adapter-claude-code": "workspace:*",
     "@sessionport/adapter-command-code": "workspace:*",
-    "@sessionport/adapter-dsh": "workspace:*"
+    "@sessionport/adapter-dsh": "workspace:*",
+    "@sessionport/adapter-codex": "workspace:*"
   }
 }

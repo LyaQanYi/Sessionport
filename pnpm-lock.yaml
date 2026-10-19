@@ -14,6 +14,12 @@ importers:
         specifier: workspace:*
         version: link:../../core
 
+  packages/adapters/codex:
+    dependencies:
+      '@sessionport/core':
+        specifier: workspace:*
+        version: link:../../core
+
   packages/adapters/command-code:
     dependencies:
       '@sessionport/core':
@@ -37,6 +43,9 @@ importers:
       '@sessionport/adapter-claude-code':
         specifier: workspace:*
         version: link:../adapters/claude-code
+      '@sessionport/adapter-codex':
+        specifier: workspace:*
+        version: link:../adapters/codex
       '@sessionport/adapter-command-code':
         specifier: workspace:*
         version: link:../adapters/command-code
