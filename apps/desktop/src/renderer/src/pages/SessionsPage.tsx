@@ -82,6 +82,7 @@ type Row =
   | { kind: 'session'; key: string; session: SessionRow };
 
 export function SessionsPage(props: {
+  enabledAgents: string[];
   agentFilter: string | null;
   onAgentFilterChange: (agent: string | null) => void;
   onOpen: (session: SessionRow) => void;
@@ -102,11 +103,12 @@ export function SessionsPage(props: {
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return all.filter((row) => {
+      if (props.enabledAgents.length > 0 && !props.enabledAgents.includes(row.agent)) return false;
       if (props.agentFilter && row.agent !== props.agentFilter) return false;
       if (!needle) return true;
       return [row.title, row.cwd, row.sessionId, row.agent].filter(Boolean).join(' ').toLowerCase().includes(needle);
     });
-  }, [all, query, props.agentFilter]);
+  }, [all, query, props.agentFilter, props.enabledAgents]);
 
   const rows = useMemo<Row[]>(() => {
     const groups = new Map<string, { label: string; sessions: SessionRow[]; latest: string }>();
@@ -190,7 +192,9 @@ export function SessionsPage(props: {
           >
             全部 {all.length}
           </button>
-          {[...agentCounts.entries()].map(([agent, count]) => (
+          {[...agentCounts.entries()]
+            .filter(([agent]) => props.enabledAgents.length === 0 || props.enabledAgents.includes(agent))
+            .map(([agent, count]) => (
             <button
               key={agent}
               type="button"

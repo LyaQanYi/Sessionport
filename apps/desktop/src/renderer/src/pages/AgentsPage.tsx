@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { Blocks, Check, FolderOpen, MessageSquare, X } from 'lucide-react';
+import { Blocks, Check, Eye, EyeOff, FolderOpen, MessageSquare, X } from 'lucide-react';
 
 import { api } from '../api.ts';
 import { AgentGlyph, AGENT_META, agentLabel } from '../agents.tsx';
+import type { AgentPreferences } from '../preferences.ts';
 import { Badge, Button, EmptyState, Spinner, Topbar, cn } from '../ui.tsx';
 
 const HOME_KEY: Record<string, string> = {
@@ -23,7 +24,7 @@ function Capability(props: { ok: boolean; label: string }) {
   );
 }
 
-export function AgentsPage(props: { onOpenAgent: (agent: string) => void }) {
+export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs: AgentPreferences }) {
   const sessionsQuery = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
   const capsQuery = useQuery({ queryKey: ['capabilities'], queryFn: api.capabilities });
   const pathsQuery = useQuery({ queryKey: ['paths'], queryFn: api.paths });
@@ -70,6 +71,7 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void }) {
                         <div className="flex items-center gap-2">
                           <span className="truncate text-section text-fg-1">{agentLabel(agent)}</span>
                           {home?.exists ? <Badge variant="success">已检测</Badge> : <Badge variant="outline">未安装</Badge>}
+                          {props.prefs.enabled.includes(agent) ? null : <Badge variant="secondary">已隐藏</Badge>}
                         </div>
                         <div className="mt-0.5 truncate font-mono text-3xs text-fg-3">{agent}</div>
                       </div>
@@ -95,6 +97,14 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void }) {
                       <Button size="sm" variant="outline" disabled={!home?.exists} onClick={() => void api.openPath(homeKey).catch(() => undefined)}>
                         <FolderOpen className="h-3.5 w-3.5" />
                         打开目录
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => props.prefs.toggle(agent)}
+                        title={props.prefs.enabled.includes(agent) ? '从侧栏隐藏' : '在侧栏显示'}
+                      >
+                        {props.prefs.enabled.includes(agent) ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                       </Button>
                       <Button size="sm" disabled={count === 0} onClick={() => props.onOpenAgent(agent)} className="ml-auto">
                         <MessageSquare className="h-3.5 w-3.5" />

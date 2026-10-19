@@ -129,8 +129,10 @@ dry-run loss preview before writing. IPC is a small typed allow-list with zod va
 |---|---|
 | ![reader](docs/desktop-reader.png) | ![migration](docs/desktop-migrate.png) |
 
-_Sessions group by project or time; rows without a reader stay read-only. Light and dark themes
-follow the system. UI design language credits: [ACKNOWLEDGEMENTS.md](./ACKNOWLEDGEMENTS.md)._
+_Sessions group by project or time; the sidebar lists only the harnesses you enabled (auto-detected
+from installed data directories, toggle them in Settings), and Settings stays pinned at the bottom.
+Light and dark themes follow the system. UI design language credits:
+[ACKNOWLEDGEMENTS.md](./ACKNOWLEDGEMENTS.md)._
 
 ## Architecture
 
