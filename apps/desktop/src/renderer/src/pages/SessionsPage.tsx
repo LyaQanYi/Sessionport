@@ -1,63 +1,106 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { RefreshCw, Search, Sparkles } from 'lucide-react';
 
 import { api, formatTime } from '../api.ts';
 import type { SessionRow } from '../api.ts';
-import { Badge, Button, Card, EmptyState, Spinner, cn } from '../ui.tsx';
+import { Badge, Button, EmptyState, Input, Spinner, Topbar, cn } from '../ui.tsx';
 
-const AGENT_TONE: Record<string, 'info' | 'warn' | 'default' | 'error'> = {
-  'kimi-code': 'info',
-  'claude-code': 'warn',
-  'command-code': 'default',
-  dsh: 'info',
-  codex: 'warn',
-  opencode: 'default',
+export const AGENT_META: Record<string, { label: string; dot: string }> = {
+  'kimi-code': { label: 'Kimi Code', dot: 'bg-violet-500' },
+  'claude-code': { label: 'Claude Code', dot: 'bg-amber-500' },
+  'command-code': { label: 'Command Code', dot: 'bg-emerald-500' },
+  dsh: { label: 'DeepSeek Harness', dot: 'bg-sky-500' },
+  codex: { label: 'Codex', dot: 'bg-zinc-400' },
+  opencode: { label: 'opencode', dot: 'bg-rose-500' },
 };
+
+export function agentLabel(agent: string): string {
+  return AGENT_META[agent]?.label ?? agent;
+}
 
 export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
   const [query, setQuery] = useState('');
+  const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { data, isLoading, error, refetch, isFetching } = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
 
+  const all = data?.sessions ?? [];
+  const agentCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of all) counts.set(row.agent, (counts.get(row.agent) ?? 0) + 1);
+    return counts;
+  }, [all]);
+
   const sessions = useMemo(() => {
-    const rows = data?.sessions ?? [];
     const needle = query.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter((row) =>
-      [row.title, row.cwd, row.sessionId, row.agent].filter(Boolean).join(' ').toLowerCase().includes(needle),
-    );
-  }, [data, query]);
+    return all.filter((row) => {
+      if (agentFilter && row.agent !== agentFilter) return false;
+      if (!needle) return true;
+      return [row.title, row.cwd, row.sessionId, row.agent].filter(Boolean).join(' ').toLowerCase().includes(needle);
+    });
+  }, [all, query, agentFilter]);
 
   const rowVirtualizer = useVirtualizer({
     count: sessions.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 66,
-    overscan: 12,
+    estimateSize: () => 60,
+    overscan: 14,
   });
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-[hsl(var(--border))] px-5 py-3">
-        <div className="text-sm font-semibold">会话</div>
-        <div className="text-xs text-[hsl(var(--muted-foreground))]">
-          {data ? data.sessions.length + ' 个' : '—'} · {isFetching ? '刷新中' : '就绪'}
+      <Topbar
+        title="会话"
+        subtitle={data ? all.length + ' 个会话 · ' + agentCounts.size + ' 个 agent' : '加载中…'}
+        actions={
+          <>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索标题 / 路径 / id"
+                className="w-56 pl-7"
+              />
+            </div>
+            <Button variant="outline" size="icon" onClick={() => void refetch()} title="刷新">
+              <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />
+            </Button>
+          </>
+        }
+      >
+        <div className="ml-4 hidden items-center gap-1 lg:flex">
+          <button
+            type="button"
+            onClick={() => setAgentFilter(null)}
+            className={cn(
+              'h-6 rounded-full px-2 text-2xs transition-colors',
+              agentFilter === null ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent',
+            )}
+          >
+            全部 {all.length}
+          </button>
+          {[...agentCounts.entries()].map(([agent, count]) => (
+            <button
+              key={agent}
+              type="button"
+              onClick={() => setAgentFilter(agentFilter === agent ? null : agent)}
+              className={cn(
+                'flex h-6 items-center gap-1.5 rounded-full px-2 text-2xs transition-colors',
+                agentFilter === agent ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent',
+              )}
+            >
+              <span className={cn('h-1.5 w-1.5 rounded-full', AGENT_META[agent]?.dot ?? 'bg-muted-foreground')} />
+              {agentLabel(agent)} {count}
+            </button>
+          ))}
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索标题 / 路径 / id"
-            className="w-64 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2.5 py-1.5 text-xs outline-none focus:border-[hsl(var(--ring))]"
-          />
-          <Button variant="ghost" onClick={() => void refetch()}>
-            刷新
-          </Button>
-        </div>
-      </header>
+      </Topbar>
 
       {isLoading ? (
-        <div className="flex flex-1 items-center justify-center gap-2 text-sm text-[hsl(var(--muted-foreground))]">
+        <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
           <Spinner /> 正在扫描会话…
         </div>
       ) : error ? (
@@ -67,7 +110,7 @@ export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
           {(data?.warnings ?? []).map((warning) => (
-            <div key={warning} className="border-b border-[hsl(var(--border))] bg-amber-500/10 px-5 py-2 text-xs text-amber-200">
+            <div key={warning} className="border-b border-border bg-amber-500/10 px-4 py-2 text-2xs text-amber-600 dark:text-amber-400">
               {warning}
             </div>
           ))}
@@ -86,24 +129,32 @@ export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
                       title={session.readable ? undefined : '该 agent 还没有 reader，只能看到列表元数据'}
                       onClick={() => props.onOpen(session)}
                       className={cn(
-                        'flex w-full items-center gap-3 border-b border-[hsl(var(--border))] px-5 py-3 text-left transition',
-                        session.readable ? 'hover:bg-[hsl(var(--muted))]/50' : 'cursor-not-allowed opacity-50',
+                        'flex h-[60px] w-full items-center gap-3 border-b border-border px-4 text-left transition-colors',
+                        session.readable ? 'hover:bg-accent' : 'cursor-not-allowed opacity-60',
                       )}
                     >
-                      <Badge tone={AGENT_TONE[session.agent] ?? 'default'}>{session.agent}</Badge>
+                      <span className={cn('h-2 w-2 shrink-0 rounded-full', AGENT_META[session.agent]?.dot ?? 'bg-muted-foreground')} />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm">{session.title ?? session.sessionId}</div>
-                        <div className="truncate text-[11px] text-[hsl(var(--muted-foreground))]">{session.cwd ?? session.nativePath}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-[13px] font-medium">{session.title ?? session.sessionId}</span>
+                          {session.readable ? null : <Badge variant="outline">元数据</Badge>}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-1.5 truncate text-2xs text-muted-foreground">
+                          <span className="shrink-0">{agentLabel(session.agent)}</span>
+                          <span className="opacity-40">·</span>
+                          <span className="truncate">{session.cwd ?? session.nativePath}</span>
+                        </div>
                       </div>
-                      <div className="shrink-0 text-right">
-                        <div className="text-[11px] text-[hsl(var(--muted-foreground))]">{formatTime(session.updatedAt)}</div>
-                        {session.readable ? null : <div className="text-[10px] text-[hsl(var(--muted-foreground))]">仅元数据</div>}
-                      </div>
+                      <div className="shrink-0 text-right text-2xs text-muted-foreground">{formatTime(session.updatedAt)}</div>
                     </button>
                   </div>
                 );
               })}
             </div>
+          </div>
+          <div className="flex h-7 shrink-0 items-center gap-1.5 border-t border-border px-4 text-3xs text-muted-foreground">
+            <Sparkles className="h-3 w-3" />
+            共 {sessions.length} 条 · 虚拟滚动
           </div>
         </div>
       )}

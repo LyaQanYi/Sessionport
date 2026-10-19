@@ -100,6 +100,7 @@ type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
 interface SessionportBridge {
   invoke: (channel: string, payload?: unknown) => Promise<unknown>;
   platform: string;
+  initialTheme?: string | null;
 }
 
 declare global {
