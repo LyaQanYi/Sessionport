@@ -41,6 +41,8 @@ export interface WriteCommandCodeOptions {
   title?: string;
   /** 只生成不落盘 */
   dryRun?: boolean;
+  /** 保留源端注入的 synthetic 消息（默认丢弃，因为目标端自会注入自己的上下文） */
+  keepInjected?: boolean;
   /** 写完后注册进 Command Code 桌面端列表（thread-index.db + app-state.json） */
   register?: boolean;
   /** 桌面端数据目录覆盖（默认 ~/Library/Application Support/Command Code） */
@@ -150,7 +152,7 @@ function toolResultText(content: CcBlock[] | string | undefined): string {
   return content.map((block) => (block.type === 'text' ? block.text : '[' + block.type + ']')).join('\n');
 }
 
-async function buildItems(session: IrSession): Promise<BuildResult> {
+async function buildItems(session: IrSession, options: { keepInjected?: boolean } = {}): Promise<BuildResult> {
   const losses = new LossCollector();
   const counts = { messages: 0, toolCalls: 0, toolResults: 0, reasoning: 0 };
   const items: Item[] = [];
@@ -199,6 +201,10 @@ async function buildItems(session: IrSession): Promise<BuildResult> {
         flushAll();
         if (blocks.length === 0) {
           losses.add('command-code.empty-message-dropped', '空用户消息已丢弃', { severity: 'info' });
+          continue;
+        }
+        if (event.synthetic && !options.keepInjected) {
+          losses.add('command-code.injected-message-dropped', '目标端注入的消息（如运行时上下文、技能目录、子代理通知）已丢弃；目标 agent 会生成自己的运行时上下文', { severity: 'info' });
           continue;
         }
         const chunk: Chunk = { role: 'user', at, source: 'user', blocks, toolUseIds: [], toolResultIds: [] };
@@ -362,7 +368,7 @@ export async function writeCommandCodeSession(bundle: IrBundle, options: WriteCo
   const projectDir = commandCodeProjectDir(home, cwd);
   const paths = ccSessionPaths(projectDir, sessionId);
 
-  const built = await buildItems(session);
+  const built = await buildItems(session, { keepInjected: options.keepInjected });
   const items = repairToolPairs(built.items, built.losses);
   const rows = materialize(items, { sessionId, cwd, model, losses: built.losses });
   const header: CcSessionHeader = {
