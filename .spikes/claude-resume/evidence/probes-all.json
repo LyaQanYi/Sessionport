@@ -1,0 +1,464 @@
+[
+  {
+    "name": "00_baseline_full_2turn",
+    "ms": 719,
+    "resumed": true,
+    "exitCode": 0,
+    "elapsedMs": 712,
+    "resultText": "MOCK_OK",
+    "numTurns": 1,
+    "sessionId": "99999999-8888-4777-8666-000000000001",
+    "stderr": "",
+    "stdoutText": "{\"duration_api_ms\":18,\"stop_reason\":\"end_turn\",\"session_id\":\"99999999-8888-4777-8666-000000000001\",\"total_cost_usd\":0.00014000000000000001,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"thinking_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"sp",
+    "apiRequests": 1,
+    "replay": [
+      {
+        "role": "user",
+        "content": "text:\"The secret word is ZAPHIR-4471. Remember it.\""
+      },
+      {
+        "role": "system",
+        "content": ""
+      },
+      {
+        "role": "assistant",
+        "content": "text:\"Understood. The secret word is ZAPHIR-4471.\""
+      },
+      {
+        "role": "user",
+        "content": "text:\"<system-reminder>\\nCodebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: Th\" | text:\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nThis is the git sta\" | text:\"What is the secret word? Reply with exactly the secret word.\""
+      },
+      {
+        "role": "system",
+        "content": "text:\"# Environment\\nYou have been invoked in the following environment: \\n - Primary working directory: /Users/lyaqanyi/Documen\""
+      }
+    ],
+    "secretInReplay": true,
+    "replayAssistantCount": 1,
+    "replayUserCount": 2,
+    "apiRequestSummaries": [
+      {
+        "url": "/v1/messages?beta=true",
+        "model": "ccs-claude-venlacy--claude-opus-5-5",
+        "stream": true,
+        "msgCount": 5
+      }
+    ]
+  },
+  {
+    "name": "01_single_user_line_only",
+    "ms": 230,
+    "resumed": true,
+    "exitCode": 0,
+    "elapsedMs": 229,
+    "resultText": "MOCK_OK",
+    "numTurns": 1,
+    "sessionId": "99999999-8888-4777-8666-000000000004",
+    "stderr": "",
+    "stdoutText": "{\"duration_api_ms\":8,\"stop_reason\":\"end_turn\",\"session_id\":\"99999999-8888-4777-8666-000000000004\",\"total_cost_usd\":0.00014000000000000001,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"thinking_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"spe",
+    "apiRequests": 1,
+    "replay": [
+      {
+        "role": "user",
+        "content": "text:\"The secret word is ZAPHIR-4471. Remember it.\""
+      },
+      {
+        "role": "system",
+        "content": ""
+      },
+      {
+        "role": "assistant",
+        "content": "text:\"No response requested.\""
+      },
+      {
+        "role": "user",
+        "content": "text:\"<system-reminder>\\nCodebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: Th\" | text:\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nThis is the git sta\" | text:\"What is the secret word? Reply with exactly the secret word.\""
+      },
+      {
+        "role": "system",
+        "content": "text:\"# Environment\\nYou have been invoked in the following environment: \\n - Primary working directory: /Users/lyaqanyi/Documen\""
+      }
+    ],
+    "secretInReplay": true,
+    "replayAssistantCount": 1,
+    "replayUserCount": 2,
+    "apiRequestSummaries": [
+      {
+        "url": "/v1/messages?beta=true",
+        "model": "ccs-claude-venlacy--claude-opus-5-5",
+        "stream": true,
+        "msgCount": 5
+      }
+    ]
+  },
+  {
+    "name": "02_drop_social_meta_fields",
+    "ms": 237,
+    "resumed": true,
+    "exitCode": 0,
+    "elapsedMs": 235,
+    "resultText": "MOCK_OK",
+    "numTurns": 1,
+    "sessionId": "99999999-8888-4777-8666-000000000006",
+    "stderr": "",
+    "stdoutText": "{\"duration_api_ms\":8,\"stop_reason\":\"end_turn\",\"session_id\":\"99999999-8888-4777-8666-000000000006\",\"total_cost_usd\":0.00014000000000000001,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"thinking_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"spe",
+    "apiRequests": 1,
+    "replay": [
+      {
+        "role": "user",
+        "content": "text:\"The secret word is ZAPHIR-4471. Remember it.\""
+      },
+      {
+        "role": "system",
+        "content": ""
+      },
+      {
+        "role": "assistant",
+        "content": "text:\"Understood. The secret word is ZAPHIR-4471.\""
+      },
+      {
+        "role": "user",
+        "content": "text:\"<system-reminder>\\nCodebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: Th\" | text:\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nThis is the git sta\" | text:\"What is the secret word? Reply with exactly the secret word.\""
+      },
+      {
+        "role": "system",
+        "content": "text:\"# Environment\\nYou have been invoked in the following environment: \\n - Primary working directory: /Users/lyaqanyi/Documen\""
+      }
+    ],
+    "secretInReplay": true,
+    "replayAssistantCount": 1,
+    "replayUserCount": 2,
+    "apiRequestSummaries": [
+      {
+        "url": "/v1/messages?beta=true",
+        "model": "ccs-claude-venlacy--claude-opus-5-5",
+        "stream": true,
+        "msgCount": 5
+      }
+    ]
+  },
+  {
+    "name": "03_drop_uuid_and_parentUuid",
+    "ms": 280,
+    "resumed": true,
+    "exitCode": 0,
+    "elapsedMs": 278,
+    "resultText": "MOCK_OK",
+    "numTurns": 1,
+    "sessionId": "99999999-8888-4777-8666-000000000009",
+    "stderr": "",
+    "stdoutText": "{\"duration_api_ms\":31,\"stop_reason\":\"end_turn\",\"session_id\":\"99999999-8888-4777-8666-000000000009\",\"total_cost_usd\":0.00014000000000000001,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"thinking_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"sp",
+    "apiRequests": 1,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "text:\"Understood. The secret word is ZAPHIR-4471.\""
+      },
+      {
+        "role": "user",
+        "content": "text:\"<system-reminder>\\nCodebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: Th\" | text:\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nThis is the git sta\" | text:\"What is the secret word? Reply with exactly the secret word.\""
+      },
+      {
+        "role": "system",
+        "content": "text:\"# Environment\\nYou have been invoked in the following environment: \\n - Primary working directory: /Users/lyaqanyi/Documen\""
+      }
+    ],
+    "secretInReplay": true,
+    "replayAssistantCount": 1,
+    "replayUserCount": 1,
+    "apiRequestSummaries": [
+      {
+        "url": "/v1/messages?beta=true",
+        "model": "ccs-claude-venlacy--claude-opus-5-5",
+        "stream": true,
+        "msgCount": 3
+      }
+    ]
+  },
+  {
+    "name": "04_drop_timestamp",
+    "ms": 196,
+    "resumed": false,
+    "exitCode": 1,
+    "elapsedMs": 196,
+    "resultText": null,
+    "numTurns": null,
+    "sessionId": null,
+    "stderr": "No conversation found with session ID: 99999999-8888-4777-8666-000000000012\n",
+    "stdoutText": "",
+    "apiRequests": 0,
+    "replay": [],
+    "secretInReplay": false,
+    "replayAssistantCount": 0,
+    "replayUserCount": 0,
+    "apiRequestSummaries": []
+  },
+  {
+    "name": "05_drop_sessionId_field",
+    "ms": 332,
+    "resumed": true,
+    "exitCode": 0,
+    "elapsedMs": 331,
+    "resultText": "MOCK_OK",
+    "numTurns": 1,
+    "sessionId": "99999999-8888-4777-8666-000000000015",
+    "stderr": "",
+    "stdoutText": "{\"duration_api_ms\":8,\"stop_reason\":\"end_turn\",\"session_id\":\"99999999-8888-4777-8666-000000000015\",\"total_cost_usd\":0.00014000000000000001,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"thinking_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"spe",
+    "apiRequests": 1,
+    "replay": [
+      {
+        "role": "user",
+        "content": "text:\"The secret word is ZAPHIR-4471. Remember it.\""
+      },
+      {
+        "role": "system",
+        "content": ""
+      },
+      {
+        "role": "assistant",
+        "content": "text:\"Understood. The secret word is ZAPHIR-4471.\""
+      },
+      {
+        "role": "user",
+        "content": "text:\"<system-reminder>\\nCodebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: Th\" | text:\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nThis is the git sta\" | text:\"What is the secret word? Reply with exactly the secret word.\""
+      },
+      {
+        "role": "system",
+        "content": "text:\"# Environment\\nYou have been invoked in the following environment: \\n - Primary working directory: /Users/lyaqanyi/Documen\""
+      }
+    ],
+    "secretInReplay": true,
+    "replayAssistantCount": 1,
+    "replayUserCount": 2,
+    "apiRequestSummaries": [
+      {
+        "url": "/v1/messages?beta=true",
+        "model": "ccs-claude-venlacy--claude-opus-5-5",
+        "stream": true,
+        "msgCount": 5
+      }
+    ]
+  },
+  {
+    "name": "06_sessionId_mismatch_filename",
+    "ms": 258,
+    "resumed": true,
+    "exitCode": 0,
+    "elapsedMs": 257,
+    "resultText": "MOCK_OK",
+    "numTurns": 1,
+    "sessionId": "99999999-8888-4777-8666-000000000019",
+    "stderr": "",
+    "stdoutText": "{\"duration_api_ms\":11,\"stop_reason\":\"end_turn\",\"session_id\":\"99999999-8888-4777-8666-000000000019\",\"total_cost_usd\":0.00014000000000000001,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"thinking_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"sp",
+    "apiRequests": 1,
+    "replay": [
+      {
+        "role": "user",
+        "content": "text:\"The secret word is ZAPHIR-4471. Remember it.\""
+      },
+      {
+        "role": "system",
+        "content": ""
+      },
+      {
+        "role": "assistant",
+        "content": "text:\"Understood. The secret word is ZAPHIR-4471.\""
+      },
+      {
+        "role": "user",
+        "content": "text:\"<system-reminder>\\nCodebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: Th\" | text:\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nThis is the git sta\" | text:\"What is the secret word? Reply with exactly the secret word.\""
+      },
+      {
+        "role": "system",
+        "content": "text:\"# Environment\\nYou have been invoked in the following environment: \\n - Primary working directory: /Users/lyaqanyi/Documen\""
+      }
+    ],
+    "secretInReplay": true,
+    "replayAssistantCount": 1,
+    "replayUserCount": 2,
+    "apiRequestSummaries": [
+      {
+        "url": "/v1/messages?beta=true",
+        "model": "ccs-claude-venlacy--claude-opus-5-5",
+        "stream": true,
+        "msgCount": 5
+      }
+    ]
+  },
+  {
+    "name": "07_unknown_and_malformed_lines",
+    "ms": 436,
+    "resumed": true,
+    "exitCode": 0,
+    "elapsedMs": 434,
+    "resultText": "MOCK_OK",
+    "numTurns": 1,
+    "sessionId": "99999999-8888-4777-8666-000000000022",
+    "stderr": "",
+    "stdoutText": "{\"duration_api_ms\":97,\"stop_reason\":\"end_turn\",\"session_id\":\"99999999-8888-4777-8666-000000000022\",\"total_cost_usd\":0.00014000000000000001,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"thinking_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"sp",
+    "apiRequests": 1,
+    "replay": [
+      {
+        "role": "user",
+        "content": "text:\"The secret word is ZAPHIR-4471. Remember it.\""
+      },
+      {
+        "role": "system",
+        "content": ""
+      },
+      {
+        "role": "assistant",
+        "content": "text:\"Understood. The secret word is ZAPHIR-4471.\""
+      },
+      {
+        "role": "user",
+        "content": "text:\"<system-reminder>\\nCodebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: Th\" | text:\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nThis is the git sta\" | text:\"What is the secret word? Reply with exactly the secret word.\""
+      },
+      {
+        "role": "system",
+        "content": "text:\"# Environment\\nYou have been invoked in the following environment: \\n - Primary working directory: /Users/lyaqanyi/Documen\""
+      }
+    ],
+    "secretInReplay": true,
+    "replayAssistantCount": 1,
+    "replayUserCount": 2,
+    "apiRequestSummaries": [
+      {
+        "url": "/v1/messages?beta=true",
+        "model": "ccs-claude-venlacy--claude-opus-5-5",
+        "stream": true,
+        "msgCount": 5
+      }
+    ]
+  },
+  {
+    "name": "08_parent_chain_broken",
+    "ms": 447,
+    "resumed": true,
+    "exitCode": 0,
+    "elapsedMs": 447,
+    "resultText": "MOCK_OK",
+    "numTurns": 1,
+    "sessionId": "99999999-8888-4777-8666-000000000025",
+    "stderr": "",
+    "stdoutText": "{\"duration_api_ms\":9,\"stop_reason\":\"end_turn\",\"session_id\":\"99999999-8888-4777-8666-000000000025\",\"total_cost_usd\":0.00014000000000000001,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"thinking_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"spe",
+    "apiRequests": 1,
+    "replay": [
+      {
+        "role": "user",
+        "content": "text:\"The secret word is ZAPHIR-4471. Remember it.\""
+      },
+      {
+        "role": "system",
+        "content": ""
+      },
+      {
+        "role": "assistant",
+        "content": "text:\"Understood. The secret word is ZAPHIR-4471.\""
+      },
+      {
+        "role": "user",
+        "content": "text:\"<system-reminder>\\nCodebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: Th\" | text:\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nThis is the git sta\" | text:\"What is the secret word? Reply with exactly the secret word.\""
+      },
+      {
+        "role": "system",
+        "content": "text:\"# Environment\\nYou have been invoked in the following environment: \\n - Primary working directory: /Users/lyaqanyi/Documen\""
+      }
+    ],
+    "secretInReplay": true,
+    "replayAssistantCount": 1,
+    "replayUserCount": 2,
+    "apiRequestSummaries": [
+      {
+        "url": "/v1/messages?beta=true",
+        "model": "ccs-claude-venlacy--claude-opus-5-5",
+        "stream": true,
+        "msgCount": 5
+      }
+    ]
+  },
+  {
+    "name": "09_no_parentUuid_only",
+    "ms": 241,
+    "resumed": true,
+    "exitCode": 0,
+    "elapsedMs": 239,
+    "resultText": "MOCK_OK",
+    "numTurns": 1,
+    "sessionId": "99999999-8888-4777-8666-000000000028",
+    "stderr": "Warning: Resume transcript (session 99999999-8888-4777-8666-000000000028) has 2 user/assistant records but none carry parentUuid links; only 1 reached the resumed conversation. Conversation reconstruction walks parentUuid from the last record, so unlinked records are dropped — the file's producer must chain records (parentUuid null on the first, the previous record's uuid on each subsequent one).\n",
+    "stdoutText": "{\"duration_api_ms\":7,\"stop_reason\":\"end_turn\",\"session_id\":\"99999999-8888-4777-8666-000000000028\",\"total_cost_usd\":0.00014000000000000001,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"thinking_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"spe",
+    "apiRequests": 1,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "text:\"Understood. The secret word is ZAPHIR-4471.\""
+      },
+      {
+        "role": "user",
+        "content": "text:\"<system-reminder>\\nCodebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: Th\" | text:\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nThis is the git sta\" | text:\"What is the secret word? Reply with exactly the secret word.\""
+      },
+      {
+        "role": "system",
+        "content": "text:\"# Environment\\nYou have been invoked in the following environment: \\n - Primary working directory: /Users/lyaqanyi/Documen\""
+      }
+    ],
+    "secretInReplay": true,
+    "replayAssistantCount": 1,
+    "replayUserCount": 1,
+    "apiRequestSummaries": [
+      {
+        "url": "/v1/messages?beta=true",
+        "model": "ccs-claude-venlacy--claude-opus-5-5",
+        "stream": true,
+        "msgCount": 3
+      }
+    ]
+  },
+  {
+    "name": "10_min_guess",
+    "ms": 270,
+    "resumed": true,
+    "exitCode": 0,
+    "elapsedMs": 269,
+    "resultText": "MOCK_OK",
+    "numTurns": 1,
+    "sessionId": "99999999-8888-4777-8666-000000000031",
+    "stderr": "",
+    "stdoutText": "{\"duration_api_ms\":6,\"stop_reason\":\"end_turn\",\"session_id\":\"99999999-8888-4777-8666-000000000031\",\"total_cost_usd\":0.00014000000000000001,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"thinking_tokens\":0},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"spe",
+    "apiRequests": 1,
+    "replay": [
+      {
+        "role": "user",
+        "content": "text:\"The secret word is ZAPHIR-4471. Remember it.\""
+      },
+      {
+        "role": "system",
+        "content": ""
+      },
+      {
+        "role": "assistant",
+        "content": "text:\"Understood. The secret word is ZAPHIR-4471.\""
+      },
+      {
+        "role": "user",
+        "content": "text:\"<system-reminder>\\nCodebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: Th\" | text:\"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nThis is the git sta\" | text:\"What is the secret word? Reply with exactly the secret word.\""
+      },
+      {
+        "role": "system",
+        "content": "text:\"# Environment\\nYou have been invoked in the following environment: \\n - Primary working directory: /Users/lyaqanyi/Documen\""
+      }
+    ],
+    "secretInReplay": true,
+    "replayAssistantCount": 1,
+    "replayUserCount": 2,
+    "apiRequestSummaries": [
+      {
+        "url": "/v1/messages?beta=true",
+        "model": "ccs-claude-venlacy--claude-opus-5-5",
+        "stream": true,
+        "msgCount": 5
+      }
+    ]
+  }
+]

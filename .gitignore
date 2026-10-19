@@ -2,6 +2,7 @@
 node_modules/
 dist/
 *.tsbuildinfo
+.pnpm-store/
 
 # 本地导入的真实会话数据（含隐私，不入库）
 session_fdefc84f-*/

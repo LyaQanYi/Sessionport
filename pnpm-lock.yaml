@@ -1,0 +1,35 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  packages/adapters/claude-code:
+    dependencies:
+      '@sessionport/core':
+        specifier: workspace:*
+        version: link:../../core
+
+  packages/adapters/kimi-code:
+    dependencies:
+      '@sessionport/core':
+        specifier: workspace:*
+        version: link:../../core
+
+  packages/cli:
+    dependencies:
+      '@sessionport/adapter-claude-code':
+        specifier: workspace:*
+        version: link:../adapters/claude-code
+      '@sessionport/adapter-kimi-code':
+        specifier: workspace:*
+        version: link:../adapters/kimi-code
+      '@sessionport/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/core: {}

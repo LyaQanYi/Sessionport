@@ -1,0 +1,14 @@
+{
+  "name": "@sessionport/adapter-kimi-code",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./read": "./src/read.ts",
+    "./wire": "./src/wire.ts"
+  },
+  "dependencies": {
+    "@sessionport/core": "workspace:*"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@sessionport/adapter-claude-code",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./write": "./src/write.ts",
+    "./verify": "./src/verify.ts",
+    "./paths": "./src/paths.ts"
+  },
+  "dependencies": {
+    "@sessionport/core": "workspace:*"
+  }
+}
