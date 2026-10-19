@@ -271,7 +271,7 @@ export async function writeOpencodeSession(bundle: IrBundle, options: WriteOpenc
       const binary = opencodeCliBinary(options.binary);
       try {
         await execFileAsync(binary, ['import', jsonPath, '--pure'], {
-          cwd: options.runCwd ?? cwd,
+          cwd: options.runCwd ?? cwd, // import 会用进程的 project/cwd 覆盖 session.info 的 directory
           env: { ...process.env, ...options.env },
           maxBuffer: 64 * 1024 * 1024,
         });

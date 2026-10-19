@@ -451,6 +451,7 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
       process.stdout.write('\n无头 resume 冒烟测试…\n');
       const smoke = await mod.resumeSmokeOpencode({ sessionId: id, cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined, model: typeof opts.model === 'string' ? opts.model : undefined });
       process.stdout.write('command: ' + smoke.command + '\n');
+      process.stdout.write('exit=' + String(smoke.exitCode) + ' timedOut=' + String(smoke.timedOut) + '\n');
       if (smoke.stdout) process.stdout.write('stdout: ' + String(smoke.stdout).slice(-1200) + '\n');
       if (smoke.stderr) process.stdout.write('stderr: ' + String(smoke.stderr).slice(-1200) + '\n');
       process.stdout.write(smoke.ok ? 'RESUME SMOKE: PASS\n' : 'RESUME SMOKE: FAIL\n');
