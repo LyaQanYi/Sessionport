@@ -125,6 +125,7 @@ export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
                   >
                     <button
                       type="button"
+                      data-session-row="true"
                       disabled={!session.readable}
                       title={session.readable ? undefined : '该 agent 还没有 reader，只能看到列表元数据'}
                       onClick={() => props.onOpen(session)}

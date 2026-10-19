@@ -45,6 +45,37 @@ function createWindow(): void {
     window.webContents.once('did-finish-load', async () => {
       clearTimeout(timer);
       console.log('[smoke] renderer loaded');
+      // 冒烟时可选：自动点进第一个可读会话 / 切到某个导航页，便于给 UI 截图
+      const nav = process.env['SESSIONPORT_SMOKE_NAV'];
+      const openFirst = process.env['SESSIONPORT_SMOKE_OPEN_FIRST'] === '1';
+      if (nav || openFirst) {
+        try {
+          // 会话列表是异步加载的：轮询等待目标元素出现（最多 8 秒）
+          const selector = openFirst ? '[data-session-row]:not([disabled])' : 'nav button';
+          let clicked = false;
+          for (let attempt = 0; attempt < 80 && !clicked; attempt += 1) {
+            clicked = (await window.webContents.executeJavaScript(
+              `(() => {
+                const navLabel = ${JSON.stringify(nav ?? '')};
+                if (navLabel) {
+                  const target = [...document.querySelectorAll('nav button')].find((el) => (el.textContent || '').includes(navLabel));
+                  if (target) { target.click(); return true; }
+                  return false;
+                }
+                const row = document.querySelector(${JSON.stringify(selector)});
+                if (row) { row.click(); return true; }
+                return false;
+              })()`,
+            )) as boolean;
+            if (!clicked) await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          if (!clicked) console.error('[smoke] target not found:', nav ?? selector);
+          await new Promise((resolve) => setTimeout(resolve, 1800));
+        } catch (error) {
+          console.error('[smoke] auto navigation failed:', String(error));
+        }
+      }
+
       const shot = process.env['SESSIONPORT_SMOKE_SHOT'];
       if (shot) {
         // 给 React 一点时间挂载并完成首屏数据加载，再截图
