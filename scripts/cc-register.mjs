@@ -8,8 +8,10 @@
 // 所以仅写 transcript 不会出现在列表里，必须补注册。
 //
 // 备注：adapter 已内置同样的逻辑，日常用 `sessionport push … --to command-code --register`
-//   node scripts/cc-register.mjs --file <transcript.jsonl> [--title <t>]
+//   node scripts/cc-register.mjs --trust <项目绝对路径> [--trust <路径2> ...]   # 只补项目信任
 //        [--project <abs cwd>] [--model <m>] [--dry-run]
+// 信任说明: 桌面端另有一份 trustedProjectRoots 白名单，非 null 时不会从 projects 推导；
+//           缺了会报 "Select this project with the folder picker first."。
 // 安全: 默认先备份 app-state.json 与 thread-index.db 到 .tmp/cc-backups/，可用 --restore <stamp> 回滚。
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
@@ -20,6 +22,27 @@ function arg(name, fallback) {
   if (i === -1) return fallback;
   const v = process.argv[i + 1];
   return v === undefined || v.startsWith('--') ? true : v;
+}
+
+// --trust <path> 模式：只把项目路径登记进 trustedProjectRoots（app 的 folder picker 门槛）
+const trustArgs = process.argv.map((arg, i) => (arg === '--trust' ? process.argv[i + 1] : undefined)).filter((v) => typeof v === 'string' && v.length > 0);
+if (trustArgs.length > 0) {
+  const userData = join(process.env.HOME, 'Library', 'Application Support', 'Command Code');
+  const appStatePath = join(userData, 'app-state.json');
+  if (!existsSync(appStatePath)) { console.error('找不到 app-state.json，先启动过一次 Command Code'); process.exit(1); }
+  const backupDir = join(process.cwd(), '.tmp', 'cc-backups');
+  mkdirSync(backupDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  copyFileSync(appStatePath, join(backupDir, 'app-state-trust-' + stamp + '.json'));
+  const doc = JSON.parse(readFileSync(appStatePath, 'utf8'));
+  const roots = Array.isArray(doc.trustedProjectRoots) ? doc.trustedProjectRoots.filter((r) => typeof r === 'string') : [];
+  for (const path of trustArgs) if (!roots.includes(path)) roots.push(path);
+  doc.trustedProjectRoots = roots;
+  writeFileSync(appStatePath, JSON.stringify(doc, null, 2));
+  console.log('backup ->', join(backupDir, 'app-state-trust-' + stamp + '.json'));
+  console.log('trustedProjectRoots:', JSON.stringify(roots, null, 2));
+  console.log('重启 Command Code 后生效。');
+  process.exit(0);
 }
 
 const file = arg('file');

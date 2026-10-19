@@ -94,6 +94,36 @@ test('register: 写入 thread-index 与 app-state，并清掉 tombstone', async 
   }
 });
 
+test('register: 项目路径会进入 trustedProjectRoots（否则 app 报 folder picker）', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'sessionport-cc-home-'));
+  const userData = await makeUserDataDir();
+  try {
+    const statePath = join(userData, 'app-state.json');
+    const doc = JSON.parse(await readFile(statePath, 'utf8'));
+    doc.trustedProjectRoots = ['/some/other/project'];
+    writeFileSync(statePath, JSON.stringify(doc, null, 2));
+
+    registerCommandCodeThread(
+      { id: 'dddddddd-4444-4444-8444-444444444444', title: '信任测试', projectPath: TEST_CWD },
+      { userDataDir: userData, backupDir: join(home, 'backups') },
+    );
+    const after = JSON.parse(await readFile(statePath, 'utf8'));
+    assert.ok(after.trustedProjectRoots.includes(TEST_CWD));
+    assert.ok(after.trustedProjectRoots.includes('/some/other/project'));
+
+    // 重复注册保持幂等
+    registerCommandCodeThread(
+      { id: 'dddddddd-4444-4444-8444-444444444444', title: '信任测试', projectPath: TEST_CWD },
+      { userDataDir: userData, backupDir: join(home, 'backups') },
+    );
+    const again = JSON.parse(await readFile(statePath, 'utf8'));
+    assert.equal(again.trustedProjectRoots.filter((p: string) => p === TEST_CWD).length, 1);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(userData, { recursive: true, force: true });
+  }
+});
+
 test('register: 桌面端目录不存在时降级为 warning，不阻断写入', async () => {
   const home = await mkdtemp(join(tmpdir(), 'sessionport-cc-home-'));
   try {
