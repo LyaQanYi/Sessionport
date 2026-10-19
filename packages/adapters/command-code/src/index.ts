@@ -7,6 +7,8 @@ export {
 export type { ReadCommandCodeOptions, ReadCommandCodeDetailedResult, CommandCodeSessionInfo } from './read.ts';
 
 export { writeCommandCodeSession, printWriteReport, COMMAND_CODE_CAPS } from './write.ts';
+export { registerCommandCodeThread, commandCodeUserDataDir } from './register.ts';
+export type { RegisterThreadSpec, RegisterResult, RegisterOptions } from './register.ts';
 export type { WriteCommandCodeOptions, WriteCommandCodeResult } from './write.ts';
 
 export {
@@ -58,4 +60,3 @@ export type {
   CcCheckpoint,
   CcSessionPaths,
 } from './wire.ts';
-

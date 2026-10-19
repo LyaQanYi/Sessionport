@@ -32,7 +32,8 @@ const USAGE = [
   '  --model <name>         目标模型名',
   '  --title <text>         目标会话标题',
   '  --dry-run              只生成不落盘',
-  '  --register             dsh: 顺带写入 workspace.json 注册表（运行中的 app 需要它才能立刻看到）',
+  '  --register             写完顺带注册进目标 app：dsh 写 workspace.json，command-code 写 thread-index.db + app-state.json',
+  '  --user-data-dir <dir>  command-code 桌面端数据目录覆盖（默认 ~/Library/Application Support/Command Code）',
   '  --write-ir <file>      同时把 IR 落盘',
   '  --json                 输出机器可读 JSON',
   '',
@@ -118,6 +119,8 @@ function commonTargetOptions(values: Record<string, string | boolean | undefined
     model: typeof values.model === 'string' ? values.model : undefined,
     title: typeof values.title === 'string' ? values.title : undefined,
     registerWorkspace: Boolean(values.register),
+    register: Boolean(values.register),
+    userDataDir: typeof values['user-data-dir'] === 'string' ? values['user-data-dir'] : undefined,
     dryRun: Boolean(values['dry-run']),
   };
 }
@@ -296,6 +299,7 @@ async function main(): Promise<void> {
       'keep-thinking': { type: 'boolean' },
       'dry-run': { type: 'boolean' },
       register: { type: 'boolean' },
+      'user-data-dir': { type: 'string' },
       'write-ir': { type: 'string' },
       resume: { type: 'boolean' },
       json: { type: 'boolean' },
