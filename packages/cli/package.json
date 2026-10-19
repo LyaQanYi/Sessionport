@@ -12,6 +12,8 @@
   "dependencies": {
     "@sessionport/core": "workspace:*",
     "@sessionport/adapter-kimi-code": "workspace:*",
-    "@sessionport/adapter-claude-code": "workspace:*"
+    "@sessionport/adapter-claude-code": "workspace:*",
+    "@sessionport/adapter-command-code": "workspace:*",
+    "@sessionport/adapter-dsh": "workspace:*"
   }
 }

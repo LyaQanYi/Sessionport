@@ -1,0 +1,16 @@
+{
+  "name": "@sessionport/adapter-dsh",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./read": "./src/read.ts",
+    "./write": "./src/write.ts",
+    "./verify": "./src/verify.ts",
+    "./zstd": "./src/zstd.ts"
+  },
+  "dependencies": {
+    "@sessionport/core": "workspace:*"
+  }
+}

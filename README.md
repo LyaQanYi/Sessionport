@@ -56,14 +56,30 @@ losses
   [info] claude.boundary-dropped x5 — 会话边界事件（分支/撤销/压缩/取消）在 Claude 中没有对应结构
 ```
 
+### Command Code ↔ DeepSeek Harness 互传
+
+```bash
+# Command Code -> DSH（隔离 DSH_HOME，确认无误后再指向 ~/.dsh）
+node packages/cli/src/index.ts push "commandcode:$HOME/.commandcode/projects/<slug>/<uuid>.jsonl" \
+  --to dsh --home .tmp/dsh-home
+
+# DSH -> Command Code（transcript 落在任意目录即可直接 resume）
+node packages/cli/src/index.ts push "dsh:$HOME/.dsh/sessions/--<workspace>--/session-<uuid>" \
+  --to command-code --home .tmp/cc-home
+
+# 一条命令跑通双向（含结构校验）
+./scripts/demo-interop.sh
+```
 ## Supported formats
 
-| Agent | Read | Write | Verified against |
-|---|---|---|---|
-| Kimi Code | ✅ `state.json` + `agents/*/wire.jsonl` | — | CLI 2.1.1 / session format v2 / wire protocol 1.5 |
-| Claude Code | — | ✅ JSONL session files | CLI 2.1.303 |
-| Codex | planned | planned | — |
-| opencode | planned | planned | — |
+| Agent | Read | Write | Resume verified | Against |
+|---|---|---|---|---|
+| Kimi Code | ✅ `state.json` + `agents/*/wire.jsonl` | — | n/a (source only) | CLI 2.1.1 / session format v2 / wire protocol 1.5 |
+| Claude Code | — | ✅ JSONL session files | ✅ real `claude -p --resume` | CLI 2.1.303 |
+| Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ same layout + `.meta.json` | ✅ real `cmd -p --session <path>` | 1.82.3 |
+| DeepSeek Harness | ✅ `session.v4.jsonl.zstd` (multi-frame zstd) | ✅ same + workspace layout | ✅ headless load + full turn replay | 5.8.3 (format v4) |
+| Codex | planned | planned | — | — |
+| opencode | planned | planned | — | — |
 
 ## How fidelity is handled
 

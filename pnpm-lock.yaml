@@ -14,6 +14,18 @@ importers:
         specifier: workspace:*
         version: link:../../core
 
+  packages/adapters/command-code:
+    dependencies:
+      '@sessionport/core':
+        specifier: workspace:*
+        version: link:../../core
+
+  packages/adapters/dsh:
+    dependencies:
+      '@sessionport/core':
+        specifier: workspace:*
+        version: link:../../core
+
   packages/adapters/kimi-code:
     dependencies:
       '@sessionport/core':
@@ -25,6 +37,12 @@ importers:
       '@sessionport/adapter-claude-code':
         specifier: workspace:*
         version: link:../adapters/claude-code
+      '@sessionport/adapter-command-code':
+        specifier: workspace:*
+        version: link:../adapters/command-code
+      '@sessionport/adapter-dsh':
+        specifier: workspace:*
+        version: link:../adapters/dsh
       '@sessionport/adapter-kimi-code':
         specifier: workspace:*
         version: link:../adapters/kimi-code
