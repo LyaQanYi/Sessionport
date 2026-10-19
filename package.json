@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@11.8.0",
   "engines": {
-    "node": ">=22.18"
+    "node": ">=24"
   },
   "scripts": {
     "cli": "node packages/cli/src/index.ts",
@@ -14,5 +14,6 @@
   "workspaces": [
     "packages/*",
     "packages/adapters/*"
-  ]
+  ],
+  "license": "Apache-2.0"
 }

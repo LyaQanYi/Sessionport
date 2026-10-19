@@ -9,5 +9,9 @@
     "./loss": "./src/loss.ts",
     "./ids": "./src/ids.ts",
     "./paths": "./src/paths.ts"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
   }
 }
