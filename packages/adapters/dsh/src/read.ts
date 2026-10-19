@@ -89,7 +89,9 @@ const KNOWN_EVENT_TYPES = new Set<string>([
   'user/message', 'web/deepseek-search-llm-request', 'working-directory/change', 'workspace/changes',
 ]);
 
-const SESSION_MESSAGE_SOURCES = new Set(['user']);
+// 'user' 是真人输入；'user-approval' 是用户点了批准/拒绝；'agent-message' 是队友发来的真实消息。
+// 其余（time-context / runtime-context / skill-catalog / subagent-settled …）是运行时注入。
+const SESSION_MESSAGE_SOURCES = new Set(['user', 'user-approval', 'agent-message']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

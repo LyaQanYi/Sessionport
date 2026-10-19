@@ -70,6 +70,22 @@ node packages/cli/src/index.ts push "dsh:$HOME/.dsh/sessions/--<workspace>--/ses
 # 一条命令跑通双向（含结构校验）
 ./scripts/demo-interop.sh
 ```
+### 安全重推（`sync`）
+
+```bash
+node packages/cli/src/index.ts sync "dsh:<session-dir>" --to command-code --register
+```
+
+`sync` 会在 `~/.sessionport/registry.json` 记录「源端同步到哪个 head、目标端当时多少行」，
+重推时先判定再写：
+
+| 判定 | 行为 |
+|---|---|
+| 没有记录 / 目标文件没了 | 全新写入 |
+| 源端与目标端都没变 | **不写**（幂等） |
+| 源端有新内容、目标端没动 | 安全重写并更新登记 |
+| **目标端也新增了内容**（你在目标 app 里继续聊过） | **默认拒绝**；`--fork` 另建会话保留旧的，`--force` 才覆盖 |
+
 ### 导入到真实的 app 数据目录
 
 ```bash

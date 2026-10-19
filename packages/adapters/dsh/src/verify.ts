@@ -17,6 +17,7 @@ import { access, readFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { zstdDecompressSync } from 'node:zlib';
+import { existsSync } from 'node:fs';
 
 import { dshHome, encodeSegment, projectKey, resolveDshSessionPath } from './paths.ts';
 import { readZstdJsonl, scanZstdFrames } from './zstd.ts';
@@ -584,4 +585,16 @@ export function resumeSmokeDsh(options: DshResumeSmokeOptions): Promise<DshResum
       });
     });
   });
+}
+/** 同步用：统计 DSH 会话事件数（不含首行 header）。 */
+export async function countDshTarget(options: { home?: string; sessionId: string }): Promise<{ exists: boolean; units: number; path?: string }> {
+  try {
+    const home = dshHome(typeof options.home === 'string' ? options.home : undefined);
+    const resolved = await resolveDshSessionPath(options.sessionId, home);
+    if (!resolved || !existsSync(resolved.filePath)) return { exists: false, units: 0 };
+    const parsed = await readZstdJsonl(resolved.filePath);
+    return { exists: true, units: Math.max(0, parsed.lines.length - 1), path: resolved.filePath };
+  } catch {
+    return { exists: false, units: 0 };
+  }
 }

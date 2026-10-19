@@ -14,6 +14,7 @@ export type { WriteCommandCodeOptions, WriteCommandCodeResult } from './write.ts
 export {
   verifyCommandCodeSession,
   resumeSmokeCommandCode,
+  countCommandCodeTarget,
   commandCodeCliPath,
   DEFAULT_CC_CLI,
 } from './verify.ts';

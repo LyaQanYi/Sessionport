@@ -3,7 +3,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { bundleEventCount, eventKindCounts, validateIrBundle } from '@sessionport/core';
+import { bundleEventCount, describeDecision, eventKindCounts, findRef, loadRegistry, planSync, saveRegistry, sourceKeyOf, upsertRef, validateIrBundle } from '@sessionport/core';
+import type { ExternalRef, SyncDecision } from '@sessionport/core';
 import type { IrBundle, IrNotice } from '@sessionport/core';
 
 const USAGE = [
@@ -13,6 +14,7 @@ const USAGE = [
   '  sessionport inspect <source>',
   '  sessionport pull <source> [--out ir.json]',
   '  sessionport push <source> --to <agent> [options]',
+  '  sessionport sync <source> --to <agent> [options]   # 安全重推：不覆盖目标端新增内容',
   '  sessionport verify --agent <agent> [options]',
   '',
   '<source> 形式:',
@@ -36,6 +38,9 @@ const USAGE = [
   '  --user-data-dir <dir>  command-code 桌面端数据目录覆盖（默认 ~/Library/Application Support/Command Code）',
   '  --write-ir <file>      同时把 IR 落盘',
   '  --json                 输出机器可读 JSON',
+  '  --force                sync: 目标端有新增时仍然覆盖（会丢目标端新内容）',
+  '  --fork                 sync: 目标端有新增时另建一个目标会话，保留旧会话',
+  '  --state <dir>          registry 目录（默认 $SESSIONPORT_HOME 或 ~/.sessionport）',
   '',
   'claude-code 专属:',
   '  --config-dir <dir>     --home 的别名；--version <ver>；--keep-thinking（thinking 降级为 text）',
@@ -190,6 +195,125 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
   process.stdout.write('\n下一步: 用目标 agent 打开/继续这个会话（' + report.paths[0] + '）\n');
 }
 
+interface WriteOutcome {
+  target: string;
+  targetId: string;
+  paths: string[];
+  /** 目标端计量单位（rows: transcript 行数含头；events: 事件数） */
+  unit: 'rows' | 'events';
+  units: number;
+  report: { written?: { events: number }; rows?: unknown[]; losses?: Array<{ severity: string; code: string; count: number; message: string }> };
+}
+
+async function writeTarget(
+  target: string,
+  bundle: IrBundle,
+  opts: Record<string, unknown>,
+  id: string | undefined,
+  dryRun: boolean,
+): Promise<WriteOutcome> {
+  if (target === 'claude-code') {
+    const mod = await import('@sessionport/adapter-claude-code');
+    const report = await mod.writeClaudeSession(bundle, {
+      ...(opts as object),
+      sessionId: id,
+      dryRun,
+    });
+    return { target, targetId: report.sessionId, paths: report.paths, unit: 'rows', units: report.rows.length, report };
+  }
+  if (target === 'command-code') {
+    const mod = await import('@sessionport/adapter-command-code');
+    const report = await mod.writeCommandCodeSession(bundle, { ...(opts as object), id, dryRun });
+    return { target, targetId: report.sessionId, paths: report.paths, unit: 'rows', units: report.rows.length + 1, report };
+  }
+  const mod = await import('@sessionport/adapter-dsh');
+  const report = await mod.writeDshSession(bundle, { ...(opts as object), id, dryRun });
+  return { target, targetId: report.sessionId, paths: report.paths, unit: 'events', units: report.written.events, report };
+}
+
+async function countTarget(target: string, outcome: WriteOutcome, opts: Record<string, unknown>): Promise<{ exists: boolean; units: number }> {
+  if (target === 'command-code') {
+    const mod = await import('@sessionport/adapter-command-code');
+    return mod.countCommandCodeTarget(outcome.paths[0]!);
+  }
+  if (target === 'dsh') {
+    const mod = await import('@sessionport/adapter-dsh');
+    const result = await mod.countDshTarget({ home: opts.home as string | undefined, sessionId: outcome.targetId });
+    return { exists: result.exists, units: result.units };
+  }
+  try {
+    const text = readFileSync(outcome.paths[0]!, 'utf8');
+    return { exists: true, units: text.split('\n').filter((line) => line.trim().length > 0).length };
+  } catch {
+    return { exists: false, units: 0 };
+  }
+}
+
+async function cmdSync(source: string, values: Record<string, string | boolean | undefined>): Promise<void> {
+  const to = typeof values.to === 'string' ? values.to : '';
+  if (!to) fail('sync 需要 --to <agent>（claude-code / command-code / dsh）');
+  const bundle = await loadBundle(source);
+  const opts = commonTargetOptions(values);
+  const stateHome = typeof values.state === 'string' ? values.state : undefined;
+  const registry = loadRegistry(stateHome);
+  const sourceKey = sourceKeyOf(bundle.root.source, bundle.root.id);
+  const ref: ExternalRef | undefined = findRef(registry, sourceKey, to as never);
+
+  // 用 dry-run 先算出「如果现在写，会写到哪、有多少单位」
+  const preview = await writeTarget(to, bundle, opts, ref?.targetId ?? (typeof opts.id === 'string' ? opts.id : undefined), true);
+  const current = await countTarget(to, preview, opts);
+
+  const decision: SyncDecision = planSync({
+    ref,
+    source: { head: bundle.root.head, events: bundle.root.events.length },
+    target: { exists: current.exists, units: current.units },
+  });
+
+  process.stdout.write('source      ' + sourceKey + '  events=' + bundle.root.events.length + '  head=' + (bundle.root.head ?? '-') + '\n');
+  process.stdout.write('target      ' + to + (ref ? '  id=' + ref.targetId : '') + '\n');
+  process.stdout.write('decision    ' + describeDecision(decision) + '\n');
+
+  const diverged = decision.kind === 'diverged';
+  const force = Boolean(values.force);
+  const fork = Boolean(values.fork);
+  if (diverged && !force && !fork) {
+    process.stderr.write(
+      '\n拒绝写入：目标端在上次同步后新增了 ' + decision.targetExtra + ' 单位。\n' +
+      '  --fork   另建目标会话，保留旧会话（推荐）\n' +
+      '  --force  直接覆盖（目标端新增内容会丢）\n',
+    );
+    process.exit(2);
+  }
+  if (decision.kind === 'up-to-date') {
+    process.stdout.write('没有写入。\n');
+    return;
+  }
+
+  const useFork = diverged && fork;
+  const targetId = useFork ? undefined : (ref?.targetId ?? (typeof opts.id === 'string' ? opts.id : undefined));
+  if (useFork) process.stdout.write('fork      为当前源快照新建目标会话（旧会话保持不动）\n');
+
+  const outcome = await writeTarget(to, bundle, opts, targetId, false);
+  printReport(outcome.report as Parameters<typeof printReport>[0]);
+  printNotices(bundle.root.notices);
+
+  const nextRef: ExternalRef = {
+    sourceKey,
+    target: to as never,
+    targetId: outcome.targetId,
+    targetPath: resolve(outcome.paths[0]!),
+    unit: outcome.unit,
+    targetUnits: outcome.units,
+    sourceEvents: bundle.root.events.length,
+    sourceHead: bundle.root.head,
+    updatedAt: new Date().toISOString(),
+  };
+  upsertRef(registry, nextRef);
+  const registryFile = saveRegistry(registry, stateHome);
+  process.stdout.write('\nregistry    ' + registryFile + '\n');
+  process.stdout.write('已记录同步状态：sourceHead=' + (nextRef.sourceHead ?? '-') + ' sourceEvents=' + nextRef.sourceEvents + ' targetUnits=' + nextRef.targetUnits + '\n');
+}
+
 async function cmdVerify(values: Record<string, string | boolean | undefined>): Promise<void> {
   const agent = typeof values.agent === 'string' ? values.agent : '';
   if (!agent) fail('verify 需要 --agent（claude-code / command-code / dsh）');
@@ -304,6 +428,9 @@ async function main(): Promise<void> {
       'user-data-dir': { type: 'string' },
       'write-ir': { type: 'string' },
       resume: { type: 'boolean' },
+      force: { type: 'boolean' },
+      fork: { type: 'boolean' },
+      state: { type: 'string' },
       json: { type: 'boolean' },
     },
   });
@@ -336,6 +463,12 @@ async function main(): Promise<void> {
     const source = positionals[0];
     if (!source) fail('push 需要 <source>');
     await cmdPush(source, values);
+    return;
+  }
+  if (command === 'sync') {
+    const source = positionals[0];
+    if (!source) fail('sync 需要 <source>');
+    await cmdSync(source, values);
     return;
   }
   if (command === 'verify') {

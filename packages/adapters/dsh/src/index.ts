@@ -2,7 +2,7 @@ export { readDshSession, summarizeDshBundle, DSH_AGENT } from './read.ts';
 export type { DshEvent, DshHeader, ReadDshOptions } from './read.ts';
 export { writeDshSession, printWriteReport, DSH_CAPS } from './write.ts';
 export type { DshEventLine, DshExportCaps, DshSessionHeaderLine, WriteDshOptions, WriteDshResult } from './write.ts';
-export { verifyDshSession, resumeSmokeDsh, dshAppPaths } from './verify.ts';
+export { verifyDshSession, resumeSmokeDsh, dshAppPaths, countDshTarget } from './verify.ts';
 export type { DshResumeSmokeOptions, DshResumeSmokeResult, VerifyCheck, VerifyDshOptions, VerifyDshReport } from './verify.ts';
 export {
   dshHome,
