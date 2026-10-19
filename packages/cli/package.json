@@ -1,0 +1,17 @@
+{
+  "name": "@sessionport/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "sessionport": "./src/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@sessionport/core": "workspace:*",
+    "@sessionport/adapter-kimi-code": "workspace:*",
+    "@sessionport/adapter-claude-code": "workspace:*"
+  }
+}
