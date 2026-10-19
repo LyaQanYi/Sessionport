@@ -110,6 +110,15 @@ export function registerCommandCodeThread(spec: RegisterThreadSpec, options: Reg
     const removed = state.removedProjects;
     if (removed && typeof removed === 'object') delete (removed as Record<string, unknown>)[spec.projectPath];
 
+    // 项目信任列表：非 null 时 app 不会从 appState.projects 推导，
+    // 不在这里登记就会出现 "Select this project with the folder picker first."
+    const trusted = doc.trustedProjectRoots;
+    if (Array.isArray(trusted)) {
+      const roots = trusted.filter((root): root is string => typeof root === 'string');
+      if (!roots.includes(spec.projectPath)) roots.push(spec.projectPath);
+      doc.trustedProjectRoots = roots;
+    }
+
     writeFileSync(appStatePath, JSON.stringify(doc, null, 2));
   }
 
