@@ -65,13 +65,30 @@ export interface MigrationResult {
   imported: boolean;
 }
 
-const READERS: Record<string, (input: string) => Promise<IrBundle>> = {
-  'kimi-code': async (input) => (await import('@sessionport/adapter-kimi-code')).readKimiBundle(input),
-  'command-code': async (input) => (await import('@sessionport/adapter-command-code')).readCommandCodeSession(input),
-  dsh: async (input) => (await import('@sessionport/adapter-dsh')).readDshSession(input),
-  codex: async (input) => (await import('@sessionport/adapter-codex')).readCodexSession(input),
-  opencode: async (input) => (await import('@sessionport/adapter-opencode')).readOpencodeSession(input),
+export interface SessionRefInput {
+  /** 会话在磁盘上的路径（opencode 除外：它指向共用 db） */
+  nativePath?: string;
+  /** 会话 id（opencode 必需，其他 adapter 优先路径） */
+  sessionId?: string;
+}
+
+const READERS: Record<string, (input: SessionRefInput) => Promise<IrBundle>> = {
+  'kimi-code': async (input) => (await import('@sessionport/adapter-kimi-code')).readKimiBundle(requirePath(input)),
+  'command-code': async (input) => (await import('@sessionport/adapter-command-code')).readCommandCodeSession(requirePath(input)),
+  dsh: async (input) => (await import('@sessionport/adapter-dsh')).readDshSession(requirePath(input)),
+  codex: async (input) => (await import('@sessionport/adapter-codex')).readCodexSession(input.sessionId ?? requirePath(input)),
+  opencode: async (input) => (await import('@sessionport/adapter-opencode')).readOpencodeSession(requireId(input)),
 };
+
+function requirePath(input: SessionRefInput): string {
+  if (!input.nativePath) throw new Error('这个会话缺少磁盘路径，无法读取');
+  return input.nativePath;
+}
+
+function requireId(input: SessionRefInput): string {
+  if (!input.sessionId) throw new Error('opencode 会话需要 sessionId 才能读取（nativePath 指向共用 db）');
+  return input.sessionId;
+}
 
 export function readableAgents(): ReadableAgent[] {
   return Object.keys(READERS) as ReadableAgent[];
@@ -83,7 +100,7 @@ export async function listSessions(): Promise<ListResult> {
   try {
     const core = (await import('@sessionport/core')) as unknown as { listAllSessions?: (options?: unknown) => Promise<unknown> };
     if (typeof core.listAllSessions === 'function') {
-      const result = (await core.listAllSessions()) as { sessions?: unknown[]; warnings?: string[] } | unknown[];
+      const result = (await core.listAllSessions({ limit: 500 })) as { sessions?: unknown[]; warnings?: string[] } | unknown[];
       const raw = Array.isArray(result) ? result : (result.sessions ?? []);
       const sessions: SessionRow[] = raw.map((item) => normalizeSummary(item));
       return { sessions, warnings: Array.isArray(result) ? [] : (result.warnings ?? []) };
@@ -125,14 +142,15 @@ function normalizeSummary(item: unknown): SessionRow {
     updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : undefined,
     nativePath: String(record.nativePath ?? ''),
     readable: readableAgents().includes(agent as ReadableAgent),
+    // DSH 的 resume 需要 app 内部 cli.js，命令很长；展示层截断，完整值放 title 里由 UI 决定
     resumeHint: typeof record.resumeHint === 'string' ? record.resumeHint : undefined,
   };
 }
 
-export async function readSession(agent: AgentId, nativePath: string, limit = 400): Promise<ReadResult> {
+export async function readSession(agent: AgentId, ref: SessionRefInput, limit = 400): Promise<ReadResult> {
   const reader = READERS[agent];
   if (!reader) throw new Error(agent + ' 还没有 reader（当前可读：' + readableAgents().join(', ') + '）');
-  const bundle = await reader(nativePath);
+  const bundle = await reader(ref);
   const events = bundle.root.events;
   const rows: SessionEventRow[] = [];
   for (const event of events.slice(0, limit)) {
@@ -163,10 +181,10 @@ export async function readSession(agent: AgentId, nativePath: string, limit = 40
 }
 
 /** 加载源会话（桌面端内部用） */
-export async function loadSource(agent: AgentId, nativePath: string): Promise<IrBundle> {
+export async function loadSource(agent: AgentId, ref: SessionRefInput): Promise<IrBundle> {
   const reader = READERS[agent];
   if (!reader) throw new Error(agent + ' 没有 reader，无法迁移');
-  return reader(nativePath);
+  return reader(ref);
 }
 
 const WRITERS: Record<string, (bundle: IrBundle, options: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
@@ -181,10 +199,10 @@ export function writableAgents(): AgentId[] {
   return Object.keys(WRITERS) as AgentId[];
 }
 
-export async function previewMigration(agent: AgentId, nativePath: string, target: AgentId): Promise<MigrationPreview> {
+export async function previewMigration(agent: AgentId, ref: SessionRefInput, target: AgentId): Promise<MigrationPreview> {
   const writer = WRITERS[target];
   if (!writer) throw new Error(target + ' 还没有 writer（当前可写：' + writableAgents().join(', ') + '）');
-  const bundle = await loadSource(agent, nativePath);
+  const bundle = await loadSource(agent, ref);
   const report = (await writer(bundle, { dryRun: true })) as { losses?: LossEntry[]; caps?: Record<string, unknown> };
   return {
     source: {
@@ -202,13 +220,13 @@ export async function previewMigration(agent: AgentId, nativePath: string, targe
 
 export async function runMigration(
   agent: AgentId,
-  nativePath: string,
+  ref: SessionRefInput,
   target: AgentId,
   options: { register?: boolean; includeChildren?: boolean; home?: string; model?: string } = {},
 ): Promise<MigrationResult> {
   const writer = WRITERS[target];
   if (!writer) throw new Error(target + ' 还没有 writer');
-  const bundle = await loadSource(agent, nativePath);
+  const bundle = await loadSource(agent, ref);
   const report = (await writer(bundle, {
     register: options.register === true,
     includeChildren: options.includeChildren === true,

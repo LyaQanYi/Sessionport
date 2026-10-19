@@ -300,13 +300,3 @@ function firstUserText(lines: CodexLine[]): string | undefined {
   return undefined;
 }
 
-/** 列出本机 Codex 会话（扫描 rollout + 索引标题），供 list 用 */
-export async function listCodexSessions(home?: string): Promise<Array<{ id: string; path: string; title?: string; updatedAt?: string }>> {
-  const root = codexHome(home);
-  const index = readSessionIndex(root);
-  const titles = new Map(index.map((entry) => [entry.id, entry.thread_name]));
-  return listRolloutFiles(root).map((path) => {
-    const id = sessionIdFromRolloutPath(path) ?? path;
-    return { id, path, title: titles.get(id) };
-  });
-}

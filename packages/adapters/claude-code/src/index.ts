@@ -5,3 +5,4 @@ export type { VerifyCheck, VerifyReport, ResumeSmokeResult } from './verify.ts';
 export { claudeConfigDir, projectsDir, projectDir, sessionFilePath } from './paths.ts';
 export { buildAssistantRow, buildUserRow, textBlock, toolResultBlock, toolUseBlock } from './rows.ts';
 export type { ClaudeRow, ClaudeUserRow, ClaudeAssistantRow, RowContext } from './rows.ts';
+export { listClaudeSessions } from './list.ts';

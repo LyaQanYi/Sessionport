@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { api, formatTime } from '../api.ts';
+import { api, formatTime, sessionRefOf } from '../api.ts';
 import type { SessionRow } from '../api.ts';
 import { Badge, Button, Card, EmptyState, Spinner } from '../ui.tsx';
 
@@ -9,7 +9,7 @@ const ROLE_TONE = { user: 'info', assistant: 'default' } as const;
 export function ReaderPage(props: { session: SessionRow; onBack: () => void; onMigrate: () => void }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['session', props.session.agent, props.session.nativePath],
-    queryFn: () => api.readSession(props.session.agent, props.session.nativePath),
+    queryFn: () => api.readSession(props.session.agent, sessionRefOf(props.session)),
   });
 
   const resumeCommand = props.session.resumeHint;

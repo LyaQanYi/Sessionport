@@ -27,7 +27,7 @@ test('readSession：读一个真实 Codex 会话（没有样本时跳过）', as
     t.skip('本机没有 Codex 会话样本');
     return;
   }
-  const read = await readSession('codex', codex.nativePath, 50);
+  const read = await readSession('codex', { nativePath: codex.nativePath, sessionId: codex.sessionId }, 50);
   assert.ok(read.events.length > 0);
   assert.ok(read.events.every((event) => typeof event.id === 'string' && typeof event.at === 'string'));
   assert.equal(read.truncated, read.events.length === 50);
@@ -40,7 +40,7 @@ test('previewMigration：dryRun 只出损失清单，不落盘', async (t) => {
     t.skip('本机没有可读的 Codex 会话样本');
     return;
   }
-  const preview = await previewMigration('codex', source.nativePath, 'claude-code');
+  const preview = await previewMigration('codex', { nativePath: source.nativePath, sessionId: source.sessionId }, 'claude-code');
   assert.equal(preview.target, 'claude-code');
   assert.ok(preview.source.events > 0);
   assert.ok(Array.isArray(preview.losses));
@@ -48,5 +48,5 @@ test('previewMigration：dryRun 只出损失清单，不落盘', async (t) => {
 });
 
 test('readSession：没有 reader 的 agent 给出明确错误', async () => {
-  await assert.rejects(() => readSession('kimi-code' as never, '/nonexistent'), /不是 Kimi 会话目录|ENOENT|不存在/);
+  await assert.rejects(() => readSession('kimi-code', { nativePath: '/nonexistent-kimi-session' }), /不是 Kimi 会话目录|ENOENT|不存在/);
 });

@@ -1,4 +1,5 @@
 export { readDshSession, summarizeDshBundle, DSH_AGENT } from './read.ts';
+export { listDshSessions } from './list.ts';
 export type { DshEvent, DshHeader, ReadDshOptions } from './read.ts';
 export { writeDshSession, printWriteReport, DSH_CAPS } from './write.ts';
 export type { DshEventLine, DshExportCaps, DshSessionHeaderLine, WriteDshOptions, WriteDshResult } from './write.ts';

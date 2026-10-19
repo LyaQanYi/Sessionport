@@ -27,7 +27,7 @@ export interface SessionSummary {
   updatedAt?: string;
   /** 原生数据位置：目录或文件。sqlite 后端的 agent（opencode）是数据库文件 */
   nativePath: string;
-  /** 目标端 resume 命令的可执行片段（会话 id / transcript 路径） */
+  /** 目标端 resume 命令片段（含可执行命令 + 会话 id / transcript 路径），展示/复制用 */
   resumeHint?: string;
   /** 源端标记为已归档 */
   archived?: boolean;

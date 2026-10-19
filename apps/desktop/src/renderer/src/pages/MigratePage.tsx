@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 
-import { api } from '../api.ts';
+import { api, sessionRefOf } from '../api.ts';
 import type { AgentId, SessionRow } from '../api.ts';
 import { Badge, Button, Card, EmptyState } from '../ui.tsx';
 
@@ -9,17 +9,18 @@ export function MigratePage(props: { initial: SessionRow | null }) {
   const sessionsQuery = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
   const capsQuery = useQuery({ queryKey: ['capabilities'], queryFn: api.capabilities });
 
-  const [sourceKey, setSourceKey] = useState<string | null>(props.initial?.nativePath ?? null);
+  const rowKey = (row: SessionRow): string => row.agent + '|' + row.sessionId + '|' + row.nativePath;
+  const [sourceKey, setSourceKey] = useState<string | null>(props.initial ? rowKey(props.initial) : null);
   const [target, setTarget] = useState<AgentId | null>(null);
   const [register, setRegister] = useState(true);
   const [includeChildren, setIncludeChildren] = useState(false);
 
   useEffect(() => {
-    if (props.initial && sourceKey === null) setSourceKey(props.initial.nativePath);
+    if (props.initial && sourceKey === null) setSourceKey(rowKey(props.initial));
   }, [props.initial, sourceKey]);
 
   const sessions = sessionsQuery.data?.sessions ?? [];
-  const source = useMemo(() => sessions.find((row) => row.nativePath === sourceKey) ?? null, [sessions, sourceKey]);
+  const source = useMemo(() => sessions.find((row) => rowKey(row) === sourceKey) ?? null, [sessions, sourceKey]);
   const writable = capsQuery.data?.writable ?? [];
 
   useEffect(() => {
@@ -27,10 +28,10 @@ export function MigratePage(props: { initial: SessionRow | null }) {
   }, [target, writable]);
 
   const preview = useMutation({
-    mutationFn: () => api.previewMigration(source!.agent, source!.nativePath, target!),
+    mutationFn: () => api.previewMigration(source!.agent, sessionRefOf(source!), target!),
   });
   const run = useMutation({
-    mutationFn: () => api.runMigration({ agent: source!.agent, nativePath: source!.nativePath, target: target!, register, includeChildren }),
+    mutationFn: () => api.runMigration({ agent: source!.agent, ref: sessionRefOf(source!), target: target!, register, includeChildren }),
   });
 
   const losses = preview.data?.losses ?? [];
@@ -54,7 +55,7 @@ export function MigratePage(props: { initial: SessionRow | null }) {
               >
                 <option value="">（选择）</option>
                 {sessions.map((row) => (
-                  <option key={row.nativePath} value={row.nativePath}>
+                  <option key={rowKey(row)} value={rowKey(row)}>
                     {row.agent} · {row.title ?? row.sessionId}
                   </option>
                 ))}

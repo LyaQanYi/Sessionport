@@ -1,10 +1,10 @@
 export {
   readCommandCodeSession,
   readCommandCodeSessionDetailed,
-  listCommandCodeSessions,
   summarizeCommandCodeBundle,
 } from './read.ts';
-export type { ReadCommandCodeOptions, ReadCommandCodeDetailedResult, CommandCodeSessionInfo } from './read.ts';
+export type { ReadCommandCodeOptions, ReadCommandCodeDetailedResult } from './read.ts';
+export { listCommandCodeSessions } from './list.ts';
 
 export { writeCommandCodeSession, printWriteReport, COMMAND_CODE_CAPS } from './write.ts';
 export { registerCommandCodeThread, commandCodeUserDataDir } from './register.ts';
