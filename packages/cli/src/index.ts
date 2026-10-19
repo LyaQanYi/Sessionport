@@ -21,11 +21,12 @@ const USAGE = [
   '  kimi:<目录>            Kimi Code 会话目录（kimi export 解包目录或原生会话目录）',
   '  commandcode:<路径>     Command Code transcript（.jsonl）或会话 id',
   '  dsh:<目录>             DSH 会话目录（含 session.v4.jsonl.zstd）',
+  '  codex:<路径|id>        Codex rollout（sessions/**/rollout-*.jsonl）或会话 id',
   '  <ir.json>              已有 IR 文件',
   '  <无前缀目录/文件>      按结构自动识别',
   '',
   '目标 agent（--to）:',
-  '  claude-code  |  command-code  |  dsh',
+  '  claude-code  |  command-code  |  dsh  |  codex',
   '',
   '通用选项:',
   '  --home <dir>           目标数据根目录（claude: 配置目录；command-code: ~/.commandcode；dsh: DSH_HOME）',
@@ -66,11 +67,21 @@ function detectSource(raw: string): SourceKind {
   if (raw.startsWith('commandcode:')) return { kind: 'command-code', target: raw.slice(12) };
   if (raw.startsWith('cmd:')) return { kind: 'command-code', target: raw.slice(4) };
   if (raw.startsWith('dsh:')) return { kind: 'dsh', target: raw.slice(4) };
+  if (raw.startsWith('codex:')) return { kind: 'codex', target: raw.slice(6) };
   if (raw.endsWith('.json') && existsSync(raw) && !existsSync(join(raw, 'state.json'))) return { kind: 'ir', target: raw };
   if (existsSync(join(raw, 'state.json'))) return { kind: 'kimi', target: raw };
   if (existsSync(join(raw, 'session.v4.jsonl.zstd'))) return { kind: 'dsh', target: raw };
   if (raw.endsWith('.jsonl.zstd')) return { kind: 'dsh', target: raw };
-  if (raw.endsWith('.jsonl')) return { kind: 'command-code', target: raw };
+  if (raw.endsWith('.jsonl')) {
+    // rollout 与 Command Code transcript 都是 .jsonl，按首行类型区分
+    try {
+      const first = readFileSync(raw, 'utf8').split('\n', 1)[0] ?? '';
+      if (first.includes('"session_meta"')) return { kind: 'codex', target: raw };
+    } catch {
+      // 读不到就按后缀兜底
+    }
+    return { kind: 'command-code', target: raw };
+  }
   if (existsSync(raw) && existsSync(join(raw, 'agents'))) return { kind: 'kimi', target: raw };
   fail('无法识别的 source: ' + raw + '（可以显式加 kimi: / commandcode: / dsh: 前缀）');
 }
@@ -90,6 +101,10 @@ async function loadBundle(source: string): Promise<IrBundle> {
   if (detected.kind === 'command-code') {
     const mod = await import('@sessionport/adapter-command-code');
     return mod.readCommandCodeSession(detected.target);
+  }
+  if (detected.kind === 'codex') {
+    const mod = await import('@sessionport/adapter-codex');
+    return mod.readCodexSession(detected.target);
   }
   const mod = await import('@sessionport/adapter-dsh');
   return mod.readDshSession(detected.target);
@@ -183,6 +198,9 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
   } else if (to === 'dsh') {
     const mod = await import('@sessionport/adapter-dsh');
     report = await mod.writeDshSession(bundle, opts);
+  } else if (to === 'codex') {
+    const mod = await import('@sessionport/adapter-codex');
+    report = await mod.writeCodexSession(bundle, opts);
   } else {
     fail('不支持的目标 agent: ' + to);
   }
@@ -227,6 +245,11 @@ async function writeTarget(
     const report = await mod.writeCommandCodeSession(bundle, { ...(opts as object), id, dryRun });
     return { target, targetId: report.sessionId, paths: report.paths, unit: 'rows', units: report.rows.length + 1, report };
   }
+  if (target === 'codex') {
+    const mod = await import('@sessionport/adapter-codex');
+    const report = await mod.writeCodexSession(bundle, { ...(opts as object), id, dryRun });
+    return { target, targetId: report.sessionId, paths: report.paths, unit: 'rows', units: report.rows.length + 1, report };
+  }
   const mod = await import('@sessionport/adapter-dsh');
   const report = await mod.writeDshSession(bundle, { ...(opts as object), id, dryRun });
   return { target, targetId: report.sessionId, paths: report.paths, unit: 'events', units: report.written.events, report };
@@ -241,6 +264,14 @@ async function countTarget(target: string, outcome: WriteOutcome, opts: Record<s
     const mod = await import('@sessionport/adapter-dsh');
     const result = await mod.countDshTarget({ home: opts.home as string | undefined, sessionId: outcome.targetId });
     return { exists: result.exists, units: result.units };
+  }
+  if (target === 'codex') {
+    try {
+      const text = readFileSync(outcome.paths[0]!, 'utf8');
+      return { exists: true, units: text.split('\n').filter((line) => line.trim().length > 0).length };
+    } catch {
+      return { exists: false, units: 0 };
+    }
   }
   try {
     const text = readFileSync(outcome.paths[0]!, 'utf8');
@@ -335,6 +366,12 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
     if (!file) fail('command-code 校验需要 --file 或 --id');
     const report = await mod.verifyCommandCodeSession({ filePath: file });
     result = { ok: report.ok, checks: report.checks };
+  } else if (agent === 'codex') {
+    const mod = await import('@sessionport/adapter-codex');
+    const file = typeof values.file === 'string' ? values.file : typeof opts.id === 'string' ? opts.id : undefined;
+    if (!file) fail('codex 校验需要 --file <rollout> 或 --id');
+    const report = await mod.verifyCodexSession({ filePath: file, home: opts.home as string | undefined });
+    result = { ok: report.ok, checks: report.checks };
   } else {
     const mod = await import('@sessionport/adapter-dsh');
     const id = opts.id;
@@ -358,6 +395,20 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
         sessionId: String(opts.id),
       });
       process.stdout.write('command: ' + smoke.command + '\n');
+      process.stdout.write(smoke.ok ? 'RESUME SMOKE: PASS\n' : 'RESUME SMOKE: FAIL\n');
+      if (!smoke.ok) process.exit(2);
+    } else if (agent === 'codex') {
+      const mod = await import('@sessionport/adapter-codex');
+      const file = typeof values.file === 'string' ? values.file : undefined;
+      if (!file) fail('codex resume 冒烟需要 --file <rollout>');
+      const home = typeof opts.home === 'string' ? opts.home : (process.env.CODEX_HOME ?? '');
+      if (!home) fail('codex resume 冒烟需要 --home <CODEX_HOME>');
+      const sessionId = mod.sessionIdFromRolloutPath(file) ?? file.split('/').pop()!.replace(/\.jsonl$/, '');
+      process.stdout.write('\n无头 resume 冒烟测试…\n');
+      const smoke = await mod.resumeSmokeCodex({ home, sessionId, cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined });
+      process.stdout.write('command: ' + smoke.command + '\n');
+      if (smoke.stdout) process.stdout.write('stdout: ' + String(smoke.stdout).slice(-1200) + '\n');
+      if (smoke.stderr) process.stdout.write('stderr: ' + String(smoke.stderr).slice(-1200) + '\n');
       process.stdout.write(smoke.ok ? 'RESUME SMOKE: PASS\n' : 'RESUME SMOKE: FAIL\n');
       if (!smoke.ok) process.exit(2);
     } else if (agent === 'command-code') {
