@@ -67,12 +67,14 @@ export function ReaderPage(props: { session: SessionRow; onBack: () => void; onM
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto w-full max-w-chat px-5 py-6">
             {(data?.notices ?? []).length > 0 ? (
-              <div className="mb-5 rounded-lg border border-border bg-muted px-3 py-2.5">
-                <div className="mb-1.5 flex items-center gap-1.5 text-2xs font-medium text-muted-foreground">
+              <details className="group mb-5 rounded-lg border border-border bg-muted">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-2xs font-medium text-muted-foreground">
                   <Info className="h-3 w-3" />
-                  解读提示
-                </div>
-                <ul className="space-y-1">
+                  解读提示 · {data!.notices.length} 类
+                  <span className="ml-auto text-3xs group-open:hidden">展开</span>
+                  <span className="ml-auto hidden text-3xs group-open:inline">收起</span>
+                </summary>
+                <ul className="max-h-48 space-y-1 overflow-auto border-t border-border px-3 py-2">
                   {data!.notices.map((notice) => (
                     <li key={notice.code} className="text-2xs leading-relaxed text-muted-foreground">
                       <span className="mr-1.5 font-mono text-3xs opacity-70">{notice.code}</span>
@@ -81,13 +83,30 @@ export function ReaderPage(props: { session: SessionRow; onBack: () => void; onM
                     </li>
                   ))}
                 </ul>
-              </div>
+              </details>
             ) : null}
 
             <div className="space-y-3">
               {data?.events.map((event) => {
                 if (event.kind === 'message') {
                   const isUser = event.role === 'user';
+                  if (event.synthetic) {
+                    const preview = (event.text ?? '').replace(/\s+/g, ' ').slice(0, 80);
+                    return (
+                      <details key={event.id} className="group rounded-md border border-border bg-muted">
+                        <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-1.5 text-3xs text-muted-foreground">
+                          <span className="rounded border border-border px-1 py-px text-[9px] font-medium">注入</span>
+                          <span className="truncate opacity-80">{preview}…</span>
+                          <span className="ml-auto opacity-60 group-open:hidden">展开</span>
+                          <span className="ml-auto hidden opacity-60 group-open:inline">收起</span>
+                          <span className="ml-2 opacity-50">{formatTime(event.at)}</span>
+                        </summary>
+                        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words border-t border-border px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                          {event.text}
+                        </pre>
+                      </details>
+                    );
+                  }
                   return (
                     <div key={event.id} className={cn('flex flex-col gap-1', isUser ? 'items-end' : 'items-start')}>
                       <div className="flex items-center gap-2 text-3xs text-muted-foreground">

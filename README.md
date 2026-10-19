@@ -123,7 +123,11 @@ dry-run loss preview before writing. IPC is a small typed allow-list with zod va
 
 ![sessionport desktop — session browser](docs/desktop-sessions.png)
 
-_259 sessions from six agents on one machine; rows without a reader are listed read-only._
+_248 sessions from six agents on one machine; rows without a reader are listed read-only. Light theme: `docs/desktop-sessions-light.png`._
+
+| Reader | Migration |
+|---|---|
+| ![reader](docs/desktop-reader.png) | ![migration](docs/desktop-migrate.png) |
 
 ## Architecture
 
