@@ -11,5 +11,8 @@ fixtures/private/
 .spikes/
 !research/
 
+# electron 构建产物
+apps/desktop/out/
+
 # 系统
 .DS_Store

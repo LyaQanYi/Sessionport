@@ -104,6 +104,23 @@ Targets: `claude-code`, `command-code`, `dsh`, `codex`, `opencode`.
 Registers into the target app instead of just writing files: `--register` (Command Code desktop list / DSH workspace /
 Codex `threads` + `session_index.jsonl`).
 
+## Desktop app (early)
+
+An Electron shell lives in `apps/desktop` — the renderer never touches the filesystem; all adapter work happens in
+the main process (which imports the same `@sessionport/*` packages as the CLI).
+
+```bash
+pnpm install
+pnpm dev:desktop     # electron-vite dev (opens a window)
+pnpm build:desktop   # production bundles -> apps/desktop/out
+
+# headless smoke (no window; useful in CI)
+cd apps/desktop && SESSIONPORT_SMOKE=1 ./node_modules/.bin/electron .
+```
+
+Current screens: session browser (all agents), reader (IR events, notices, resume command), migration with
+dry-run loss preview before writing. IPC is a small typed allow-list with zod validation in the main process.
+
 ## Architecture
 
 ```
@@ -118,6 +135,9 @@ packages/
 │   └── opencode/         # read/write/verify + import/export
 ├── cli/                  # inspect / pull / push / sync / verify
 └── e2e fixtures live in each adapter’s test/ folder
+
+apps/
+└── desktop/              # Electron shell (React + Vite + Tailwind + TanStack Query)
 ```
 
 ## Development
