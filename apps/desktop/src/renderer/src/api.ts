@@ -37,6 +37,7 @@ export interface ReadResult {
   events: SessionEventRow[];
   notices: Array<{ code: string; message: string; count?: number; severity: string }>;
   truncated: boolean;
+  totalEvents: number;
 }
 
 export interface LossEntry {
@@ -46,12 +47,25 @@ export interface LossEntry {
   severity: 'info' | 'warning';
 }
 
+export interface SyncInfo {
+  sourceKey: string;
+  decision: 'fresh' | 'up-to-date' | 'refresh' | 'diverged';
+  description: string;
+  sourceEvents: number;
+  targetUnits: number;
+  targetExtra?: number;
+  targetId?: string;
+  targetPath?: string;
+  stateFile: string;
+}
+
 export interface MigrationPreview {
   source: { agent: AgentId; sessionId: string; title?: string; events: number };
   target: AgentId;
   losses: LossEntry[];
   caps: Record<string, unknown>;
   warnings: string[];
+  sync: SyncInfo;
 }
 
 export interface MigrationResult {
@@ -60,6 +74,19 @@ export interface MigrationResult {
   paths: string[];
   losses: LossEntry[];
   imported: boolean;
+  sync: SyncInfo;
+  refused?: { reason: string };
+}
+
+export type DivergedMode = 'auto' | 'force' | 'fork';
+
+export interface MigrationOptions {
+  register?: boolean;
+  includeChildren?: boolean;
+  home?: string;
+  model?: string;
+  stateHome?: string;
+  onDiverged?: DivergedMode;
 }
 
 export interface Capabilities {
@@ -100,9 +127,10 @@ export function sessionRefOf(row: SessionRow): SessionRef {
 export const api = {
   listSessions: () => invoke<ListResult>('sessions:list'),
   readSession: (agent: AgentId, ref: SessionRef, limit?: number) => invoke<ReadResult>('sessions:read', { agent, ...ref, limit }),
-  previewMigration: (agent: AgentId, ref: SessionRef, target: AgentId) => invoke<MigrationPreview>('migrate:preview', { agent, ...ref, target }),
-  runMigration: (payload: { agent: AgentId; ref: SessionRef; target: AgentId; register?: boolean; includeChildren?: boolean; home?: string; model?: string }) =>
-    invoke<MigrationResult>('migrate:run', { agent: payload.agent, ...payload.ref, target: payload.target, register: payload.register, includeChildren: payload.includeChildren, home: payload.home, model: payload.model }),
+  previewMigration: (agent: AgentId, ref: SessionRef, target: AgentId, options: MigrationOptions = {}) =>
+    invoke<MigrationPreview>('migrate:preview', { agent, ...ref, target, ...options }),
+  runMigration: (payload: { agent: AgentId; ref: SessionRef; target: AgentId } & MigrationOptions) =>
+    invoke<MigrationResult>('migrate:run', { agent: payload.agent, ...payload.ref, target: payload.target, ...payload }),
   capabilities: () => invoke<Capabilities>('app:capabilities'),
 };
 

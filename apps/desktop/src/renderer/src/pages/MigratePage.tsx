@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 
 import { api, sessionRefOf } from '../api.ts';
-import type { AgentId, SessionRow } from '../api.ts';
+import type { AgentId, DivergedMode, SessionRow } from '../api.ts';
 import { Badge, Button, Card, EmptyState } from '../ui.tsx';
 
 export function MigratePage(props: { initial: SessionRow | null }) {
@@ -14,6 +14,7 @@ export function MigratePage(props: { initial: SessionRow | null }) {
   const [target, setTarget] = useState<AgentId | null>(null);
   const [register, setRegister] = useState(true);
   const [includeChildren, setIncludeChildren] = useState(false);
+  const [mode, setMode] = useState<DivergedMode>('auto');
 
   useEffect(() => {
     if (props.initial && sourceKey === null) setSourceKey(rowKey(props.initial));
@@ -28,10 +29,13 @@ export function MigratePage(props: { initial: SessionRow | null }) {
   }, [target, writable]);
 
   const preview = useMutation({
-    mutationFn: () => api.previewMigration(source!.agent, sessionRefOf(source!), target!),
+    mutationFn: () => api.previewMigration(source!.agent, sessionRefOf(source!), target!, { register, includeChildren }),
   });
   const run = useMutation({
-    mutationFn: () => api.runMigration({ agent: source!.agent, ref: sessionRefOf(source!), target: target!, register, includeChildren }),
+    mutationFn: () => api.runMigration({ agent: source!.agent, ref: sessionRefOf(source!), target: target!, register, includeChildren, onDiverged: mode }),
+    onSuccess: (result) => {
+      if (!result.refused) preview.mutate();
+    },
   });
 
   const losses = preview.data?.losses ?? [];
@@ -112,6 +116,38 @@ export function MigratePage(props: { initial: SessionRow | null }) {
                 </span>
               </div>
 
+              <div className="mt-3 rounded border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={preview.data.sync.decision === 'diverged' ? 'warn' : preview.data.sync.decision === 'up-to-date' ? 'info' : 'default'}>
+                    sync: {preview.data.sync.decision}
+                  </Badge>
+                  <span className="text-[hsl(var(--muted-foreground))]">{preview.data.sync.description}</span>
+                </div>
+                <div className="mt-1 font-mono text-[10px] text-[hsl(var(--muted-foreground))]">
+                  source events={preview.data.sync.sourceEvents} · target units={preview.data.sync.targetUnits}
+                  {preview.data.sync.targetPath ? ' · ' + preview.data.sync.targetPath : ''}
+                </div>
+                <div className="mt-1 text-[10px] text-[hsl(var(--muted-foreground))]">registry: {preview.data.sync.stateFile}</div>
+              </div>
+
+              {preview.data.sync.decision === 'diverged' ? (
+                <div className="mt-3 flex flex-wrap items-center gap-4 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  <span>目标端在上次迁移后新增了 {preview.data.sync.targetExtra ?? 0} 条内容。</span>
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" name="diverged-mode" checked={mode === 'fork'} onChange={() => setMode('fork')} />
+                    fork（另建会话，推荐）
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" name="diverged-mode" checked={mode === 'force'} onChange={() => setMode('force')} />
+                    force（覆盖）
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" name="diverged-mode" checked={mode === 'auto'} onChange={() => setMode('auto')} />
+                    拒绝写入
+                  </label>
+                </div>
+              ) : null}
+
               <div className="mt-3 flex flex-wrap gap-2">
                 {Object.entries(preview.data.caps).map(([key, value]) => (
                   <Badge key={key} tone={value === false ? 'warn' : 'info'}>
@@ -162,7 +198,12 @@ export function MigratePage(props: { initial: SessionRow | null }) {
                 </span>
               </div>
               {run.error ? <div className="mt-2 text-xs text-red-300">{String(run.error)}</div> : null}
-              {run.data ? (
+              {run.data?.refused ? (
+                <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  {run.data.refused.reason}
+                </div>
+              ) : null}
+              {run.data && !run.data.refused ? (
                 <div className="mt-3 rounded border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-3 text-xs">
                   <div>
                     已写入 <span className="font-mono">{run.data.target}</span> · session{' '}
