@@ -123,3 +123,8 @@ SESSIONPORT_CC_RESUME=1 node --test packages/adapters/command-code/test/*.test.t
    `runtime-context` / `skill-catalog` / `subagent-settled` / `agent-message` / `user-approval`）。
    除 `user`、`agent-message`、`user-approval` 外都属于目标端会自行生成的运行时上下文，导入时默认丢弃
    （`--keep-injected` 可保留）。
+4. **打开会话还有一道「项目信任」门槛**：`app-state.json` 顶层的 `trustedProjectRoots` 是独立白名单，
+   源码 `initialTrustedRoots = storedTrustedRoots ?? persistedProjectRoots(appState)` —— **非 null 时不会从
+   `appState.projects` 推导**。只注册 thread 而不登记该项目，点开会报
+   `Select this project with the folder picker first.`。注册流程必须同时维护这份白名单
+   （`scripts/cc-register.mjs --trust <path>` 可单独补）。
