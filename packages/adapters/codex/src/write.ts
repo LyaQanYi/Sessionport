@@ -36,6 +36,8 @@ export interface WriteCodexOptions {
   register?: boolean;
   /** 保留源端注入的 synthetic 消息（默认丢弃） */
   keepInjected?: boolean;
+  /** 强制输出到指定 rollout 路径（sync 复用登记路径，避免文件名时间戳漂移） */
+  filePath?: string;
   dryRun?: boolean;
 }
 
@@ -233,7 +235,7 @@ export async function writeCodexSession(bundle: IrBundle, options: WriteCodexOpt
   }
 
   const at = new Date(createdAt);
-  const filePath = codexRolloutPath(home, sessionId, at);
+  const filePath = options.filePath ?? codexRolloutPath(home, sessionId, at);
   const lines: CodexLine[] = [{ timestamp: createdAt, type: 'session_meta', payload: header as unknown as Record<string, unknown> }, ...rows];
   const body = lines.map((line) => JSON.stringify(line)).join('\n') + '\n';
 

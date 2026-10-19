@@ -34,6 +34,9 @@ node packages/cli/src/index.ts pull kimi:./session_<uuid>/ --out session.ir.json
 # 3. Write it as a Claude Code session
 node packages/cli/src/index.ts push session.ir.json --to claude-code
 
+# Codex 作为目标端:
+#   node packages/cli/src/index.ts push session.ir.json --to codex --home "$CODEX_HOME" --register
+
 # 4. Structural verification (fast, offline)
 node packages/cli/src/index.ts verify --cwd /path/to/project --session-id <uuid>
 
