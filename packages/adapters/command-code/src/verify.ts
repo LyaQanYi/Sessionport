@@ -5,7 +5,7 @@ import { basename, dirname, resolve } from 'node:path';
 
 import { isCcEntry, isCcHeader, parseJsonl } from './wire.ts';
 import type { CcBlock, CcEntry, CcMessageEntry } from './wire.ts';
-import { listCommandCodeSessions } from './read.ts';
+import { listCommandCodeSessions } from './list.ts';
 
 export interface VerifyCheck {
   name: string;
@@ -70,11 +70,11 @@ export async function verifyCommandCodeSession(options: VerifyCommandCodeOptions
     // 像会话 id 而不是路径：在数据根目录里按 id / 前缀解析
     try {
       const sessions = await listCommandCodeSessions({ home: options.home });
-      const exact = sessions.filter((session) => session.id === options.filePath);
-      const matches = exact.length > 0 ? exact : sessions.filter((session) => session.id.startsWith(options.filePath));
-      if (matches.length === 1) filePath = matches[0]!.path;
+      const exact = sessions.filter((session) => session.sessionId === options.filePath);
+      const matches = exact.length > 0 ? exact : sessions.filter((session) => session.sessionId.startsWith(options.filePath));
+      if (matches.length === 1) filePath = matches[0]!.nativePath;
       else if (matches.length > 1) {
-        checks.push({ name: 'session-id-ambiguous', ok: false, detail: matches.map((session) => session.id).join(', ') });
+        checks.push({ name: 'session-id-ambiguous', ok: false, detail: matches.map((session) => session.sessionId).join(', ') });
       }
     } catch {
       // 解析失败就按路径处理，后面 file-exists 会给出明确失败

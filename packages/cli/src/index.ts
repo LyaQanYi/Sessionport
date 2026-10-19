@@ -3,8 +3,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { bundleEventCount, describeDecision, eventKindCounts, findRef, loadRegistry, planSync, saveRegistry, sourceKeyOf, upsertRef, validateIrBundle } from '@sessionport/core';
-import type { ExternalRef, SyncDecision } from '@sessionport/core';
+import { bundleEventCount, describeDecision, eventKindCounts, findRef, listAllSessions, loadRegistry, planSync, saveRegistry, SESSION_AGENTS, sourceKeyOf, upsertRef, validateIrBundle } from '@sessionport/core';
+import type { AgentId, ExternalRef, SyncDecision } from '@sessionport/core';
 import type { IrBundle, IrNotice } from '@sessionport/core';
 
 const USAGE = [
@@ -16,6 +16,7 @@ const USAGE = [
   '  sessionport push <source> --to <agent> [options]',
   '  sessionport sync <source> --to <agent> [options]   # 安全重推：不覆盖目标端新增内容',
   '  sessionport verify --agent <agent> [options]',
+  '  sessionport list [--agent <agent>] [--limit <n>] [--json]',
   '',
   '<source> 形式:',
   '  kimi:<目录>            Kimi Code 会话目录（kimi export 解包目录或原生会话目录）',
@@ -43,6 +44,7 @@ const USAGE = [
   '  --force                sync: 目标端有新增时仍然覆盖（会丢目标端新内容）',
   '  --fork                 sync: 目标端有新增时另建一个目标会话，保留旧会话',
   '  --state <dir>          registry 目录（默认 $SESSIONPORT_HOME 或 ~/.sessionport）',
+  '  --limit <n>            list: 最多显示多少条（默认 200）',
   '',
   'claude-code 专属:',
   '  --config-dir <dir>     --home 的别名；--version <ver>；--keep-thinking（thinking 降级为 text）',
@@ -386,6 +388,69 @@ async function cmdSync(source: string, values: Record<string, string | boolean |
   process.stdout.write('已记录同步状态：sourceHead=' + (nextRef.sourceHead ?? '-') + ' sourceEvents=' + nextRef.sourceEvents + ' targetUnits=' + nextRef.targetUnits + '\n');
 }
 
+
+/** list --agent 的别名解析（大小写不敏感） */
+const AGENT_ALIASES: Record<string, AgentId> = {
+  'kimi-code': 'kimi-code',
+  kimi: 'kimi-code',
+  'claude-code': 'claude-code',
+  claude: 'claude-code',
+  'command-code': 'command-code',
+  commandcode: 'command-code',
+  cc: 'command-code',
+  dsh: 'dsh',
+  codex: 'codex',
+  opencode: 'opencode',
+};
+
+function resolveListAgent(raw: string): AgentId {
+  const agent = AGENT_ALIASES[raw.trim().toLowerCase()];
+  if (agent === undefined) fail('未知 agent: ' + raw + '（可选 ' + SESSION_AGENTS.join(' / ') + '）');
+  return agent;
+}
+
+function formatListTime(iso: string | undefined): string {
+  if (iso === undefined) return '-';
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return '-';
+  const date = new Date(ms);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+
+/** sessionport list：汇总 6 家的会话元数据（不改动任何文件） */
+async function cmdList(values: Record<string, string | boolean | undefined>): Promise<void> {
+  const agentFilter = typeof values.agent === 'string' ? resolveListAgent(values.agent) : undefined;
+  let limit: number | undefined;
+  if (typeof values.limit === 'string') {
+    const parsed = Number(values.limit);
+    if (!Number.isInteger(parsed) || parsed <= 0) fail('--limit 需要正整数');
+    limit = parsed;
+  }
+  const home = typeof values.home === 'string' ? values.home : undefined;
+  if (home !== undefined && agentFilter === undefined) {
+    fail('--home 需要配合 --agent 使用（各 agent 的数据根目录规则不同）');
+  }
+  const homes = home !== undefined && agentFilter !== undefined ? ({ [agentFilter]: home } as Partial<Record<AgentId, string>>) : undefined;
+  const result = await listAllSessions({ agents: agentFilter === undefined ? undefined : [agentFilter], homes, limit });
+  for (const warning of result.warnings) process.stderr.write('warning: ' + warning + '\n');
+  if (values.json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return;
+  }
+  if (result.sessions.length === 0) {
+    process.stdout.write('没有找到会话' + (agentFilter === undefined ? '' : '（' + agentFilter + '）') + '\n');
+    return;
+  }
+  for (const session of result.sessions) {
+    const title = (session.title ?? '(无标题)').replace(/\s+/gu, ' ').trim();
+    process.stdout.write(
+      session.agent.padEnd(13) + '  ' + formatListTime(session.updatedAt).padEnd(16) + '  ' + title + '  ' + session.sessionId + '\n',
+    );
+  }
+  process.stdout.write('\n共 ' + result.sessions.length + ' 个会话' + (agentFilter === undefined ? '' : '（' + agentFilter + '）') + '\n');
+}
+
 async function cmdVerify(values: Record<string, string | boolean | undefined>): Promise<void> {
   const agent = typeof values.agent === 'string' ? values.agent : '';
   if (!agent) fail('verify 需要 --agent（claude-code / command-code / dsh）');
@@ -554,6 +619,7 @@ async function main(): Promise<void> {
       force: { type: 'boolean' },
       fork: { type: 'boolean' },
       state: { type: 'string' },
+      limit: { type: 'string' },
       json: { type: 'boolean' },
     },
   });
@@ -596,6 +662,10 @@ async function main(): Promise<void> {
   }
   if (command === 'verify') {
     await cmdVerify(values);
+    return;
+  }
+  if (command === 'list') {
+    await cmdList(values);
     return;
   }
   process.stdout.write(USAGE + '\n');

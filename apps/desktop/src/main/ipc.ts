@@ -7,11 +7,17 @@ const agentSchema = z.enum(['claude-code', 'command-code', 'dsh', 'codex', 'open
 
 const channelSchemas = {
   'sessions:list': z.object({}).default({}),
-  'sessions:read': z.object({ agent: agentSchema, nativePath: z.string().min(1), limit: z.number().int().positive().max(2000).optional() }),
-  'migrate:preview': z.object({ agent: agentSchema, nativePath: z.string().min(1), target: agentSchema }),
+  'sessions:read': z.object({
+    agent: agentSchema,
+    nativePath: z.string().optional(),
+    sessionId: z.string().optional(),
+    limit: z.number().int().positive().max(2000).optional(),
+  }),
+  'migrate:preview': z.object({ agent: agentSchema, nativePath: z.string().optional(), sessionId: z.string().optional(), target: agentSchema }),
   'migrate:run': z.object({
     agent: agentSchema,
-    nativePath: z.string().min(1),
+    nativePath: z.string().optional(),
+    sessionId: z.string().optional(),
     target: agentSchema,
     register: z.boolean().optional(),
     includeChildren: z.boolean().optional(),
@@ -28,15 +34,15 @@ export function registerIpc(): void {
   ipcMain.handle('sessions:list', async () => wrap(() => listSessions()));
   ipcMain.handle('sessions:read', async (_event, payload: unknown) => wrap(() => {
     const input = channelSchemas['sessions:read'].parse(payload);
-    return readSession(input.agent, input.nativePath, input.limit);
+    return readSession(input.agent, { nativePath: input.nativePath, sessionId: input.sessionId }, input.limit);
   }));
   ipcMain.handle('migrate:preview', async (_event, payload: unknown) => wrap(() => {
     const input = channelSchemas['migrate:preview'].parse(payload);
-    return previewMigration(input.agent, input.nativePath, input.target);
+    return previewMigration(input.agent, { nativePath: input.nativePath, sessionId: input.sessionId }, input.target);
   }));
   ipcMain.handle('migrate:run', async (_event, payload: unknown) => wrap(() => {
     const input = channelSchemas['migrate:run'].parse(payload);
-    return runMigration(input.agent, input.nativePath, input.target, {
+    return runMigration(input.agent, { nativePath: input.nativePath, sessionId: input.sessionId }, input.target, {
       register: input.register,
       includeChildren: input.includeChildren,
       home: input.home,

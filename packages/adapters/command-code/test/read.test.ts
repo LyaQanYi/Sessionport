@@ -40,7 +40,7 @@ test('读取真实 Command Code 会话：结构、链、工具配对', { skip: e
   const sessions = await listCommandCodeSessions();
   assert.ok(sessions.length > 0, '应能列出真实会话');
   const sample = sessions[0]!;
-  const bundle = await readCommandCodeSession(sample.path);
+  const bundle = await readCommandCodeSession(sample.nativePath);
 
   assert.equal(bundle.irVersion, '0.1');
   assert.equal(bundle.root.source.agent, 'command-code');
@@ -67,10 +67,10 @@ test('读取真实 Command Code 会话：结构、链、工具配对', { skip: e
 test('按会话 id / 项目目录读取同一份 transcript', { skip: existsSync(PROJECTS_ROOT) ? false : '本机没有真实会话' }, async () => {
   const sessions = await listCommandCodeSessions();
   const sample = sessions[0]!;
-  const byId = await readCommandCodeSession(sample.id);
-  assert.equal(byId.root.events.length, (await readCommandCodeSession(sample.path)).root.events.length);
-  const byDir = await readCommandCodeSession(sample.path.replace(/\/[^/]+\.jsonl$/, ''), { sessionId: sample.id });
-  assert.equal(byDir.root.source.nativeSessionId, sample.id);
+  const byId = await readCommandCodeSession(sample.sessionId);
+  assert.equal(byId.root.events.length, (await readCommandCodeSession(sample.nativePath)).root.events.length);
+  const byDir = await readCommandCodeSession(sample.nativePath.replace(/\/[^/]+\.jsonl$/, ''), { sessionId: sample.sessionId });
+  assert.equal(byDir.root.source.nativeSessionId, sample.sessionId);
 });
 
 test('项目 slug 规则：用真实 cwd 反推目录名', { skip: existsSync(PROJECTS_ROOT) ? false : '本机没有真实会话' }, async () => {
@@ -97,7 +97,7 @@ test('非 Command Code 文件明确报错', async () => {
 
 test('详细读取结果带 header/metaFile/notices', { skip: existsSync(PROJECTS_ROOT) ? false : '本机没有真实会话' }, async () => {
   const sessions = await listCommandCodeSessions();
-  const detailed = await readCommandCodeSessionDetailed(sessions[0]!.path);
+  const detailed = await readCommandCodeSessionDetailed(sessions[0]!.nativePath);
   assert.equal(detailed.header.type, 'session');
   assert.equal(detailed.header.version, 3);
   assert.ok(Array.isArray(detailed.notices));

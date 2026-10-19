@@ -88,12 +88,21 @@ async function invoke<T>(channel: string, payload?: unknown): Promise<T> {
   return result.data;
 }
 
+export interface SessionRef {
+  nativePath?: string;
+  sessionId?: string;
+}
+
+export function sessionRefOf(row: SessionRow): SessionRef {
+  return { nativePath: row.nativePath, sessionId: row.sessionId };
+}
+
 export const api = {
   listSessions: () => invoke<ListResult>('sessions:list'),
-  readSession: (agent: AgentId, nativePath: string, limit?: number) => invoke<ReadResult>('sessions:read', { agent, nativePath, limit }),
-  previewMigration: (agent: AgentId, nativePath: string, target: AgentId) => invoke<MigrationPreview>('migrate:preview', { agent, nativePath, target }),
-  runMigration: (payload: { agent: AgentId; nativePath: string; target: AgentId; register?: boolean; includeChildren?: boolean; home?: string; model?: string }) =>
-    invoke<MigrationResult>('migrate:run', payload),
+  readSession: (agent: AgentId, ref: SessionRef, limit?: number) => invoke<ReadResult>('sessions:read', { agent, ...ref, limit }),
+  previewMigration: (agent: AgentId, ref: SessionRef, target: AgentId) => invoke<MigrationPreview>('migrate:preview', { agent, ...ref, target }),
+  runMigration: (payload: { agent: AgentId; ref: SessionRef; target: AgentId; register?: boolean; includeChildren?: boolean; home?: string; model?: string }) =>
+    invoke<MigrationResult>('migrate:run', { agent: payload.agent, ...payload.ref, target: payload.target, register: payload.register, includeChildren: payload.includeChildren, home: payload.home, model: payload.model }),
   capabilities: () => invoke<Capabilities>('app:capabilities'),
 };
 

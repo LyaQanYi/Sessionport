@@ -1,5 +1,7 @@
-export { readCodexSession, resolveCodexSessionPath, listCodexSessions } from './read.ts';
+export { readCodexSession, resolveCodexSessionPath } from './read.ts';
 export type { ReadCodexOptions } from './read.ts';
+export { listCodexSessions } from './list.ts';
+export type { CodexSessionSummary } from './list.ts';
 export { writeCodexSession, printWriteReport, CODEX_CAPS } from './write.ts';
 export type { WriteCodexOptions, WriteCodexResult } from './write.ts';
 export { verifyCodexSession, countCodexTarget, codexDisplayName, resumeSmokeCodex, inferCodexHome } from './verify.ts';

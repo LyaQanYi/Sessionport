@@ -65,11 +65,13 @@ export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
           {sessions.map((session) => (
             <button
               type="button"
-              key={session.nativePath}
+              key={session.agent + '|' + session.sessionId + '|' + session.nativePath}
+              disabled={!session.readable}
+              title={session.readable ? undefined : '该 agent 还没有 reader，只能看到列表元数据'}
               onClick={() => props.onOpen(session)}
               className={cn(
                 'flex w-full items-center gap-3 border-b border-[hsl(var(--border))] px-5 py-3 text-left transition',
-                'hover:bg-[hsl(var(--muted))]/50',
+                session.readable ? 'hover:bg-[hsl(var(--muted))]/50' : 'cursor-not-allowed opacity-50',
               )}
             >
               <Badge tone={AGENT_TONE[session.agent] ?? 'default'}>{session.agent}</Badge>
@@ -77,7 +79,10 @@ export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
                 <div className="truncate text-sm">{session.title ?? session.sessionId}</div>
                 <div className="truncate text-[11px] text-[hsl(var(--muted-foreground))]">{session.cwd ?? session.nativePath}</div>
               </div>
-              <div className="shrink-0 text-[11px] text-[hsl(var(--muted-foreground))]">{formatTime(session.updatedAt)}</div>
+              <div className="shrink-0 text-right">
+                <div className="text-[11px] text-[hsl(var(--muted-foreground))]">{formatTime(session.updatedAt)}</div>
+                {session.readable ? null : <div className="text-[10px] text-[hsl(var(--muted-foreground))]">仅元数据</div>}
+              </div>
             </button>
           ))}
         </div>

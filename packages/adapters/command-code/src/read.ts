@@ -30,14 +30,6 @@ export interface ReadCommandCodeOptions {
   keepNative?: boolean;
 }
 
-export interface CommandCodeSessionInfo {
-  id: string;
-  path: string;
-  cwd?: string;
-  title?: string;
-  updatedAt?: string;
-}
-
 interface ResolvedSessionFile {
   filePath: string;
   metaPath: string;
@@ -538,36 +530,6 @@ export async function readCommandCodeSessionDetailed(
 export async function readCommandCodeSession(input: string, options: ReadCommandCodeOptions = {}): Promise<IrBundle> {
   const detailed = await readCommandCodeSessionDetailed(input, options);
   return detailed.bundle;
-}
-
-/** 列出数据根目录下所有会话（CLI 的 inspect 用） */
-export async function listCommandCodeSessions(options: { home?: string } = {}): Promise<CommandCodeSessionInfo[]> {
-  const home = commandCodeHome(options.home);
-  const projectsRoot = commandCodeProjectsDir(home);
-  let projectDirs: string[] = [];
-  try {
-    projectDirs = (await readdir(projectsRoot, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name);
-  } catch {
-    return [];
-  }
-  const infos: CommandCodeSessionInfo[] = [];
-  for (const projectDirName of projectDirs) {
-    const dir = join(projectsRoot, projectDirName);
-    for (const name of await listTranscriptFiles(dir)) {
-      const filePath = join(dir, name);
-      const st = await stat(filePath);
-      const metaFile = await readMetaFile(sessionFileMetaPath(filePath));
-      const info: CommandCodeSessionInfo = { id: name.slice(0, -'.jsonl'.length), path: filePath, updatedAt: st.mtime.toISOString() };
-      if (metaFile?.title) info.title = metaFile.title;
-      const parsed = parseJsonl(await readFile(filePath, 'utf8'));
-      if (parsed.records.length > 0 && isCcHeader(parsed.records[0])) info.cwd = parsed.records[0].cwd;
-      infos.push(info);
-    }
-  }
-  infos.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-  return infos;
 }
 
 /** 粗略统计，供 CLI 打印 */

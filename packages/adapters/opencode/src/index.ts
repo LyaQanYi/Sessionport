@@ -1,5 +1,7 @@
 export { readOpencodeSession, exportOpencodeSession, exportToBundle } from './read.ts';
 export type { ReadOpencodeOptions } from './read.ts';
+export { listOpencodeSessions } from './list.ts';
+export type { OpencodeListOptions } from './list.ts';
 export { writeOpencodeSession, printWriteReport, OPENCODE_CAPS } from './write.ts';
 export type { WriteOpencodeOptions, WriteOpencodeResult } from './write.ts';
 export { verifyOpencodeSession, verifyOpencodeExport, resumeSmokeOpencode, countOpencodeTarget } from './verify.ts';
