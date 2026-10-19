@@ -23,6 +23,7 @@ sessionport 是一个本地优先的开源 CLI，把 AI 编程 agent 之间的�
 | npm 发布名 | `sessionport-cli` 或 `@sessionport/cli`（发布时二选一，bin 均为 `sessionport`） |
 | GitHub 仓库 | `<owner>/sessionport`（2026-10-19 查无同名项目） |
 | 技术栈 | TypeScript（Node ≥ 22 / Bun）、better-sqlite3、zod、vitest |
+| 模型绑定 | **不迁移**：跨 agent 导入后目标端使用自身默认模型（2026-10-19 确认，属于可接受的损失，不是待修 bug） |
 
 命名考量的教训：生态中 `cc-` 前缀（cc-switch、cc-sync）已是"Claude Code 周边工具"的信号。
 cc-switch 全称 Claude Code Switch，CC 中心化出身、扩张到 7+ 工具后名字成为负担。
@@ -168,6 +169,16 @@ sessionport doctor                           # 格式版本健康检查
 sessionport scan                             # 会话内容 secret 扫描
 ```
 
+### 6.1 损失分级（2026-10-19 增补）
+
+损失清单里的条目分两类，报告消费者（以及未来的 CI）应按类别处理：
+
+| 类别 | 含义 | 例子 |
+|---|---|---|
+| **设计取舍（accepted）** | 目标端没有对应概念，或刻意不迁移；永远存在，不需要修 | 模型绑定不迁移、thinking 块丢弃（无法伪造 Anthropic 签名）、目标端使用自身 system prompt、源端 UI 镜像/运行时事件不入 IR |
+| **能力缺口（actionable）** | 现在做不到但可以补，属于 roadmap | 子代理会话未导出、图片附件未映射、fork/undo 边界被压平、Codex/opencode adapter 缺失 |
+
+原则：**设计取舍也要报，但不承诺修复**；能力缺口必须进 roadmap 并配验证用例。
 ## 7. 安全与隐私
 
 - 本地优先，默认零遥测
