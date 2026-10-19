@@ -22,11 +22,12 @@ const USAGE = [
   '  commandcode:<路径>     Command Code transcript（.jsonl）或会话 id',
   '  dsh:<目录>             DSH 会话目录（含 session.v4.jsonl.zstd）',
   '  codex:<路径|id>        Codex rollout（sessions/**/rollout-*.jsonl）或会话 id',
+  '  opencode:<路径|id>     opencode 导出 JSON 或会话 id（ses_…）',
   '  <ir.json>              已有 IR 文件',
   '  <无前缀目录/文件>      按结构自动识别',
   '',
   '目标 agent（--to）:',
-  '  claude-code  |  command-code  |  dsh  |  codex',
+  '  claude-code  |  command-code  |  dsh  |  codex  |  opencode',
   '',
   '通用选项:',
   '  --home <dir>           目标数据根目录（claude: 配置目录；command-code: ~/.commandcode；dsh: DSH_HOME）',
@@ -68,6 +69,7 @@ function detectSource(raw: string): SourceKind {
   if (raw.startsWith('cmd:')) return { kind: 'command-code', target: raw.slice(4) };
   if (raw.startsWith('dsh:')) return { kind: 'dsh', target: raw.slice(4) };
   if (raw.startsWith('codex:')) return { kind: 'codex', target: raw.slice(6) };
+  if (raw.startsWith('opencode:')) return { kind: 'opencode', target: raw.slice(9) };
   if (raw.endsWith('.json') && existsSync(raw) && !existsSync(join(raw, 'state.json'))) return { kind: 'ir', target: raw };
   if (existsSync(join(raw, 'state.json'))) return { kind: 'kimi', target: raw };
   if (existsSync(join(raw, 'session.v4.jsonl.zstd'))) return { kind: 'dsh', target: raw };
@@ -88,6 +90,18 @@ function detectSource(raw: string): SourceKind {
 
 async function loadBundle(source: string): Promise<IrBundle> {
   const detected = detectSource(source);
+  if (detected.kind === 'ir' && detected.target.endsWith('.json')) {
+    // IR 与 opencode 导出都是 .json：先按 IR 校验，失败再当 opencode 导出
+    try {
+      const parsed = JSON.parse(readFileSync(detected.target, 'utf8')) as { irVersion?: unknown; info?: unknown; messages?: unknown };
+      if (parsed.irVersion === undefined && parsed.info !== undefined && Array.isArray(parsed.messages)) {
+        const mod = await import('@sessionport/adapter-opencode');
+        return mod.exportToBundle(parsed as never);
+      }
+    } catch {
+      // 落到下面的 IR 处理
+    }
+  }
   if (detected.kind === 'ir') {
     const bundle = JSON.parse(readFileSync(detected.target, 'utf8')) as IrBundle;
     const errors = validateIrBundle(bundle);
@@ -97,6 +111,10 @@ async function loadBundle(source: string): Promise<IrBundle> {
   if (detected.kind === 'kimi') {
     const mod = await import('@sessionport/adapter-kimi-code');
     return mod.readKimiBundle(resolve(detected.target));
+  }
+  if (detected.kind === 'opencode') {
+    const mod = await import('@sessionport/adapter-opencode');
+    return mod.readOpencodeSession(detected.target);
   }
   if (detected.kind === 'command-code') {
     const mod = await import('@sessionport/adapter-command-code');
@@ -201,6 +219,9 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
   } else if (to === 'codex') {
     const mod = await import('@sessionport/adapter-codex');
     report = await mod.writeCodexSession(bundle, opts);
+  } else if (to === 'opencode') {
+    const mod = await import('@sessionport/adapter-opencode');
+    report = await mod.writeOpencodeSession(bundle, opts);
   } else {
     fail('不支持的目标 agent: ' + to);
   }
@@ -247,6 +268,11 @@ async function writeTarget(
     const report = await mod.writeCommandCodeSession(bundle, { ...(opts as object), id, dryRun });
     return { target, targetId: report.sessionId, paths: report.paths, unit: 'rows', units: report.rows.length + 1, report };
   }
+  if (target === 'opencode') {
+    const mod = await import('@sessionport/adapter-opencode');
+    const report = await mod.writeOpencodeSession(bundle, { ...(opts as object), id, dryRun, runCwd: typeof opts.cwd === 'string' ? opts.cwd : undefined });
+    return { target, targetId: report.sessionId, paths: report.jsonPath ? [report.jsonPath] : [], unit: 'rows', units: report.exportData.messages?.length ?? 0, report };
+  }
   if (target === 'codex') {
     const mod = await import('@sessionport/adapter-codex');
     const report = await mod.writeCodexSession(bundle, { ...(opts as object), id, dryRun, filePath: forcedPath });
@@ -266,6 +292,16 @@ async function countTarget(target: string, outcome: WriteOutcome, opts: Record<s
     const mod = await import('@sessionport/adapter-dsh');
     const result = await mod.countDshTarget({ home: opts.home as string | undefined, sessionId: outcome.targetId });
     return { exists: result.exists, units: result.units };
+  }
+  if (target === 'opencode') {
+    try {
+      const mod = await import('@sessionport/adapter-opencode');
+      // 目标端不落 JSON 文件（import 后临时文件会清理），通过 export 数消息
+      const raw = await mod.exportOpencodeSession(outcome.targetId);
+      return mod.countOpencodeTarget(raw);
+    } catch {
+      return { exists: false, units: 0 };
+    }
   }
   if (target === 'codex') {
     const forcedPath = typeof opts.targetPath === 'string' ? opts.targetPath : undefined;
@@ -370,6 +406,13 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
     if (!file) fail('command-code 校验需要 --file 或 --id');
     const report = await mod.verifyCommandCodeSession({ filePath: file });
     result = { ok: report.ok, checks: report.checks };
+  } else if (agent === 'opencode') {
+    const mod = await import('@sessionport/adapter-opencode');
+    const file = typeof values.file === 'string' ? values.file : undefined;
+    const id = typeof opts.id === 'string' ? opts.id : undefined;
+    if (!file && !id) fail('opencode 校验需要 --file <导出 JSON> 或 --id <ses_…>');
+    const report = await mod.verifyOpencodeSession({ filePath: file, sessionId: id });
+    result = { ok: report.ok, checks: report.checks };
   } else if (agent === 'codex') {
     const mod = await import('@sessionport/adapter-codex');
     const file = typeof values.file === 'string' ? values.file : typeof opts.id === 'string' ? opts.id : undefined;
@@ -399,6 +442,17 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
         sessionId: String(opts.id),
       });
       process.stdout.write('command: ' + smoke.command + '\n');
+      process.stdout.write(smoke.ok ? 'RESUME SMOKE: PASS\n' : 'RESUME SMOKE: FAIL\n');
+      if (!smoke.ok) process.exit(2);
+    } else if (agent === 'opencode') {
+      const mod = await import('@sessionport/adapter-opencode');
+      const id = typeof opts.id === 'string' ? opts.id : undefined;
+      if (!id) fail('opencode resume 冒烟需要 --id <ses_…>');
+      process.stdout.write('\n无头 resume 冒烟测试…\n');
+      const smoke = await mod.resumeSmokeOpencode({ sessionId: id, cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined, model: typeof opts.model === 'string' ? opts.model : undefined });
+      process.stdout.write('command: ' + smoke.command + '\n');
+      if (smoke.stdout) process.stdout.write('stdout: ' + String(smoke.stdout).slice(-1200) + '\n');
+      if (smoke.stderr) process.stdout.write('stderr: ' + String(smoke.stderr).slice(-1200) + '\n');
       process.stdout.write(smoke.ok ? 'RESUME SMOKE: PASS\n' : 'RESUME SMOKE: FAIL\n');
       if (!smoke.ok) process.exit(2);
     } else if (agent === 'codex') {
