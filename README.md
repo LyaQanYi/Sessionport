@@ -70,6 +70,15 @@ node packages/cli/src/index.ts push "dsh:$HOME/.dsh/sessions/--<workspace>--/ses
 # 一条命令跑通双向（含结构校验）
 ./scripts/demo-interop.sh
 ```
+### 导入到真实的 app 数据目录
+
+```bash
+# DSH：--home 指向 ~/.dsh，--register 让运行中的 app 重启后立刻看到
+node packages/cli/src/index.ts push "commandcode:<transcript>" \
+  --to dsh --home "$HOME/.dsh" --register
+
+# 重启 DSH 应用后，会话会出现在对应 workspace 下（projcache 由 app 重建）
+```
 ## Supported formats
 
 | Agent | Read | Write | Resume verified | Against |
