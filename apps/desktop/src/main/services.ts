@@ -450,6 +450,33 @@ export async function runMigration(
   };
 }
 
+export interface PathsInfo {
+  homes: Record<string, { label: string; path: string; exists: boolean }>;
+  registryDir: string;
+  registryFile: string;
+}
+
+/** 各 agent 的数据目录（设置页展示 + 打开用） */
+export function pathsInfo(): PathsInfo {
+  const home = homedir();
+  const homes = {
+    kimi: { label: 'Kimi Code', path: join(home, '.kimi-code') },
+    claude: { label: 'Claude Code', path: join(home, '.claude') },
+    commandCode: { label: 'Command Code', path: join(home, '.commandcode') },
+    dsh: { label: 'DeepSeek Harness', path: join(home, '.dsh') },
+    codex: { label: 'Codex', path: join(home, '.codex') },
+    opencode: { label: 'opencode', path: join(home, '.local', 'share', 'opencode') },
+  };
+  const registryDir = sessionportHome();
+  return {
+    homes: Object.fromEntries(
+      Object.entries(homes).map(([key, value]) => [key, { ...value, exists: existsSync(value.path) }]),
+    ),
+    registryDir,
+    registryFile: join(registryDir, 'registry.json'),
+  };
+}
+
 /** 测试 / 调试用：探测默认数据目录是否存在 */
 export function detectHomes(): Record<string, boolean> {
   const home = homedir();

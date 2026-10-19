@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowRight, CheckCircle2, Info, ListChecks, Loader2 } fr
 import { api, sessionRefOf } from '../api.ts';
 import type { AgentId, DivergedMode, SessionRow } from '../api.ts';
 import { Badge, Button, Card, CheckboxRow, Select, Spinner, Topbar, cn } from '../ui.tsx';
-import { agentLabel } from './SessionsPage.tsx';
+import { agentLabel } from '../agents.tsx';
 
 const DECISION_TONE = {
   fresh: 'default',

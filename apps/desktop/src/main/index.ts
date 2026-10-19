@@ -51,14 +51,14 @@ function createWindow(): void {
       if (nav || openFirst) {
         try {
           // 会话列表是异步加载的：轮询等待目标元素出现（最多 8 秒）
-          const selector = openFirst ? '[data-session-row]:not([disabled])' : 'nav button';
+          const selector = openFirst ? '[data-session-row]:not([disabled])' : '[data-nav="' + (nav ?? '') + '"]';
           let clicked = false;
           for (let attempt = 0; attempt < 80 && !clicked; attempt += 1) {
             clicked = (await window.webContents.executeJavaScript(
               `(() => {
-                const navLabel = ${JSON.stringify(nav ?? '')};
-                if (navLabel) {
-                  const target = [...document.querySelectorAll('nav button')].find((el) => (el.textContent || '').includes(navLabel));
+                const navView = ${JSON.stringify(nav ?? '')};
+                if (navView) {
+                  const target = document.querySelector('[data-nav="' + navView + '"]');
                   if (target) { target.click(); return true; }
                   return false;
                 }

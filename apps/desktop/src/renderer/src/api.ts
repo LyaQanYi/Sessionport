@@ -95,6 +95,20 @@ export interface Capabilities {
   homes: Record<string, boolean>;
 }
 
+export interface HomeInfo {
+  label: string;
+  path: string;
+  exists: boolean;
+}
+
+export interface PathsInfo {
+  homes: Record<string, HomeInfo>;
+  registryDir: string;
+  registryFile: string;
+  version: string;
+  electron: string;
+}
+
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
 interface SessionportBridge {
@@ -133,6 +147,8 @@ export const api = {
   runMigration: (payload: { agent: AgentId; ref: SessionRef; target: AgentId } & MigrationOptions) =>
     invoke<MigrationResult>('migrate:run', { agent: payload.agent, ...payload.ref, target: payload.target, ...payload }),
   capabilities: () => invoke<Capabilities>('app:capabilities'),
+  paths: () => invoke<PathsInfo>('app:paths'),
+  openPath: (key: string) => invoke<{ opened: string }>('app:openPath', { key }),
 };
 
 export function formatTime(iso?: string): string {

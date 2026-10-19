@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowLeft, ArrowLeftRight, Brain, Copy, Info, SquareTerm
 import { api, formatTime, sessionRefOf } from '../api.ts';
 import type { SessionRow } from '../api.ts';
 import { Badge, Button, Spinner, Topbar, cn } from '../ui.tsx';
-import { agentLabel } from './SessionsPage.tsx';
+import { agentLabel } from '../agents.tsx';
 
 const PAGE_SIZE = 300;
 
