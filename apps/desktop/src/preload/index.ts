@@ -15,6 +15,8 @@ const api = {
     return ipcRenderer.invoke(channel, payload ?? {});
   },
   platform: process.platform,
+  /** 环境变量 SESSIONPORT_THEME=light|dark|system（截图/测试用） */
+  initialTheme: process.env.SESSIONPORT_THEME ?? null,
 };
 
 contextBridge.exposeInMainWorld('sessionport', api);
