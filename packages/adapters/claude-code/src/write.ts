@@ -246,6 +246,9 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
     losses.add('claude.cross-agent-import', '会话来自 ' + session.source.agent + '，模型/工具语义按 Claude 结构近似还原', {
       severity: 'info',
     });
+    losses.add('claude.model-not-mapped', '源模型 ' + model + ' 不是 Claude 模型名，目标端会回落到自身默认模型', {
+      severity: 'info',
+    });
   }
   if (bundle.children.length > 0 && !options.includeChildren) {
     const childEvents = bundle.children.reduce((n, c) => n + c.session.events.length, 0);

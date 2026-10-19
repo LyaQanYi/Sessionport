@@ -8,7 +8,8 @@ dist/
 session_fdefc84f-*/
 fixtures/private/
 .tmp/
-.spikes/*/home/
+.spikes/
+!research/
 
 # 系统
 .DS_Store

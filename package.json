@@ -8,7 +8,7 @@
   },
   "scripts": {
     "cli": "node packages/cli/src/index.ts",
-    "test": "node --test packages/core/test/*.test.ts packages/adapters/*/test/*.test.ts",
+    "test": "node --test packages/core/test/*.test.ts packages/adapters/*/test/*.test.ts packages/cli/test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "workspaces": [

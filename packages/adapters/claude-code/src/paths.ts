@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { claudeProjectSlug } from '@sessionport/core';
 
 /**
@@ -8,9 +8,12 @@ import { claudeProjectSlug } from '@sessionport/core';
  * - 隔离测试：CLAUDE_CONFIG_DIR 覆盖，<configDir>/projects/<slug>/<uuid>.jsonl
  */
 export function claudeConfigDir(explicit?: string): string {
-  if (explicit) return explicit;
+  // 必须绝对化：claude 子进程的 cwd 可能和当前进程不同，
+  // 相对路径会被它按自己的 cwd 解析，导致找不到会话（实测 "No conversation found"）。
+  const abs = (p: string): string => (isAbsolute(p) ? p : resolve(p));
+  if (explicit) return abs(explicit);
   const fromEnv = process.env.CLAUDE_CONFIG_DIR;
-  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  if (fromEnv && fromEnv.length > 0) return abs(fromEnv);
   return join(homedir(), '.claude');
 }
 

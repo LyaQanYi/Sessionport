@@ -5,6 +5,10 @@ A conversation started in Kimi Code becomes a Claude Code session you can `/resu
 
 > **Status: alpha, vertical slice.** Two adapters exist today: `kimi-code` (read) and `claude-code` (write + verify).
 > The design and roadmap live in [DESIGN.md](./DESIGN.md); the format research lives in [research/agent-formats.md](./research/agent-formats.md).
+>
+> **Verified end-to-end (2026-10-19)**: a real Kimi Code session (92 events + 1 sub-agent, 92 events) was converted
+> into a 45-row Claude Code transcript and `claude -p --resume <id>` returned `RESUME_OK` — the model answered from the
+> ported history. See [research/claude-code-resume-spec.md](./research/claude-code-resume-spec.md) for the load contract.
 
 ## Why
 

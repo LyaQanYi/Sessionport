@@ -127,6 +127,12 @@ async function cmdPush(
 
   process.stdout.write(printWriteReport(report) + '\n');
   printNotices(bundle.root.notices);
+  process.stdout.write('\n下一步:\n');
+  process.stdout.write('  CLAUDE_CONFIG_DIR=' + (typeof values['config-dir'] === 'string' ? values['config-dir'] : '<默认>') +
+    ' claude --resume ' + report.sessionId + '\n');
+  process.stdout.write('  或直接跑无头验证: node packages/cli/src/index.ts verify --config-dir ' +
+    (typeof values['config-dir'] === 'string' ? values['config-dir'] : '<默认>') +
+    ' --cwd ' + report.cwd + ' --session-id ' + report.sessionId + ' --resume\n');
 }
 
 async function cmdVerify(values: Record<string, string | boolean | undefined>): Promise<void> {
@@ -138,7 +144,7 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
     cwd,
     sessionId,
   });
-  process.stdout.write('file: ' + report.filePath + '\nrows: ' + report.rows + '\n');
+  process.stdout.write('file: ' + report.filePath + '\nrows: ' + report.rows + '（对话行 ' + report.conversationRows + '）\n');
   for (const check of report.checks) {
     process.stdout.write('  ' + (check.ok ? 'PASS' : 'FAIL') + '  ' + check.name + (check.detail ? '  (' + check.detail + ')' : '') + '\n');
   }
