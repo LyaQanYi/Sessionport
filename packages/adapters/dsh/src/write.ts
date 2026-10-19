@@ -616,7 +616,7 @@ export async function writeDshSession(bundle: IrBundle, options: WriteDshOptions
     losses.add('dsh.cross-agent-import', '会话来自 ' + String(session.source.agent) + '，按 DSH v4 事件流近似重建；源端专有结构按损失清单降级', { severity: 'info' });
   }
   if (session.meta.model !== undefined) {
-    losses.add('dsh.model-selection-dropped', '源模型 "' + session.meta.model + '" 未写入 model/selection；DSH 用自身默认模型启动，可在会话里手动切换', { severity: 'info' });
+    losses.add('dsh.model-selection-dropped', '源模型 "' + session.meta.model + '" 不迁移（设计取舍：跨 agent 导入后由目标端使用自身默认模型，可在会话里切换）', { severity: 'info' });
   }
 
   const rootWritten = await writeOneSession(session, {

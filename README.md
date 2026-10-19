@@ -97,6 +97,12 @@ Reading and writing are asymmetric, so losses are tracked separately:
 - **`notices`** (per session, on read): what the source had but IR does not model — e.g. Kimi's UI message mirror, runtime/config events, and turns reverted by `undo` (reverted turns are cut so the target sees the post-undo context).
 - **`losses`** (per export, on write): what IR had but the target cannot represent — dropped thinking blocks, dropped sub-agent sessions, collapsed branch boundaries.
 
+Losses are either **accepted design trade-offs** (no mapping exists, or we deliberately don't carry it —
+e.g. model bindings are not migrated, the target keeps its own default model and system prompt) or
+**actionable capability gaps** (sub-agent sessions, image attachments, branch boundaries). The former is
+reported but never "fixed"; the latter is roadmap work and must come with a verification case. See
+[DESIGN.md §6.1](./DESIGN.md).
+
 ## Privacy
 
 Session logs contain prompts, code, and sometimes secrets. sessionport is local-first with zero telemetry.
