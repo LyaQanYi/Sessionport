@@ -129,7 +129,7 @@ export async function resumeSmokeOpencode(options: OpencodeResumeSmokeOptions): 
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGKILL');
-    }, options.timeoutMs ?? 180000);
+    }, options.timeoutMs ?? 300000);
     child.on('close', (code) => {
       clearTimeout(timer);
       closeSync(fdOut);

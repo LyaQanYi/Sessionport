@@ -58,8 +58,8 @@ opencode db path / opencode db "<sql>" --format json   # 直接查库
 
 ## 4. 一个必须绕开的坑：export 在管道下截断 64KB
 
-`opencode export` 的 stdout 如果是**管道**，输出会在 **65536 字节**处被截断（实测 execFile/spawn 都是 65536），
-JSON 直接解析失败（`Unterminated string in JSON`）。重定向到文件则完整。
+`opencode export` 的 stdout 如果是**管道**，输出会被截断：Lead 实测 65,536 字节，spike 实测 262,144 字节
+（取决于管道缓冲）。JSON 直接解析失败（`Unterminated string in JSON`），重定向到文件则完整（实测 1.25MB / 51 条消息可解析）。
 adapter 的做法：把子进程 stdout 直接接到临时文件描述符，再读回文件。
 
 ## 5. headless resume（实测）
@@ -71,8 +71,10 @@ OPENCODE_DB=<库> opencode run --session <id> --format json -m opencode-go/glm-5
 
 - **必须显式 `-m`**：导入会话的源模型（如 `kimi-code/kimi-for-coding`）在目标端不存在或协议不匹配；
   用 `opencode models` 挑本机可用模型（本机 `opencode-go/glm-5.2` 实测可用，免费 zen 模型对 CLI 有限制）
-- **隔离要复制真实库**：`OPENCODE_DB` 指向空库时，provider 凭证/账户状态丢失，free tier 会 403；
-  复制 `opencode.db` 到临时路径再导入即可（真实库不动）
+- **隔离要复制真实库**：provider 凭证/账户状态在库的 credential/account 表里，`OPENCODE_DB` 指向空库时模型调用会 401；
+  复制 `opencode.db`（`sqlite3 .backup`）到临时路径再导入是当前做法（真实库不动）。
+  注意：**复制库不是永久解法**——实测 16:47 用同一份副本还能 RESUME_OK，16:50 之后连真实库副本也全部 401，
+  属于 provider 凭证失效（外部原因），与契约无关
 - `run --session` 会基于库里的历史回放，并把新一轮写回同一会话（append）
 
 ## 6. 与 IR 的映射
@@ -82,3 +84,18 @@ OPENCODE_DB=<库> opencode run --session <id> --format json -m opencode-go/glm-5
 - 导出侧：一个 IR 事件流会被聚合成「user 消息 + assistant 消息（多条 part）」；工具调用与结果折叠成一个 `tool` part
 - 子代理：opencode 用 session 上的 `agent` 列表示，没有独立会话；跨端导入时作为普通工具调用保留（记损失）
 - 新模型 `session_v2`/`session_message` 存在于同一库，但 1.19.3 的 import/export 仍走旧表（实测）；未来 2.x 再适配
+## 7. import 行为细节（spike 实测补充）
+
+- **import 会用当前进程的项目和 cwd 覆盖 `info.projectID/directory/path`** —— 所以调用前必须 `cd` 到会话的 cwd；
+  adapter 已把 import 子进程的 cwd 固定为会话 cwd。
+- session 用 upsert（同 id 只更新 project/directory/path，title/slug/version/model 保持原值）；
+  message / part 用 `ON CONFLICT DO NOTHING` —— 同 id 静默去重、不覆盖。
+- 校验是「先写 session 行，再逐条校验 message/part」，中途失败会留下部分写入；重试建议换新 id 或新库。
+- `session.id` 只校验 `ses` 前缀、`message.id` 只校验 `msg`、`part.id` 只校验 `prt`（后缀自由）；
+  `session.version` 任意非空字符串。
+- **旧表 vs v2**：1.19.3 的 import/export/list/run 全部走旧模型三张表；
+  真实库里的 `session_v2`/`session_message`（opencode 2.0.x 写的）对 1.19.3 不可见（export 报 Session not found）。
+- 隔离 recipe（可复现）：`OPENCODE_DB` + `XDG_DATA_HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME` 四件套 +
+  复制 `auth.json` + `sqlite3 .backup` 复制真实库；只给空库会因 credential/account 表为空导致 provider 401。
+
+> 完整逐字段契约见 [opencode-spec.md](./opencode-spec.md)。
