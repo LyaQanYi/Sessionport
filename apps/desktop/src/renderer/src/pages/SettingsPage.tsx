@@ -3,7 +3,8 @@ import { ExternalLink, FolderOpen, Info, Monitor, Moon, Settings2, Sun } from 'l
 
 import { api } from '../api.ts';
 import type { ThemeMode } from '../App.tsx';
-import { AgentGlyph } from '../agents.tsx';
+import { AgentGlyph, agentLabel } from '../agents.tsx';
+import { ALL_AGENTS, type AgentPreferences } from '../preferences.ts';
 import { Badge, Button, SettingsBlock, SettingsCard, SettingsRow, SegmentedControl, Spinner, Topbar } from '../ui.tsx';
 
 const AGENT_FOR_HOME: Record<string, string> = {
@@ -15,7 +16,7 @@ const AGENT_FOR_HOME: Record<string, string> = {
   opencode: 'opencode',
 };
 
-export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: ThemeMode) => void }) {
+export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: ThemeMode) => void; prefs: AgentPreferences }) {
   const pathsQuery = useQuery({ queryKey: ['paths'], queryFn: api.paths });
   const paths = pathsQuery.data;
 
@@ -36,6 +37,44 @@ export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: Th
                     { value: 'dark', label: <span className="flex items-center gap-1"><Moon className="h-3 w-3" />深色</span> },
                   ]}
                 />
+              </SettingsRow>
+            </SettingsCard>
+          </SettingsBlock>
+
+          <SettingsBlock title="Harness" description="只列出你实际会用到的；开关会影响侧栏、会话列表和迁移目标">
+            <SettingsCard>
+              {ALL_AGENTS.map((agent) => {
+                const detected = props.prefs.detected.includes(agent);
+                const enabled = props.prefs.enabled.includes(agent);
+                return (
+                  <SettingsRow
+                    key={agent}
+                    label={
+                      <span className="flex items-center gap-2">
+                        <AgentGlyph agent={agent} />
+                        {agentLabel(agent)}
+                      </span>
+                    }
+                    description={detected ? '本机已检测到数据目录' : '本机未检测到数据目录'}
+                  >
+                    {detected ? <Badge variant="success">已安装</Badge> : <Badge variant="outline">未检测</Badge>}
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={() => props.prefs.toggle(agent)}
+                      className="h-4 w-4 rounded border-input accent-[hsl(var(--ring))]"
+                      title={enabled ? '在侧栏显示' : '隐藏'}
+                    />
+                  </SettingsRow>
+                );
+              })}
+              <SettingsRow
+                label="显示策略"
+                description={props.prefs.customized ? '已自定义（点右侧恢复自动检测）' : '跟随本机检测结果'}
+              >
+                <Button variant="outline" size="sm" onClick={props.prefs.resetToDetected}>
+                  恢复自动检测
+                </Button>
               </SettingsRow>
             </SettingsCard>
           </SettingsBlock>

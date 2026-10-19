@@ -117,7 +117,7 @@ export function ReaderPage(props: { session: SessionRow; onBack: () => void; onM
                       <div
                         className={cn(
                           'max-w-[92%] whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px] leading-relaxed',
-                          isUser ? 'bg-primary-soft text-foreground' : 'bg-card text-foreground',
+                          isUser ? 'bg-primary/10 text-foreground' : 'bg-card text-foreground',
                         )}
                       >
                         {event.text}

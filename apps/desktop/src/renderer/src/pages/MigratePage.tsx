@@ -14,7 +14,7 @@ const DECISION_TONE = {
   diverged: 'warning',
 } as const;
 
-export function MigratePage(props: { initial: SessionRow | null }) {
+export function MigratePage(props: { initial: SessionRow | null; enabledAgents: string[] }) {
   const sessionsQuery = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
   const capsQuery = useQuery({ queryKey: ['capabilities'], queryFn: api.capabilities });
 
@@ -29,13 +29,19 @@ export function MigratePage(props: { initial: SessionRow | null }) {
     if (props.initial && sourceKey === null) setSourceKey(rowKey(props.initial));
   }, [props.initial, sourceKey]);
 
-  const sessions = sessionsQuery.data?.sessions ?? [];
+  const sessions = (sessionsQuery.data?.sessions ?? []).filter(
+    (row) => props.enabledAgents.length === 0 || props.enabledAgents.includes(row.agent),
+  );
   const source = useMemo(() => sessions.find((row) => rowKey(row) === sourceKey) ?? null, [sessions, sourceKey]);
-  const writable = capsQuery.data?.writable ?? [];
+  const writableAll = capsQuery.data?.writable ?? [];
+  const writable = writableAll.filter(
+    (agent) => props.enabledAgents.length === 0 || props.enabledAgents.includes(agent),
+  );
+  const targets = writable.length > 0 ? writable : writableAll;
 
   useEffect(() => {
-    if (target === null && writable.length > 0) setTarget(writable[0] ?? null);
-  }, [target, writable]);
+    if (target === null && targets.length > 0) setTarget(targets[0] ?? null);
+  }, [target, targets]);
 
   const preview = useMutation({
     mutationFn: () => api.previewMigration(source!.agent, sessionRefOf(source!), target!, { register, includeChildren }),
@@ -77,7 +83,7 @@ export function MigratePage(props: { initial: SessionRow | null }) {
                 <div className="text-2xs font-medium text-muted-foreground">目标 agent</div>
                 <Select value={target ?? ''} onChange={(event) => setTarget((event.target.value || null) as AgentId | null)}>
                   <option value="">（选择）</option>
-                  {writable.map((agent) => (
+                  {targets.map((agent) => (
                     <option key={agent} value={agent}>
                       {agentLabel(agent)}
                     </option>
@@ -158,7 +164,7 @@ export function MigratePage(props: { initial: SessionRow | null }) {
                         onClick={() => setMode(option.value)}
                         className={cn(
                           'rounded-md border px-3 py-2 text-left text-xs transition-colors',
-                          mode === option.value ? 'border-primary bg-primary-soft' : 'border-border hover:bg-accent',
+                          mode === option.value ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent',
                         )}
                       >
                         <div className="font-medium">{option.title}</div>
@@ -219,7 +225,7 @@ export function MigratePage(props: { initial: SessionRow | null }) {
               </div>
 
               {run.error ? (
-                <Card className="border-destructive bg-destructive-soft p-3 text-xs text-destructive">{String(run.error)}</Card>
+                <Card className="border-destructive bg-destructive/10 p-3 text-xs text-destructive">{String(run.error)}</Card>
               ) : null}
               {run.data?.refused ? (
                 <Card className="border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600 dark:text-amber-400">
