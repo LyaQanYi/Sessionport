@@ -7,7 +7,7 @@
 // 而 thread-index 只在「空库」时才从磁盘重建（seedThreadIndex: existing>0 直接跳过），
 // 所以仅写 transcript 不会出现在列表里，必须补注册。
 //
-// 用法:
+// 备注：adapter 已内置同样的逻辑，日常用 `sessionport push … --to command-code --register`
 //   node scripts/cc-register.mjs --file <transcript.jsonl> [--title <t>]
 //        [--project <abs cwd>] [--model <m>] [--dry-run]
 // 安全: 默认先备份 app-state.json 与 thread-index.db 到 .tmp/cc-backups/，可用 --restore <stamp> 回滚。

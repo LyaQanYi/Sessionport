@@ -7,6 +7,7 @@ import { LossCollector } from '@sessionport/core';
 import type { ExportCaps, IrBundle, IrContent, IrEvent, IrSession, LossEntry, WriteReport } from '@sessionport/core';
 
 import {
+  isoToMs,
   ccSessionPaths,
   commandCodeHome,
   commandCodeProjectDir,
@@ -14,6 +15,8 @@ import {
   normalizeIso,
 } from './wire.ts';
 import type { CcBlock, CcEntry, CcImageBlock, CcMessageEntry, CcSessionHeader, CcToolResultBlock } from './wire.ts';
+import { registerCommandCodeThread } from './register.ts';
+import type { RegisterResult } from './register.ts';
 
 /** Command Code 能力声明：thinking 可原样写回（探针 v3/v12 实测），工具结果独立成 user 消息 */
 export const COMMAND_CODE_CAPS: ExportCaps = {
@@ -38,11 +41,17 @@ export interface WriteCommandCodeOptions {
   title?: string;
   /** 只生成不落盘 */
   dryRun?: boolean;
+  /** 写完后注册进 Command Code 桌面端列表（thread-index.db + app-state.json） */
+  register?: boolean;
+  /** 桌面端数据目录覆盖（默认 ~/Library/Application Support/Command Code） */
+  userDataDir?: string;
 }
 
 export interface WriteCommandCodeResult extends WriteReport {
   /** 写入的 entry（不含 session 头） */
   rows: CcEntry[];
+  /** 桌面端注册结果（未启用 register 时为 undefined） */
+  registration?: RegisterResult;
   header: CcSessionHeader;
   filePath: string;
   metaPath: string;
@@ -393,11 +402,27 @@ export async function writeCommandCodeSession(bundle: IrBundle, options: WriteCo
     importedAt: new Date().toISOString(),
   };
 
+  let registration: RegisterResult | undefined;
   if (!options.dryRun) {
     await mkdir(projectDir, { recursive: true });
     const body = [header, ...rows].map((row) => JSON.stringify(row)).join('\n') + '\n';
     await writeFile(paths.jsonl, body, 'utf8');
     await writeFile(paths.meta, JSON.stringify(metaFile, null, 2), 'utf8');
+    if (options.register) {
+      registration = registerCommandCodeThread(
+        {
+          id: sessionId,
+          title,
+          projectPath: cwd,
+          model,
+          createdAt: isoToMs(header.timestamp),
+        },
+        { userDataDir: options.userDataDir },
+      );
+      if (!registration.installed) {
+        losses.add('command-code.register-skipped', '桌面端注册未完成：' + (registration.reason ?? '未知原因'), { severity: 'warning' });
+      }
+    }
   }
 
   const lossList: LossEntry[] = losses.sorted();
@@ -409,6 +434,7 @@ export async function writeCommandCodeSession(bundle: IrBundle, options: WriteCo
     header,
     filePath: paths.jsonl,
     metaPath: paths.meta,
+    registration,
     projectDir,
     cwd,
     plannedSidecars: [paths.checkpoints, home + '/history.jsonl'],
@@ -446,4 +472,3 @@ export function printWriteReport(report: WriteCommandCodeResult): string {
   }
   return lines.join('\n');
 }
-

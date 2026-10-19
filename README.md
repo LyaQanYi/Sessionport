@@ -78,6 +78,12 @@ node packages/cli/src/index.ts push "commandcode:<transcript>" \
   --to dsh --home "$HOME/.dsh" --register
 
 # 重启 DSH 应用后，会话会出现在对应 workspace 下（projcache 由 app 重建）
+
+# Command Code：--register 写入 thread-index.db + app-state.json，app 列表里直接可见
+node packages/cli/src/index.ts push "dsh:<session-dir>" \
+  --to command-code --home "$HOME/.commandcode" --register
+
+# 重启 Command Code 桌面端即可看到
 ```
 ## Supported formats
 
