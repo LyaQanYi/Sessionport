@@ -17,6 +17,17 @@ export const CLAUDE_CAPS: ExportCaps = {
   modelPinned: false,
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function normalizeChildSessionId(raw: string | undefined, used: Set<string>): string {
+  let candidate = raw ?? '';
+  if (candidate.startsWith('session-')) candidate = candidate.slice('session-'.length);
+  if (candidate.startsWith('session_')) candidate = candidate.slice('session_'.length);
+  if (!UUID_RE.test(candidate) || used.has(candidate)) candidate = randomUuid();
+  used.add(candidate);
+  return candidate;
+}
+
 export interface WriteClaudeOptions {
   /** 目标配置目录，默认 CLAUDE_CONFIG_DIR 或 ~/.claude */
   configDir?: string;
@@ -39,6 +50,8 @@ export interface WriteClaudeOptions {
 
 export interface WriteClaudeResult extends WriteReport {
   rows: ClaudeRow[];
+  /** 子代理会话（includeChildren=true 时各写一个独立会话文件） */
+  children: Array<{ sessionId: string; label?: string; filePath: string }>;
   filePath: string;
   sessionId: string;
   cwd: string;
@@ -262,6 +275,34 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
     losses.add('claude.source-undo', '源端 undo 回滚的内容已在 IR 阶段裁掉，目标端看到的是回滚后的上下文', { severity: 'info' });
   }
 
+  // 子代理：Claude 的 sidechain 语义尚未实现，先导出成独立会话（内容不丢，父子关系丢失）
+  const childResults: Array<{ sessionId: string; label?: string; filePath: string }> = [];
+  if (options.includeChildren === true && bundle.children.length > 0) {
+    const usedIds = new Set<string>([sessionId]);
+    for (const child of bundle.children) {
+      const childId = normalizeChildSessionId(child.session.source.nativeSessionId, usedIds);
+      const label = child.label ?? child.session.meta.title;
+      const childBundle: IrBundle = {
+        irVersion: bundle.irVersion,
+        createdAt: bundle.createdAt,
+        root: child.session,
+        children: [],
+      };
+      const childReport = await writeClaudeSession(childBundle, {
+        ...options,
+        sessionId: childId,
+        includeChildren: false,
+      });
+      childResults.push({ sessionId: childReport.sessionId, label, filePath: childReport.filePath });
+    }
+    if (childResults.length > 0) {
+      losses.add('claude.subagent-separate-session', '子代理会话已导出为独立会话；Claude 的 sidechain 行内结构尚未实现，父子关系丢失', {
+        count: childResults.length,
+        severity: 'info',
+      });
+    }
+  }
+
   const filePath = sessionFilePath(configDir, cwd, sessionId);
   if (!options.dryRun) {
     await mkdir(dirname(filePath), { recursive: true });
@@ -275,6 +316,7 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
     sessionId,
     paths: [filePath],
     rows,
+    children: childResults,
     filePath,
     cwd,
     written: {

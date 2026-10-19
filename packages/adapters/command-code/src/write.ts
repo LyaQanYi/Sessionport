@@ -28,6 +28,17 @@ export const COMMAND_CODE_CAPS: ExportCaps = {
   modelPinned: false,
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function normalizeChildSessionId(raw: string | undefined, used: Set<string>): string {
+  let candidate = raw ?? '';
+  if (candidate.startsWith('session-')) candidate = candidate.slice('session-'.length);
+  if (candidate.startsWith('session_')) candidate = candidate.slice('session_'.length);
+  if (!UUID_RE.test(candidate) || used.has(candidate)) candidate = randomUUID();
+  used.add(candidate);
+  return candidate;
+}
+
 export interface WriteCommandCodeOptions {
   /** 目标数据根目录，默认 ~/.commandcode（测试请传工作区内临时目录） */
   home?: string;
@@ -43,6 +54,8 @@ export interface WriteCommandCodeOptions {
   dryRun?: boolean;
   /** 保留源端注入的 synthetic 消息（默认丢弃，因为目标端自会注入自己的上下文） */
   keepInjected?: boolean;
+  /** 把子代理会话导出为独立 transcript（Command Code 没有父子会话概念，只能平铺） */
+  includeChildren?: boolean;
   /** 写完后注册进 Command Code 桌面端列表（thread-index.db + app-state.json） */
   register?: boolean;
   /** 桌面端数据目录覆盖（默认 ~/Library/Application Support/Command Code） */
@@ -54,6 +67,8 @@ export interface WriteCommandCodeResult extends WriteReport {
   rows: CcEntry[];
   /** 桌面端注册结果（未启用 register 时为 undefined） */
   registration?: RegisterResult;
+  /** 子代理会话（includeChildren=true 时各写一份独立 transcript） */
+  children: Array<{ sessionId: string; label?: string; filePath: string }>;
   header: CcSessionHeader;
   filePath: string;
   metaPath: string;
@@ -389,15 +404,58 @@ export async function writeCommandCodeSession(bundle: IrBundle, options: WriteCo
   if (model === undefined) {
     losses.add('command-code.model-omitted', 'IR 未提供模型，assistant 行不写 model 字段，目标端会回落到自身配置模型', { severity: 'info' });
   }
-  if (bundle.children.length > 0) {
+  if (bundle.children.length > 0 && options.includeChildren !== true) {
     const childEvents = bundle.children.reduce((sum, child) => sum + child.session.events.length, 0);
-    losses.add('command-code.subagent-dropped', 'Command Code 没有独立的子代理会话 transcript，子代理会话未导出', { count: bundle.children.length });
+    losses.add('command-code.subagent-dropped', '子代理会话未导出（可用 --include-children 导出为独立会话）', { count: bundle.children.length });
     losses.add('command-code.subagent-events-dropped', '子代理会话的事件未导出', { count: childEvents });
   }
   if (session.notices.some((notice) => notice.code === 'kimi.undone-turns-dropped')) {
     losses.add('command-code.source-undo', '源端 undo 回滚的内容已在 IR 阶段裁掉，目标端看到的是回滚后的上下文', { severity: 'info' });
   }
   losses.add('command-code.sidecars-not-written', 'checkpoints/prompts/history/thread-index 等 UI 索引未写；resume 不需要它们，只是 /rewind 与历史列表里没有额外元数据', { severity: 'info' });
+
+  // 子代理：Command Code 没有 sidechain，只能导出成独立会话（内容不丢，但父子关系丢失）
+  const childResults: Array<{ sessionId: string; label?: string; filePath: string }> = [];
+  if (options.includeChildren === true && bundle.children.length > 0) {
+    const usedIds = new Set<string>([sessionId]);
+    for (const child of bundle.children) {
+      const childId = normalizeChildSessionId(child.session.source.nativeSessionId, usedIds);
+      const label = child.label ?? child.session.meta.title;
+      const childTitle = '子代理 · ' + (label ?? 'subagent');
+      const childBundle: IrBundle = {
+        irVersion: bundle.irVersion,
+        createdAt: bundle.createdAt,
+        root: child.session,
+        children: [],
+      };
+      const childReport = await writeCommandCodeSession(childBundle, {
+        ...options,
+        id: childId,
+        title: childTitle,
+        includeChildren: false,
+        register: false,
+      });
+      childResults.push({ sessionId: childReport.sessionId, label, filePath: childReport.filePath });
+      if (options.register === true) {
+        registerCommandCodeThread(
+          {
+            id: childReport.sessionId,
+            title: childTitle,
+            projectPath: cwd,
+            model,
+            createdAt: Date.parse(childReport.header.timestamp) || undefined,
+          },
+          { userDataDir: options.userDataDir },
+        );
+      }
+    }
+    if (childResults.length > 0) {
+      losses.add('command-code.subagent-separate-session', '子代理会话已导出为独立会话；Command Code 没有父子会话结构，关系无法表达', {
+        count: childResults.length,
+        severity: 'info',
+      });
+    }
+  }
 
   const title = options.title ?? session.meta.title ?? 'Sessionport import';
   const metaFile = {
@@ -441,6 +499,7 @@ export async function writeCommandCodeSession(bundle: IrBundle, options: WriteCo
     filePath: paths.jsonl,
     metaPath: paths.meta,
     registration,
+    children: childResults,
     projectDir,
     cwd,
     plannedSidecars: [paths.checkpoints, home + '/history.jsonl'],

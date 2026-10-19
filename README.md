@@ -70,6 +70,14 @@ node packages/cli/src/index.ts push "dsh:$HOME/.dsh/sessions/--<workspace>--/ses
 # 一条命令跑通双向（含结构校验）
 ./scripts/demo-interop.sh
 ```
+### 子代理会话（`--include-children`）
+
+源端带子代理的会话（Kimi 的 `agent-*`、DSH 的 `delegationDepth>0` 会话）默认只导主会话并计入损失。
+加 `--include-children` 后：
+
+- **DSH 目标**：写成原生父子结构（独立会话目录 + `parentSession` / `delegationDepth` / `origin`）
+- **Claude Code / Command Code 目标**：各自写成独立会话（内容保留，但目标端没有父子概念，关系丢失）
+
 ### 安全重推（`sync`）
 
 ```bash
@@ -103,12 +111,7 @@ node packages/cli/src/index.ts push "dsh:<session-dir>" \
 ```
 ## Supported formats
 
-| Agent | Read | Write | Resume verified | Against |
-|---|---|---|---|---|
-| Kimi Code | ✅ `state.json` + `agents/*/wire.jsonl` | — | n/a (source only) | CLI 2.1.1 / session format v2 / wire protocol 1.5 |
-| Claude Code | — | ✅ JSONL session files | ✅ real `claude -p --resume` | CLI 2.1.303 |
-| Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ same layout + `.meta.json` | ✅ real `cmd -p --session <path>` | 1.82.3 |
-| DeepSeek Harness | ✅ `session.v4.jsonl.zstd` (multi-frame zstd) | ✅ same + workspace layout | ✅ headless load + full turn replay | 5.8.3 (format v4) |
+undefined
 | Codex | planned | planned | — | — |
 | opencode | planned | planned | — | — |
 

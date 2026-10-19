@@ -126,6 +126,7 @@ function commonTargetOptions(values: Record<string, string | boolean | undefined
     registerWorkspace: Boolean(values.register),
     register: Boolean(values.register),
     keepInjected: Boolean(values['keep-injected']),
+    includeChildren: Boolean(values['include-children']),
     userDataDir: typeof values['user-data-dir'] === 'string' ? values['user-data-dir'] : undefined,
     dryRun: Boolean(values['dry-run']),
   };
@@ -423,6 +424,7 @@ async function main(): Promise<void> {
       version: { type: 'string' },
       'keep-thinking': { type: 'boolean' },
       'keep-injected': { type: 'boolean' },
+      'include-children': { type: 'boolean' },
       'dry-run': { type: 'boolean' },
       register: { type: 'boolean' },
       'user-data-dir': { type: 'string' },
