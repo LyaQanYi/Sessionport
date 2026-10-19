@@ -334,3 +334,13 @@ export function resumeSmokeCommandCode(options: ResumeSmokeOptions): Promise<Res
     });
   });
 }
+/** 同步用：统计目标 transcript 的行数（含 session 头）。不存在时 units=0。 */
+export async function countCommandCodeTarget(filePath: string): Promise<{ exists: boolean; units: number }> {
+  try {
+    const text = await readFile(filePath, 'utf8');
+    const units = text.split('\n').filter((line) => line.trim().length > 0).length;
+    return { exists: true, units };
+  } catch {
+    return { exists: false, units: 0 };
+  }
+}
