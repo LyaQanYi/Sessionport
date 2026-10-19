@@ -231,6 +231,8 @@ async function writeTarget(
   id: string | undefined,
   dryRun: boolean,
 ): Promise<WriteOutcome> {
+  // codex rollout 文件名带秒级时间戳：有登记路径时强制复用，否则每次都会算出新路径
+  const forcedPath = typeof opts.targetPath === 'string' ? opts.targetPath : undefined;
   if (target === 'claude-code') {
     const mod = await import('@sessionport/adapter-claude-code');
     const report = await mod.writeClaudeSession(bundle, {
@@ -247,7 +249,7 @@ async function writeTarget(
   }
   if (target === 'codex') {
     const mod = await import('@sessionport/adapter-codex');
-    const report = await mod.writeCodexSession(bundle, { ...(opts as object), id, dryRun });
+    const report = await mod.writeCodexSession(bundle, { ...(opts as object), id, dryRun, filePath: forcedPath });
     return { target, targetId: report.sessionId, paths: report.paths, unit: 'rows', units: report.rows.length + 1, report };
   }
   const mod = await import('@sessionport/adapter-dsh');
@@ -266,8 +268,9 @@ async function countTarget(target: string, outcome: WriteOutcome, opts: Record<s
     return { exists: result.exists, units: result.units };
   }
   if (target === 'codex') {
+    const forcedPath = typeof opts.targetPath === 'string' ? opts.targetPath : undefined;
     try {
-      const text = readFileSync(outcome.paths[0]!, 'utf8');
+      const text = readFileSync(forcedPath ?? outcome.paths[0]!, 'utf8');
       return { exists: true, units: text.split('\n').filter((line) => line.trim().length > 0).length };
     } catch {
       return { exists: false, units: 0 };
@@ -290,6 +293,7 @@ async function cmdSync(source: string, values: Record<string, string | boolean |
   const registry = loadRegistry(stateHome);
   const sourceKey = sourceKeyOf(bundle.root.source, bundle.root.id);
   const ref: ExternalRef | undefined = findRef(registry, sourceKey, to as never);
+  if (ref !== undefined) opts.targetPath = ref.targetPath;
 
   // 用 dry-run 先算出「如果现在写，会写到哪、有多少单位」
   const preview = await writeTarget(to, bundle, opts, ref?.targetId ?? (typeof opts.id === 'string' ? opts.id : undefined), true);
