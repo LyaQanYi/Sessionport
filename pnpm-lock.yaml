@@ -38,6 +38,12 @@ importers:
         specifier: workspace:*
         version: link:../../core
 
+  packages/adapters/opencode:
+    dependencies:
+      '@sessionport/core':
+        specifier: workspace:*
+        version: link:../../core
+
   packages/cli:
     dependencies:
       '@sessionport/adapter-claude-code':
@@ -55,6 +61,9 @@ importers:
       '@sessionport/adapter-kimi-code':
         specifier: workspace:*
         version: link:../adapters/kimi-code
+      '@sessionport/adapter-opencode':
+        specifier: workspace:*
+        version: link:../adapters/opencode
       '@sessionport/core':
         specifier: workspace:*
         version: link:../core

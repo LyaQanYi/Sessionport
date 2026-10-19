@@ -3,7 +3,7 @@
 Move an AI coding-agent session from one CLI to another and keep going.
 A conversation started in Kimi Code becomes a Claude Code session you can `/resume` — natively, not as a pasted transcript.
 
-> **Status: alpha.** Five adapters: `kimi-code` (read), `claude-code`, `command-code`, `dsh`, `codex` (read/write + verify).
+> **Status: alpha.** Six adapters: `kimi-code` (read), `claude-code`, `command-code`, `dsh`, `codex`, `opencode` (read/write + verify).
 > The design and roadmap live in [DESIGN.md](./DESIGN.md); the format research lives in [research/agent-formats.md](./research/agent-formats.md).
 >
 > **Verified end-to-end (2026-10-19)**: a real Kimi Code session (92 events + 1 sub-agent, 92 events) was converted
