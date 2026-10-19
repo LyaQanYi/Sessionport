@@ -18,7 +18,7 @@
  * - projcache 是投影缓存，缺省时应用会回放事件重建，所以不写（也不伪造 v7 记录）。
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 
 import { LossCollector, randomUuid } from '@sessionport/core';
 import type { ExportCaps, IrBundle, IrEvent, IrSession, LossEntry, WriteReport } from '@sessionport/core';
@@ -346,7 +346,7 @@ async function writeWorkspaceRegistration(home: string, cwd: string, sessionId: 
       },
       tables: {
         workspaces: {
-          [workspaceId]: { path: cwd, title: projectKey(cwd).replace(/^-+|-+$/gu, '') || 'workspace', sessionIds: [sessionId], createdAt: now, updatedAt: now },
+          [workspaceId]: { path: cwd, title: basename(cwd) || 'workspace', sessionIds: [sessionId], createdAt: now, updatedAt: now },
         },
       },
     };
@@ -363,7 +363,9 @@ async function writeWorkspaceRegistration(home: string, cwd: string, sessionId: 
   let target = Object.entries(workspaces).find(([, record]) => record.path === cwd);
   if (target === undefined) {
     const workspaceId = randomUuid();
-    workspaces[workspaceId] = { path: cwd, title: projectKey(cwd).replace(/^-+|-+$/gu, '') || 'workspace', sessionIds: [sessionId], createdAt: now, updatedAt: now };
+    // 标题必须与 DSH 自己建工作区的方式一致：目录 basename（如 sessionport / default-workspace）。
+    // 用 projectKey 当标题会显示成 Users-lyaqanyi-Documents-Coding-xxx 这种转义串。
+    workspaces[workspaceId] = { path: cwd, title: basename(cwd) || 'workspace', sessionIds: [sessionId], createdAt: now, updatedAt: now };
     target = [workspaceId, workspaces[workspaceId]!];
     const ids = Array.isArray(globals.workspaceIds) ? globals.workspaceIds.filter((id): id is string => typeof id === 'string') : [];
     if (!ids.includes(workspaceId)) ids.unshift(workspaceId);
@@ -372,6 +374,11 @@ async function writeWorkspaceRegistration(home: string, cwd: string, sessionId: 
     root.global = globals;
   }
   const [workspaceId, record] = target;
+  // 自愈：早前版本把 projectKey 转义串写成了标题（Users-lyaqanyi-...），这里改回目录名
+  const mangledTitle = projectKey(cwd).replace(/^-+|-+$/gu, '');
+  if (typeof record.title !== 'string' || record.title.length === 0 || record.title === mangledTitle) {
+    record.title = basename(cwd) || 'workspace';
+  }
   const ids = Array.isArray(record.sessionIds) ? record.sessionIds.filter((id): id is string => typeof id === 'string') : [];
   if (!ids.includes(sessionId)) ids.unshift(sessionId);
   record.sessionIds = ids;

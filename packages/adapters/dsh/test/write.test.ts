@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -12,6 +12,26 @@ import { writeDshSession } from '../src/write.ts';
 import { buildSyntheticBundle, makeTempDir } from './fixtures.ts';
 
 const CWD = process.cwd();
+
+test('registerWorkspace：新建工作区标题用目录 basename（不是 projectKey 转义串）', async () => {
+  const home = await makeTempDir('ws-name-');
+  try {
+    const report = await writeDshSession(buildSyntheticBundle('/tmp/sessionport-ws-name/0vscode-neko'), {
+      home,
+      cwd: '/tmp/sessionport-ws-name/0vscode-neko',
+      id: 'session-bbbbbbbb-2222-4222-8222-222222222222',
+      registerWorkspace: true,
+    });
+    const state = JSON.parse(await readFile(join(home, 'storages', 'workspace.json'), 'utf8'));
+    const records = Object.values(state.tables.workspaces) as Array<{ path: string; title: string; sessionIds: string[] }>;
+    const record = records.find((r) => r.path === '/tmp/sessionport-ws-name/0vscode-neko');
+    assert.ok(record);
+    assert.equal(record.title, '0vscode-neko');
+    assert.ok(record.sessionIds.includes(report.sessionId));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test('projectKey 与官方规则一致（实测样本 + 特殊字符）', () => {
   assert.equal(projectKey('/Users/lyaqanyi/Documents/Coding/N.E.K.O.HarmonyOS'), '--Users-lyaqanyi-Documents-Coding-N.E.K.O.HarmonyOS--');
