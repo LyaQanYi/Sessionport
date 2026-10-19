@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 import { api, formatTime } from '../api.ts';
 import type { SessionRow } from '../api.ts';
@@ -16,6 +17,7 @@ const AGENT_TONE: Record<string, 'info' | 'warn' | 'default' | 'error'> = {
 
 export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
   const [query, setQuery] = useState('');
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { data, isLoading, error, refetch, isFetching } = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
 
   const sessions = useMemo(() => {
@@ -26,6 +28,13 @@ export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
       [row.title, row.cwd, row.sessionId, row.agent].filter(Boolean).join(' ').toLowerCase().includes(needle),
     );
   }, [data, query]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: sessions.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 66,
+    overscan: 12,
+  });
 
   return (
     <div className="flex h-full flex-col">
@@ -56,35 +65,46 @@ export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
       ) : sessions.length === 0 ? (
         <EmptyState title="没有找到会话" hint={data?.warnings.join('；') || '检查对应 agent 的数据目录是否存在'} />
       ) : (
-        <div className="flex-1 overflow-auto">
+        <div className="flex min-h-0 flex-1 flex-col">
           {(data?.warnings ?? []).map((warning) => (
             <div key={warning} className="border-b border-[hsl(var(--border))] bg-amber-500/10 px-5 py-2 text-xs text-amber-200">
               {warning}
             </div>
           ))}
-          {sessions.map((session) => (
-            <button
-              type="button"
-              key={session.agent + '|' + session.sessionId + '|' + session.nativePath}
-              disabled={!session.readable}
-              title={session.readable ? undefined : '该 agent 还没有 reader，只能看到列表元数据'}
-              onClick={() => props.onOpen(session)}
-              className={cn(
-                'flex w-full items-center gap-3 border-b border-[hsl(var(--border))] px-5 py-3 text-left transition',
-                session.readable ? 'hover:bg-[hsl(var(--muted))]/50' : 'cursor-not-allowed opacity-50',
-              )}
-            >
-              <Badge tone={AGENT_TONE[session.agent] ?? 'default'}>{session.agent}</Badge>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm">{session.title ?? session.sessionId}</div>
-                <div className="truncate text-[11px] text-[hsl(var(--muted-foreground))]">{session.cwd ?? session.nativePath}</div>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className="text-[11px] text-[hsl(var(--muted-foreground))]">{formatTime(session.updatedAt)}</div>
-                {session.readable ? null : <div className="text-[10px] text-[hsl(var(--muted-foreground))]">仅元数据</div>}
-              </div>
-            </button>
-          ))}
+          <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+            <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+              {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const session = sessions[virtualRow.index]!;
+                return (
+                  <div
+                    key={session.agent + '|' + session.sessionId + '|' + session.nativePath}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: 'translateY(' + virtualRow.start + 'px)' }}
+                  >
+                    <button
+                      type="button"
+                      disabled={!session.readable}
+                      title={session.readable ? undefined : '该 agent 还没有 reader，只能看到列表元数据'}
+                      onClick={() => props.onOpen(session)}
+                      className={cn(
+                        'flex w-full items-center gap-3 border-b border-[hsl(var(--border))] px-5 py-3 text-left transition',
+                        session.readable ? 'hover:bg-[hsl(var(--muted))]/50' : 'cursor-not-allowed opacity-50',
+                      )}
+                    >
+                      <Badge tone={AGENT_TONE[session.agent] ?? 'default'}>{session.agent}</Badge>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm">{session.title ?? session.sessionId}</div>
+                        <div className="truncate text-[11px] text-[hsl(var(--muted-foreground))]">{session.cwd ?? session.nativePath}</div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="text-[11px] text-[hsl(var(--muted-foreground))]">{formatTime(session.updatedAt)}</div>
+                        {session.readable ? null : <div className="text-[10px] text-[hsl(var(--muted-foreground))]">仅元数据</div>}
+                      </div>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
     </div>

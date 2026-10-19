@@ -6,7 +6,8 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { AgentId, IrBundle, LossEntry } from '@sessionport/core';
+import { describeDecision, findRef, loadRegistry, planSync, saveRegistry, sessionportHome, sourceKeyOf, upsertRef } from '@sessionport/core';
+import type { AgentId, ExternalRef, IrBundle, LossEntry, SyncDecision } from '@sessionport/core';
 
 export type ReadableAgent = 'kimi-code' | 'command-code' | 'dsh' | 'codex' | 'opencode';
 
@@ -46,7 +47,23 @@ export interface ReadResult {
   cwd?: string;
   events: SessionEventRow[];
   notices: Array<{ code: string; message: string; count?: number; severity: string }>;
+  /** 本次返回的事件数上限 */
   truncated: boolean;
+  /** 会话总事件数（用于「加载更多」） */
+  totalEvents: number;
+}
+
+/** 可序列化的同步状态（renderer 不 import core 类型） */
+export interface SyncInfo {
+  sourceKey: string;
+  decision: 'fresh' | 'up-to-date' | 'refresh' | 'diverged';
+  description: string;
+  sourceEvents: number;
+  targetUnits: number;
+  targetExtra?: number;
+  targetId?: string;
+  targetPath?: string;
+  stateFile: string;
 }
 
 export interface MigrationPreview {
@@ -55,6 +72,21 @@ export interface MigrationPreview {
   losses: LossEntry[];
   caps: Record<string, unknown>;
   warnings: string[];
+  sync: SyncInfo;
+}
+
+export interface MigrationOptions {
+  register?: boolean;
+  includeChildren?: boolean;
+  /** 目标端数据目录（claude 配置目录 / dsh home / codex home / opencode 不用 / command-code home） */
+  home?: string;
+  model?: string;
+  /** 指定后写入这个 target id（默认沿用登记里的 id） */
+  targetId?: string;
+  /** registry 目录，默认 $SESSIONPORT_HOME 或 ~/.sessionport（测试用） */
+  stateHome?: string;
+  /** 目标端已有新增时的处理：auto 拒绝 / force 覆盖 / fork 新会话 */
+  onDiverged?: 'auto' | 'force' | 'fork';
 }
 
 export interface MigrationResult {
@@ -63,6 +95,8 @@ export interface MigrationResult {
   paths: string[];
   losses: LossEntry[];
   imported: boolean;
+  sync: SyncInfo;
+  refused?: { reason: string };
 }
 
 export interface SessionRefInput {
@@ -176,7 +210,8 @@ export async function readSession(agent: AgentId, ref: SessionRefInput, limit = 
     cwd: bundle.root.meta.cwd,
     events: rows,
     notices: bundle.root.notices,
-    truncated: events.length > limit,
+    truncated: events.length > rows.length,
+    totalEvents: events.length,
   };
 }
 
@@ -199,22 +234,156 @@ export function writableAgents(): AgentId[] {
   return Object.keys(WRITERS) as AgentId[];
 }
 
-export async function previewMigration(agent: AgentId, ref: SessionRefInput, target: AgentId): Promise<MigrationPreview> {
-  const writer = WRITERS[target];
-  if (!writer) throw new Error(target + ' 还没有 writer（当前可写：' + writableAgents().join(', ') + '）');
+interface WriteOutcome {
+  sessionId: string;
+  paths: string[];
+  losses: LossEntry[];
+  caps: Record<string, unknown>;
+  imported: boolean;
+  units: number;
+  unit: 'rows' | 'events';
+}
+
+/** 调目标 adapter 写（或 dryRun 预览），返回统一的度量 */
+async function writeTarget(
+  target: AgentId,
+  bundle: IrBundle,
+  options: MigrationOptions & { dryRun?: boolean; id?: string; filePath?: string },
+): Promise<WriteOutcome> {
+  const base = {
+    dryRun: options.dryRun === true,
+    includeChildren: options.includeChildren === true,
+    model: options.model,
+    register: options.register === true && options.dryRun !== true,
+  };
+  if (target === 'claude-code') {
+    const mod = await import('@sessionport/adapter-claude-code');
+    const report = await mod.writeClaudeSession(bundle, { ...base, configDir: options.home, sessionId: options.id, cwd: bundle.root.meta.cwd });
+    return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.rows.length, unit: 'rows' };
+  }
+  if (target === 'command-code') {
+    const mod = await import('@sessionport/adapter-command-code');
+    const report = await mod.writeCommandCodeSession(bundle, { ...base, home: options.home, id: options.id });
+    return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.rows.length + 1, unit: 'rows' };
+  }
+  if (target === 'dsh') {
+    const mod = await import('@sessionport/adapter-dsh');
+    const report = await mod.writeDshSession(bundle, { ...base, home: options.home, id: options.id });
+    return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.written.events, unit: 'events' };
+  }
+  if (target === 'codex') {
+    const mod = await import('@sessionport/adapter-codex');
+    const report = await mod.writeCodexSession(bundle, { ...base, home: options.home, id: options.id, filePath: options.filePath });
+    return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.rows.length + 1, unit: 'rows' };
+  }
+  const mod = await import('@sessionport/adapter-opencode');
+  const report = await mod.writeOpencodeSession(bundle, { dryRun: options.dryRun === true, includeChildren: options.includeChildren === true, model: options.model, id: options.id });
+  return {
+    sessionId: report.sessionId,
+    paths: report.paths,
+    losses: report.losses,
+    caps: report.caps as unknown as Record<string, unknown>,
+    imported: report.imported,
+    units: report.exportData.messages?.length ?? 0,
+    unit: 'rows',
+  };
+}
+
+async function countLineFile(path: string | undefined): Promise<{ exists: boolean; units: number }> {
+  if (!path) return { exists: false, units: 0 };
+  try {
+    const { readFile } = await import('node:fs/promises');
+    const text = await readFile(path, 'utf8');
+    return { exists: true, units: text.split('\n').filter((line) => line.trim().length > 0).length };
+  } catch {
+    return { exists: false, units: 0 };
+  }
+}
+
+async function countTargetUnits(
+  target: AgentId,
+  state: { targetId?: string; targetPath?: string; home?: string },
+): Promise<{ exists: boolean; units: number }> {
+  if (target === 'claude-code' || target === 'codex') return countLineFile(state.targetPath);
+  if (target === 'command-code') {
+    const mod = await import('@sessionport/adapter-command-code');
+    return mod.countCommandCodeTarget(state.targetPath ?? '');
+  }
+  if (target === 'dsh') {
+    if (!state.targetId) return { exists: false, units: 0 };
+    const mod = await import('@sessionport/adapter-dsh');
+    return mod.countDshTarget({ home: state.home, sessionId: state.targetId });
+  }
+  if (!state.targetId) return { exists: false, units: 0 };
+  try {
+    const mod = await import('@sessionport/adapter-opencode');
+    const raw = await mod.exportOpencodeSession(state.targetId);
+    return mod.countOpencodeTarget(raw);
+  } catch {
+    return { exists: false, units: 0 };
+  }
+}
+
+interface PreparedMigration {
+  bundle: IrBundle;
+  sync: SyncInfo;
+  losses: LossEntry[];
+  caps: Record<string, unknown>;
+  registry: ReturnType<typeof loadRegistry>;
+  extRef: ExternalRef | undefined;
+  stateHome: string | undefined;
+  targetId?: string;
+  targetPath?: string;
+}
+
+async function prepareMigration(agent: AgentId, ref: SessionRefInput, target: AgentId, options: MigrationOptions): Promise<PreparedMigration> {
+  if (!WRITERS[target]) throw new Error(target + ' 还没有 writer（当前可写：' + writableAgents().join(', ') + '）');
   const bundle = await loadSource(agent, ref);
-  const report = (await writer(bundle, { dryRun: true })) as { losses?: LossEntry[]; caps?: Record<string, unknown> };
+  const sourceKey = sourceKeyOf(bundle.root.source, bundle.root.id);
+  const registry = loadRegistry(options.stateHome);
+  const extRef = findRef(registry, sourceKey, target);
+  const id = options.targetId ?? extRef?.targetId;
+  const filePath = extRef?.targetPath;
+
+  // dryRun 预测本次会写到哪里（fresh 时用来算目标端初始状态）
+  const preview = await writeTarget(target, bundle, { ...options, dryRun: true, id, filePath });
+  const targetPath = filePath ?? preview.paths[0];
+  const current = extRef === undefined ? { exists: false, units: 0 } : await countTargetUnits(target, { targetId: extRef.targetId, targetPath, home: options.home });
+  const decision: SyncDecision = planSync({
+    ref: extRef,
+    source: { head: bundle.root.head, events: bundle.root.events.length },
+    target: { exists: current.exists, units: current.units },
+  });
+
+  const sync: SyncInfo = {
+    sourceKey,
+    decision: decision.kind,
+    description: describeDecision(decision),
+    sourceEvents: bundle.root.events.length,
+    targetUnits: current.units,
+    targetExtra: decision.kind === 'diverged' ? decision.targetExtra : undefined,
+    targetId: extRef?.targetId,
+    targetPath,
+    stateFile: sessionportHome(options.stateHome) + '/registry.json',
+  };
+
+  return { bundle, sync, losses: preview.losses, caps: preview.caps, registry, extRef, stateHome: options.stateHome, targetId: id, targetPath };
+}
+
+export async function previewMigration(agent: AgentId, ref: SessionRefInput, target: AgentId, options: MigrationOptions = {}): Promise<MigrationPreview> {
+  const prepared = await prepareMigration(agent, ref, target, options);
   return {
     source: {
       agent,
-      sessionId: bundle.root.source.nativeSessionId ?? bundle.root.id,
-      title: bundle.root.meta.title,
-      events: bundle.root.events.length,
+      sessionId: prepared.bundle.root.source.nativeSessionId ?? prepared.bundle.root.id,
+      title: prepared.bundle.root.meta.title,
+      events: prepared.bundle.root.events.length,
     },
     target,
-    losses: report.losses ?? [],
-    caps: report.caps ?? {},
-    warnings: bundle.root.notices.map((notice) => notice.code + (notice.count === undefined ? '' : ' x' + notice.count)),
+    losses: prepared.losses,
+    caps: prepared.caps,
+    warnings: prepared.bundle.root.notices.map((notice) => notice.code + (notice.count === undefined ? '' : ' x' + notice.count)),
+    sync: prepared.sync,
   };
 }
 
@@ -222,23 +391,62 @@ export async function runMigration(
   agent: AgentId,
   ref: SessionRefInput,
   target: AgentId,
-  options: { register?: boolean; includeChildren?: boolean; home?: string; model?: string } = {},
+  options: MigrationOptions = {},
 ): Promise<MigrationResult> {
-  const writer = WRITERS[target];
-  if (!writer) throw new Error(target + ' 还没有 writer');
-  const bundle = await loadSource(agent, ref);
-  const report = (await writer(bundle, {
-    register: options.register === true,
-    includeChildren: options.includeChildren === true,
-    home: options.home,
-    model: options.model,
-  })) as { sessionId?: string; paths?: string[]; losses?: LossEntry[]; imported?: boolean; rows?: unknown[] };
+  const prepared = await prepareMigration(agent, ref, target, options);
+  const mode = options.onDiverged ?? 'auto';
+
+  if (prepared.sync.decision === 'diverged' && mode === 'auto') {
+    return {
+      target,
+      sessionId: prepared.sync.targetId ?? '',
+      paths: prepared.sync.targetPath ? [prepared.sync.targetPath] : [],
+      losses: prepared.losses,
+      imported: false,
+      sync: prepared.sync,
+      refused: { reason: prepared.sync.description + '。选择 fork（另建会话）或 force（覆盖）后重试。' },
+    };
+  }
+  if (prepared.sync.decision === 'up-to-date') {
+    return {
+      target,
+      sessionId: prepared.sync.targetId ?? '',
+      paths: prepared.sync.targetPath ? [prepared.sync.targetPath] : [],
+      losses: prepared.losses,
+      imported: false,
+      sync: prepared.sync,
+    };
+  }
+
+  const fork = prepared.sync.decision === 'diverged' && mode === 'fork';
+  const outcome = await writeTarget(target, prepared.bundle, {
+    ...options,
+    dryRun: false,
+    id: fork ? undefined : (options.targetId ?? prepared.extRef?.targetId),
+    filePath: fork ? undefined : prepared.extRef?.targetPath,
+  });
+
+  const nextRef: ExternalRef = {
+    sourceKey: prepared.sync.sourceKey,
+    target,
+    targetId: outcome.sessionId,
+    targetPath: outcome.paths[0] ?? prepared.targetPath ?? '',
+    unit: outcome.unit,
+    targetUnits: outcome.units,
+    sourceEvents: prepared.bundle.root.events.length,
+    sourceHead: prepared.bundle.root.head,
+    updatedAt: new Date().toISOString(),
+  };
+  upsertRef(prepared.registry, nextRef);
+  saveRegistry(prepared.registry, prepared.stateHome);
+
   return {
     target,
-    sessionId: String(report.sessionId ?? ''),
-    paths: Array.isArray(report.paths) ? report.paths : [],
-    losses: report.losses ?? [],
-    imported: report.imported === true,
+    sessionId: outcome.sessionId,
+    paths: outcome.paths,
+    losses: outcome.losses,
+    imported: outcome.imported,
+    sync: { ...prepared.sync, targetId: outcome.sessionId, targetPath: nextRef.targetPath, targetUnits: outcome.units },
   };
 }
 

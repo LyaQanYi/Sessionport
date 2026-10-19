@@ -13,7 +13,18 @@ const channelSchemas = {
     sessionId: z.string().optional(),
     limit: z.number().int().positive().max(2000).optional(),
   }),
-  'migrate:preview': z.object({ agent: agentSchema, nativePath: z.string().optional(), sessionId: z.string().optional(), target: agentSchema }),
+  'migrate:preview': z.object({
+    agent: agentSchema,
+    nativePath: z.string().optional(),
+    sessionId: z.string().optional(),
+    target: agentSchema,
+    home: z.string().optional(),
+    model: z.string().optional(),
+    register: z.boolean().optional(),
+    includeChildren: z.boolean().optional(),
+    stateHome: z.string().optional(),
+    onDiverged: z.enum(['auto', 'force', 'fork']).optional(),
+  }),
   'migrate:run': z.object({
     agent: agentSchema,
     nativePath: z.string().optional(),
@@ -23,6 +34,8 @@ const channelSchemas = {
     includeChildren: z.boolean().optional(),
     home: z.string().optional(),
     model: z.string().optional(),
+    stateHome: z.string().optional(),
+    onDiverged: z.enum(['auto', 'force', 'fork']).optional(),
   }),
   'app:capabilities': z.object({}).default({}),
 } as const;
@@ -38,7 +51,14 @@ export function registerIpc(): void {
   }));
   ipcMain.handle('migrate:preview', async (_event, payload: unknown) => wrap(() => {
     const input = channelSchemas['migrate:preview'].parse(payload);
-    return previewMigration(input.agent, { nativePath: input.nativePath, sessionId: input.sessionId }, input.target);
+    return previewMigration(input.agent, { nativePath: input.nativePath, sessionId: input.sessionId }, input.target, {
+      home: input.home,
+      model: input.model,
+      register: input.register,
+      includeChildren: input.includeChildren,
+      stateHome: input.stateHome,
+      onDiverged: input.onDiverged,
+    });
   }));
   ipcMain.handle('migrate:run', async (_event, payload: unknown) => wrap(() => {
     const input = channelSchemas['migrate:run'].parse(payload);
@@ -47,6 +67,8 @@ export function registerIpc(): void {
       includeChildren: input.includeChildren,
       home: input.home,
       model: input.model,
+      stateHome: input.stateHome,
+      onDiverged: input.onDiverged,
     });
   }));
   ipcMain.handle('app:capabilities', async () => wrap(() => ({

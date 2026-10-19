@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { api, formatTime, sessionRefOf } from '../api.ts';
@@ -6,10 +7,13 @@ import { Badge, Button, Card, EmptyState, Spinner } from '../ui.tsx';
 
 const ROLE_TONE = { user: 'info', assistant: 'default' } as const;
 
+const PAGE_SIZE = 300;
+
 export function ReaderPage(props: { session: SessionRow; onBack: () => void; onMigrate: () => void }) {
+  const [limit, setLimit] = useState(PAGE_SIZE);
   const { data, isLoading, error } = useQuery({
-    queryKey: ['session', props.session.agent, props.session.nativePath],
-    queryFn: () => api.readSession(props.session.agent, sessionRefOf(props.session)),
+    queryKey: ['session', props.session.agent, props.session.nativePath, props.session.sessionId, limit],
+    queryFn: () => api.readSession(props.session.agent, sessionRefOf(props.session), limit),
   });
 
   const resumeCommand = props.session.resumeHint;
@@ -111,8 +115,15 @@ export function ReaderPage(props: { session: SessionRow; onBack: () => void; onM
               );
             })}
           </div>
-          {data?.truncated ? (
-            <div className="mt-4 text-[11px] text-amber-300">会话较长，只显示了前 {data.events.length} 个事件。</div>
+          {data && data.totalEvents > data.events.length ? (
+            <div className="mt-4 flex items-center gap-3 text-[11px] text-[hsl(var(--muted-foreground))]">
+              <span>
+                已显示 {data.events.length} / {data.totalEvents} 个事件
+              </span>
+              <Button variant="ghost" onClick={() => setLimit((value) => value + PAGE_SIZE)}>
+                加载更多
+              </Button>
+            </div>
           ) : null}
         </div>
       )}
