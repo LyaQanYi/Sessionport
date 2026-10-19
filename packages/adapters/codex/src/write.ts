@@ -38,6 +38,8 @@ export interface WriteCodexOptions {
   keepInjected?: boolean;
   /** 强制输出到指定 rollout 路径（sync 复用登记路径，避免文件名时间戳漂移） */
   filePath?: string;
+  /** rollout 形态：legacy（默认，无 ordinal）或 paginated（每行带递增 ordinal） */
+  historyMode?: 'legacy' | 'paginated';
   dryRun?: boolean;
 }
 
@@ -87,6 +89,10 @@ export async function writeCodexSession(bundle: IrBundle, options: WriteCodexOpt
   const rawCwd = options.cwd ?? session.meta.cwd ?? process.cwd();
   const cwd = isAbsolute(rawCwd) ? rawCwd : resolve(rawCwd);
   const sessionId = options.id ?? randomUUID();
+  // Codex 对非 UUID 的 resume id 会静默新建线程（exit 0），必须在写入前拦住
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
+    throw new Error('Codex 会话 id 必须是 UUID（否则 resume 会静默新建会话）: ' + sessionId);
+  }
   const title = options.title ?? session.meta.title ?? 'Sessionport import';
   const model = options.model ?? session.meta.model;
   const provider = options.provider ?? 'custom';
@@ -108,7 +114,7 @@ export async function writeCodexSession(bundle: IrBundle, options: WriteCodexOpt
     thread_source: 'user',
     model_provider: provider,
     base_instructions: null,
-    history_mode: 'legacy',
+    history_mode: options.historyMode ?? 'legacy',
     git: { branch: '', sha: '', origin_url: '' },
   };
 
@@ -236,7 +242,12 @@ export async function writeCodexSession(bundle: IrBundle, options: WriteCodexOpt
 
   const at = new Date(createdAt);
   const filePath = options.filePath ?? codexRolloutPath(home, sessionId, at);
-  const lines: CodexLine[] = [{ timestamp: createdAt, type: 'session_meta', payload: header as unknown as Record<string, unknown> }, ...rows];
+  const allLines: CodexLine[] = [{ timestamp: createdAt, type: 'session_meta', payload: header as unknown as Record<string, unknown> }, ...rows];
+  // paginated 模式：每行都要有递增 ordinal（缺失会被 codex 判 fatal）
+  const lines: CodexLine[] =
+    header.history_mode === 'paginated'
+      ? allLines.map((line, index) => ({ ...line, ordinal: index }) as CodexLine & { ordinal: number })
+      : allLines;
   const body = lines.map((line) => JSON.stringify(line)).join('\n') + '\n';
 
   let sessionIndexWritten = false;

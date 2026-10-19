@@ -16,6 +16,8 @@ export interface CodexLine {
   type?: string;
   payload?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  /** paginated rollout 的递增序号 */
+  ordinal?: number;
 }
 
 export interface CodexSessionMeta {

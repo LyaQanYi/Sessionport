@@ -2,7 +2,7 @@ export { readCodexSession, resolveCodexSessionPath, listCodexSessions } from './
 export type { ReadCodexOptions } from './read.ts';
 export { writeCodexSession, printWriteReport, CODEX_CAPS } from './write.ts';
 export type { WriteCodexOptions, WriteCodexResult } from './write.ts';
-export { verifyCodexSession, countCodexTarget, codexDisplayName, resumeSmokeCodex } from './verify.ts';
+export { verifyCodexSession, countCodexTarget, codexDisplayName, resumeSmokeCodex, inferCodexHome } from './verify.ts';
 export type { CodexResumeSmokeOptions, CodexResumeSmokeResult } from './verify.ts';
 export type { VerifyCheck, VerifyCodexReport, VerifyCodexOptions } from './verify.ts';
 export {
