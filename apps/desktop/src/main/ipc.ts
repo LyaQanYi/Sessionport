@@ -1,7 +1,7 @@
-import { ipcMain } from 'electron';
+import { app, ipcMain, shell } from 'electron';
 import { z } from 'zod';
 
-import { detectHomes, listSessions, previewMigration, readSession, readableAgents, runMigration, writableAgents } from './services.ts';
+import { detectHomes, listSessions, pathsInfo, previewMigration, readSession, readableAgents, runMigration, writableAgents } from './services.ts';
 
 const agentSchema = z.enum(['claude-code', 'command-code', 'dsh', 'codex', 'opencode', 'kimi-code']);
 
@@ -38,6 +38,8 @@ const channelSchemas = {
     onDiverged: z.enum(['auto', 'force', 'fork']).optional(),
   }),
   'app:capabilities': z.object({}).default({}),
+  'app:paths': z.object({}).default({}),
+  'app:openPath': z.object({ key: z.enum(['kimi', 'claude', 'commandCode', 'dsh', 'codex', 'opencode', 'registry']) }),
 } as const;
 
 type Channel = keyof typeof channelSchemas;
@@ -76,6 +78,20 @@ export function registerIpc(): void {
     writable: writableAgents(),
     homes: detectHomes(),
   })));
+  ipcMain.handle('app:paths', async () => wrap(() => {
+    const info = pathsInfo();
+    return { ...info, version: app.getVersion(), electron: process.versions.electron ?? '' };
+  }));
+  ipcMain.handle('app:openPath', async (_event, payload: unknown) => wrap(async () => {
+    const input = channelSchemas['app:openPath'].parse(payload);
+    const info = pathsInfo();
+    const target = input.key === 'registry' ? info.registryDir : info.homes[input.key]?.path;
+    if (!target) throw new Error('未知目录: ' + input.key);
+    if (!existsSync(target)) throw new Error('目录不存在: ' + target);
+    const error = await shell.openPath(target);
+    if (error) throw new Error(error);
+    return { opened: target };
+  }));
 }
 
 async function wrap<T>(run: () => Promise<T> | T): Promise<{ ok: true; data: T } | { ok: false; error: string }> {

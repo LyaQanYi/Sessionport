@@ -7,6 +7,8 @@ const CHANNELS = new Set([
   'migrate:preview',
   'migrate:run',
   'app:capabilities',
+  'app:paths',
+  'app:openPath',
 ]);
 
 const api = {

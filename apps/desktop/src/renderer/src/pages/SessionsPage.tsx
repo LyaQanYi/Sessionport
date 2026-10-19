@@ -1,28 +1,94 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { RefreshCw, Search, Sparkles } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Folder, Hash, MessagesSquare, RefreshCw } from 'lucide-react';
 
 import { api, formatTime } from '../api.ts';
 import type { SessionRow } from '../api.ts';
-import { Badge, Button, EmptyState, Input, Spinner, Topbar, cn } from '../ui.tsx';
+import { AgentGlyph, AGENT_META, agentLabel } from '../agents.tsx';
+import { Badge, Button, EmptyState, RowAction, SearchField, SegmentedControl, Spinner, Topbar, cn } from '../ui.tsx';
 
-export const AGENT_META: Record<string, { label: string; dot: string }> = {
-  'kimi-code': { label: 'Kimi Code', dot: 'bg-violet-500' },
-  'claude-code': { label: 'Claude Code', dot: 'bg-amber-500' },
-  'command-code': { label: 'Command Code', dot: 'bg-emerald-500' },
-  dsh: { label: 'DeepSeek Harness', dot: 'bg-sky-500' },
-  codex: { label: 'Codex', dot: 'bg-zinc-400' },
-  opencode: { label: 'opencode', dot: 'bg-rose-500' },
-};
+type GroupMode = 'project' | 'time';
 
-export function agentLabel(agent: string): string {
-  return AGENT_META[agent]?.label ?? agent;
+const GROUP_MODE_KEY = 'sessionport.sessions.groupMode';
+const COLLAPSED_KEY = 'sessionport.sessions.collapsedGroups';
+
+function readGroupMode(): GroupMode {
+  return localStorage.getItem(GROUP_MODE_KEY) === 'time' ? 'time' : 'project';
 }
 
-export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
+function readCollapsed(): Set<string> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]');
+    return new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function projectName(session: SessionRow): string {
+  const dir = session.cwd ?? session.nativePath;
+  if (!dir) return '无项目';
+  const parts = dir.split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? dir;
+}
+
+function relativeTime(iso?: string): string {
+  if (!iso) return '';
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return '';
+  const delta = Date.now() - ms;
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (delta < minute) return '刚刚';
+  if (delta < hour) return Math.floor(delta / minute) + ' 分钟前';
+  if (delta < day) return Math.floor(delta / hour) + ' 小时前';
+  if (delta < 2 * day) return '昨天';
+  return formatTime(iso);
+}
+
+function timeBucket(iso?: string): string {
+  if (!iso) return '更早';
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return '更早';
+  const now = new Date();
+  const date = new Date(ms);
+  const sameDay = now.toDateString() === date.toDateString();
+  if (sameDay) return '今天';
+  const yesterday = new Date(now.getTime() - 86_400_000);
+  if (yesterday.toDateString() === date.toDateString()) return '昨天';
+  if (now.getTime() - ms < 7 * 86_400_000) return '最近 7 天';
+  return '更早';
+}
+
+function highlight(text: string, query: string) {
+  const needle = query.trim();
+  if (!needle) return text;
+  const lower = text.toLowerCase();
+  const index = lower.indexOf(needle.toLowerCase());
+  if (index === -1) return text;
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark className="rounded-[2px] bg-ring/25 px-0.5 text-inherit">{text.slice(index, index + needle.length)}</mark>
+      {text.slice(index + needle.length)}
+    </>
+  );
+}
+
+type Row =
+  | { kind: 'header'; key: string; label: string; count: number }
+  | { kind: 'session'; key: string; session: SessionRow };
+
+export function SessionsPage(props: {
+  agentFilter: string | null;
+  onAgentFilterChange: (agent: string | null) => void;
+  onOpen: (session: SessionRow) => void;
+}) {
   const [query, setQuery] = useState('');
-  const [agentFilter, setAgentFilter] = useState<string | null>(null);
+  const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
+  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { data, isLoading, error, refetch, isFetching } = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
 
@@ -33,51 +99,93 @@ export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
     return counts;
   }, [all]);
 
-  const sessions = useMemo(() => {
+  const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return all.filter((row) => {
-      if (agentFilter && row.agent !== agentFilter) return false;
+      if (props.agentFilter && row.agent !== props.agentFilter) return false;
       if (!needle) return true;
       return [row.title, row.cwd, row.sessionId, row.agent].filter(Boolean).join(' ').toLowerCase().includes(needle);
     });
-  }, [all, query, agentFilter]);
+  }, [all, query, props.agentFilter]);
+
+  const rows = useMemo<Row[]>(() => {
+    const groups = new Map<string, { label: string; sessions: SessionRow[]; latest: string }>();
+    for (const session of filtered) {
+      const key = groupMode === 'project' ? projectName(session) : timeBucket(session.updatedAt);
+      const label = groupMode === 'project' ? key : key;
+      const entry = groups.get(key) ?? { label, sessions: [], latest: '' };
+      entry.sessions.push(session);
+      const stamp = session.updatedAt ?? '';
+      if (stamp > entry.latest) entry.latest = stamp;
+      groups.set(key, entry);
+    }
+    const ordered =
+      groupMode === 'project'
+        ? [...groups.entries()].sort((a, b) => (b[1].latest ?? '').localeCompare(a[1].latest ?? ''))
+        : [...groups.entries()]; // 时间桶保持「今天/昨天/…」的自然插入顺序
+    const result: Row[] = [];
+    for (const [key, entry] of ordered) {
+      rowGroup(result, key, entry.label, entry.sessions, groupMode, collapsed);
+    }
+    return result;
+  }, [filtered, groupMode, collapsed]);
 
   const rowVirtualizer = useVirtualizer({
-    count: sessions.length,
+    count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 60,
+    estimateSize: (index) => (rows[index]?.kind === 'header' ? 34 : 58),
     overscan: 14,
   });
+
+  const toggleGroup = (key: string): void => {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  };
+
+  const copy = (text: string | undefined): void => {
+    if (text) void navigator.clipboard.writeText(text);
+  };
 
   return (
     <div className="flex h-full flex-col">
       <Topbar
+        icon={<MessagesSquare className="h-4 w-4" />}
         title="会话"
         subtitle={data ? all.length + ' 个会话 · ' + agentCounts.size + ' 个 agent' : '加载中…'}
         actions={
           <>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索标题 / 路径 / id"
-                className="w-56 pl-7"
-              />
-            </div>
+            <SearchField value={query} onChange={setQuery} placeholder="搜索标题 / 路径 / id" className="w-56" />
             <Button variant="outline" size="icon" onClick={() => void refetch()} title="刷新">
               <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />
             </Button>
           </>
         }
-      >
-        <div className="ml-4 hidden items-center gap-1 lg:flex">
+      />
+
+      <div className="flex h-10 shrink-0 items-center gap-3 border-b border-border px-4">
+        <SegmentedControl
+          value={groupMode}
+          onChange={(mode) => {
+            localStorage.setItem(GROUP_MODE_KEY, mode);
+            setGroupMode(mode);
+          }}
+          options={[
+            { value: 'project', label: '按项目' },
+            { value: 'time', label: '按时间' },
+          ]}
+        />
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
           <button
             type="button"
-            onClick={() => setAgentFilter(null)}
+            onClick={() => props.onAgentFilterChange(null)}
             className={cn(
-              'h-6 rounded-full px-2 text-2xs transition-colors',
-              agentFilter === null ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent',
+              'h-6 shrink-0 rounded-full px-2 text-caption transition-colors',
+              props.agentFilter === null ? 'bg-selected text-fg-1' : 'text-fg-2 hover:bg-accent',
             )}
           >
             全部 {all.length}
@@ -86,41 +194,57 @@ export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
             <button
               key={agent}
               type="button"
-              onClick={() => setAgentFilter(agentFilter === agent ? null : agent)}
+              onClick={() => props.onAgentFilterChange(props.agentFilter === agent ? null : agent)}
               className={cn(
-                'flex h-6 items-center gap-1.5 rounded-full px-2 text-2xs transition-colors',
-                agentFilter === agent ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent',
+                'flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2 text-caption transition-colors',
+                props.agentFilter === agent ? 'bg-selected text-fg-1' : 'text-fg-2 hover:bg-accent',
               )}
             >
-              <span className={cn('h-1.5 w-1.5 rounded-full', AGENT_META[agent]?.dot ?? 'bg-muted-foreground')} />
+              <span className={cn('h-1.5 w-1.5 rounded-full', AGENT_META[agent]?.dot ?? 'bg-fg-3')} />
               {agentLabel(agent)} {count}
             </button>
           ))}
         </div>
-      </Topbar>
+        <div className="ml-auto shrink-0 text-caption text-fg-3">{filtered.length} 条</div>
+      </div>
 
       {isLoading ? (
-        <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+        <div className="flex flex-1 items-center justify-center gap-2 text-body text-fg-2">
           <Spinner /> 正在扫描会话…
         </div>
       ) : error ? (
         <EmptyState title="加载失败" hint={String(error)} />
-      ) : sessions.length === 0 ? (
+      ) : rows.length === 0 ? (
         <EmptyState title="没有找到会话" hint={data?.warnings.join('；') || '检查对应 agent 的数据目录是否存在'} />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
-          {(data?.warnings ?? []).map((warning) => (
-            <div key={warning} className="border-b border-border bg-amber-500/10 px-4 py-2 text-2xs text-amber-600 dark:text-amber-400">
-              {warning}
-            </div>
-          ))}
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
             <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
               {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-                const session = sessions[virtualRow.index]!;
+                const row = rows[virtualRow.index]!;
+                if (row.kind === 'header') {
+                  return (
+                    <div
+                      key={row.key}
+                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: 'translateY(' + virtualRow.start + 'px)' }}
+                      className="flex h-[34px] items-center gap-2 border-b border-border bg-background px-4"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(row.key)}
+                        className="flex min-w-0 items-center gap-1 text-caption font-medium text-fg-2 hover:text-fg-1"
+                      >
+                        {collapsed.has(row.key) ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        <span className="truncate">{row.label}</span>
+                        <span className="text-fg-3">{row.count}</span>
+                      </button>
+                    </div>
+                  );
+                }
+                const session = row.session;
                 return (
                   <div
-                    key={session.agent + '|' + session.sessionId + '|' + session.nativePath}
+                    key={row.key}
                     style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: 'translateY(' + virtualRow.start + 'px)' }}
                   >
                     <button
@@ -130,35 +254,59 @@ export function SessionsPage(props: { onOpen: (session: SessionRow) => void }) {
                       title={session.readable ? undefined : '该 agent 还没有 reader，只能看到列表元数据'}
                       onClick={() => props.onOpen(session)}
                       className={cn(
-                        'flex h-[60px] w-full items-center gap-3 border-b border-border px-4 text-left transition-colors',
-                        session.readable ? 'hover:bg-accent' : 'cursor-not-allowed opacity-60',
+                        'group flex h-[58px] w-full items-center gap-2.5 border-b border-border/60 px-4 text-left transition-colors',
+                        session.readable ? 'hover:bg-accent/60' : 'cursor-not-allowed opacity-60',
                       )}
                     >
-                      <span className={cn('h-2 w-2 shrink-0 rounded-full', AGENT_META[session.agent]?.dot ?? 'bg-muted-foreground')} />
+                      <AgentGlyph agent={session.agent} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="truncate text-[13px] font-medium">{session.title ?? session.sessionId}</span>
+                          <span className="truncate text-body text-fg-1">{highlight(session.title ?? session.sessionId, query)}</span>
                           {session.readable ? null : <Badge variant="outline">元数据</Badge>}
                         </div>
-                        <div className="mt-0.5 flex items-center gap-1.5 truncate text-2xs text-muted-foreground">
-                          <span className="shrink-0">{agentLabel(session.agent)}</span>
-                          <span className="opacity-40">·</span>
+                        <div className="mt-0.5 flex items-center gap-1.5 truncate text-caption text-fg-2">
+                          <Folder className="h-3 w-3 shrink-0 text-fg-3" />
                           <span className="truncate">{session.cwd ?? session.nativePath}</span>
                         </div>
                       </div>
-                      <div className="shrink-0 text-right text-2xs text-muted-foreground">{formatTime(session.updatedAt)}</div>
+                      <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+                        {session.resumeHint ? (
+                          <RowAction label={'复制 resume 命令：' + session.resumeHint} onClick={() => copy(session.resumeHint)}>
+                            <Copy className="h-3.5 w-3.5" />
+                          </RowAction>
+                        ) : null}
+                        <RowAction label={'复制 session id：' + session.sessionId} onClick={() => copy(session.sessionId)}>
+                          <Hash className="h-3.5 w-3.5" />
+                        </RowAction>
+                      </div>
+                      <div className="w-20 shrink-0 text-right text-caption text-fg-3">{relativeTime(session.updatedAt)}</div>
                     </button>
                   </div>
                 );
               })}
             </div>
           </div>
-          <div className="flex h-7 shrink-0 items-center gap-1.5 border-t border-border px-4 text-3xs text-muted-foreground">
-            <Sparkles className="h-3 w-3" />
-            共 {sessions.length} 条 · 虚拟滚动
+          <div className="flex h-7 shrink-0 items-center gap-1.5 border-t border-border px-4 text-3xs text-fg-3">
+            共 {filtered.length} 条 · {groupMode === 'project' ? '按项目分组' : '按时间分组'} · 虚拟滚动
           </div>
         </div>
       )}
     </div>
   );
+}
+
+function rowGroup(
+  target: Row[],
+  key: string,
+  label: string,
+  sessions: SessionRow[],
+  groupMode: GroupMode,
+  collapsed: Set<string>,
+): void {
+  target.push({ kind: 'header', key: groupMode + ':' + key, label, count: sessions.length });
+  if (collapsed.has(groupMode + ':' + key)) return;
+  const sorted = [...sessions].sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+  for (const session of sorted) {
+    target.push({ kind: 'session', key: session.agent + '|' + session.sessionId + '|' + session.nativePath, session });
+  }
 }
