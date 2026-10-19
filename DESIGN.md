@@ -22,7 +22,7 @@ sessionport 是一个本地优先的开源 CLI，把 AI 编程 agent 之间的�
 | 命名 | **sessionport** |
 | npm 发布名 | `sessionport-cli` 或 `@sessionport/cli`（发布时二选一，bin 均为 `sessionport`） |
 | GitHub 仓库 | `<owner>/sessionport`（2026-10-19 查无同名项目） |
-| 技术栈 | TypeScript（Node ≥ 22 / Bun）、better-sqlite3、zod、vitest |
+| 技术栈 | TypeScript（Node ≥ 24，直接执行 TS；sqlite 用内置 node:sqlite，暂不引入 better-sqlite3） |
 | 模型绑定 | **不迁移**：跨 agent 导入后目标端使用自身默认模型（2026-10-19 确认，属于可接受的损失，不是待修 bug） |
 | 同步登记表 v0 | JSON（`~/.sessionport/registry.json`）：sourceKey + targetId + syncedHead + targetUnits；sqlite hub registry 留到多目标/增量事件阶段 |
 

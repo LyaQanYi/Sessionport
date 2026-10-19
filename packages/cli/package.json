@@ -17,5 +17,9 @@
     "@sessionport/adapter-dsh": "workspace:*",
     "@sessionport/adapter-codex": "workspace:*",
     "@sessionport/adapter-opencode": "workspace:*"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
   }
 }

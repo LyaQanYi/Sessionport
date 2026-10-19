@@ -1,152 +1,147 @@
 # sessionport
 
-Move an AI coding-agent session from one CLI to another and keep going.
-A conversation started in Kimi Code becomes a Claude Code session you can `/resume` — natively, not as a pasted transcript.
+[![CI](https://github.com/sessionport/sessionport/actions/workflows/ci.yml/badge.svg)](https://github.com/sessionport/sessionport/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> **Status: alpha.** Six adapters: `kimi-code` (read), `claude-code`, `command-code`, `dsh`, `codex`, `opencode` (read/write + verify).
-> The design and roadmap live in [DESIGN.md](./DESIGN.md); the format research lives in [research/agent-formats.md](./research/agent-formats.md).
->
-> **Verified end-to-end (2026-10-19)**: a real Kimi Code session (92 events + 1 sub-agent, 92 events) was converted
-> into a 45-row Claude Code transcript and `claude -p --resume <id>` returned `RESUME_OK` — the model answered from the
-> ported history. See [research/claude-code-resume-spec.md](./research/claude-code-resume-spec.md) for the load contract.
+**Move a live AI coding-agent session from one CLI to another — and keep going.**
+A conversation started in Kimi Code becomes a Claude Code session you can `/resume`.
+Not a pasted transcript, not a summarized context blob: a native session the target CLI loads by itself.
+
+> **Status: alpha.** Six adapters work today (read/write/verify): `claude-code`, `command-code`,
+> `dsh`, `codex`, `opencode` — plus `kimi-code` as a source. Every export prints exactly what it lost.
+> Design notes: [DESIGN.md](./DESIGN.md). Format research: [research/](./research/).
 
 ## Why
 
 Every agent CLI keeps its conversation history in a private format. Switching tools means losing the thread.
 Existing tools either translate one direction, or re-feed a summarized context blob. sessionport does neither:
 
-- **IR (intermediate representation)**: a normalized append-only event stream (`message` / `reasoning` / `tool_call` / `tool_result` / `boundary`), chained by `parentId`.
-- **Adapters**: one per agent, responsible only for `native → IR` and `IR → native`.
-- **Loss list**: every export prints exactly what could not be preserved. Nothing is dropped silently.
-- **Native resume**: the only acceptance test that matters is "the target CLI can resume it and continue".
+- **IR**: a normalized append-only event stream (`message` / `reasoning` / `tool_call` / `tool_result` / `boundary`), chained by `parentId`.
+- **Adapters**: one per agent, responsible only for `native -> IR` and `IR -> native`.
+- **Loss list**: every export reports what could not be preserved, and whether it is a design trade-off or a known gap.
+- **Native resume**: the only acceptance test that matters — the target CLI must load the session and continue it.
 
 ## Quick start
 
+Requires Node >= 22.18 (TypeScript runs directly via built-in type stripping; no build step).
+
 ```bash
+git clone https://github.com/sessionport/sessionport && cd sessionport
 pnpm install
 
-# 1. Inspect a Kimi Code session (an exported bundle or the native session directory)
-node packages/cli/src/index.ts inspect kimi:./session_<uuid>/
+# 1. What is in this session?
+node packages/cli/src/index.ts inspect "kimi:./session_fdefc84f-.../"
 
-# 2. Convert it into IR
-node packages/cli/src/index.ts pull kimi:./session_<uuid>/ --out session.ir.json
+# 2. Port it (writes a native session for the target CLI)
+node packages/cli/src/index.ts push "kimi:./session_fdefc84f-.../" --to claude-code
 
-# 3. Write it as a Claude Code session
-node packages/cli/src/index.ts push session.ir.json --to claude-code
+# 3. Prove the target can resume it (real model call)
+node packages/cli/src/index.ts verify --agent claude-code --cwd /path/to/project --id <session-id> --resume
 
-# Codex 作为目标端:
-#   node packages/cli/src/index.ts push session.ir.json --to codex --home "$CODEX_HOME" --register
-
-# 4. Structural verification (fast, offline)
-node packages/cli/src/index.ts verify --cwd /path/to/project --session-id <uuid>
-
-# 5. Real resume smoke test (calls the model once)
-node packages/cli/src/index.ts verify --cwd /path/to/project --session-id <uuid> --resume
+# The whole chain, both directions, in one shot:
+./scripts/demo.sh              # Kimi -> Claude Code
+./scripts/demo-interop.sh      # Command Code <-> DeepSeek Harness
 ```
 
-`push` writes to `$CLAUDE_CONFIG_DIR/projects/<project-slug>/<session-id>.jsonl`
-(`~/.claude` by default; point `--config-dir` elsewhere for isolated tests).
+### Re-push safely
 
-### Sample report
-
-```
-target      claude-code
-rows        45
-written     events=92 messages=27 tool_calls=21 tool_results=21 reasoning=18
-losses
-  [warning] claude.reasoning-dropped x18 — thinking / reasoning 块未导出（Claude 要求带 Anthropic 签名的 thinking 块，跨源无法伪造）
-  [warning] claude.subagent-dropped x1 — 子代理会话未导出（Claude 的 sidechain 行内语义尚未实现）
-  [info] claude.boundary-dropped x5 — 会话边界事件（分支/撤销/压缩/取消）在 Claude 中没有对应结构
-```
-
-### Command Code ↔ DeepSeek Harness 互传
-
-```bash
-# Command Code -> DSH（隔离 DSH_HOME，确认无误后再指向 ~/.dsh）
-node packages/cli/src/index.ts push "commandcode:$HOME/.commandcode/projects/<slug>/<uuid>.jsonl" \
-  --to dsh --home .tmp/dsh-home
-
-# DSH -> Command Code（transcript 落在任意目录即可直接 resume）
-node packages/cli/src/index.ts push "dsh:$HOME/.dsh/sessions/--<workspace>--/session-<uuid>" \
-  --to command-code --home .tmp/cc-home
-
-# 一条命令跑通双向（含结构校验）
-./scripts/demo-interop.sh
-```
-### 子代理会话（`--include-children`）
-
-源端带子代理的会话（Kimi 的 `agent-*`、DSH 的 `delegationDepth>0` 会话）默认只导主会话并计入损失。
-加 `--include-children` 后：
-
-- **DSH 目标**：写成原生父子结构（独立会话目录 + `parentSession` / `delegationDepth` / `origin`）
-- **Claude Code / Command Code 目标**：各自写成独立会话（内容保留，但目标端没有父子概念，关系丢失）
-
-### 安全重推（`sync`）
+`sync` never silently overwrites turns you added in the target app:
 
 ```bash
 node packages/cli/src/index.ts sync "dsh:<session-dir>" --to command-code --register
 ```
 
-`sync` 会在 `~/.sessionport/registry.json` 记录「源端同步到哪个 head、目标端当时多少行」，
-重推时先判定再写：
-
-| 判定 | 行为 |
+| Situation | Behaviour |
 |---|---|
-| 没有记录 / 目标文件没了 | 全新写入 |
-| 源端与目标端都没变 | **不写**（幂等） |
-| 源端有新内容、目标端没动 | 安全重写并更新登记 |
-| **目标端也新增了内容**（你在目标 app 里继续聊过） | **默认拒绝**；`--fork` 另建会话保留旧的，`--force` 才覆盖 |
+| first push / target file gone | fresh write |
+| source and target unchanged | **no write** (idempotent) |
+| source grew, target untouched | rewrite + update registry |
+| **target grew** (you continued there) | **refused**; `--fork` keeps the old session, `--force` overwrites |
 
-### 导入到真实的 app 数据目录
+State lives in `~/.sessionport/registry.json` (`--state <dir>` to override).
 
-```bash
-# DSH：--home 指向 ~/.dsh，--register 让运行中的 app 重启后立刻看到
-node packages/cli/src/index.ts push "commandcode:<transcript>" \
-  --to dsh --home "$HOME/.dsh" --register
+## Supported agents
 
-# 重启 DSH 应用后，会话会出现在对应 workspace 下（projcache 由 app 重建）
+| Agent | Read | Write | Resume verified | Against |
+|---|---|---|---|---|
+| Kimi Code | ✅ `state.json` + `agents/*/wire.jsonl` | — | source only | CLI 2.1.1 / format v2 |
+| Claude Code | — | ✅ JSONL session files | ✅ `claude -p --resume` | CLI 2.1.303 |
+| Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + desktop registration | ✅ `cmd -p --session` | 1.82.3 |
+| DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load + replay | 5.8.3 (format v4) |
+| Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index registration | ✅ `codex exec resume` | 0.163.0 |
+| opencode | ✅ `opencode export` JSON | ✅ `opencode import` | ✅ `opencode run --session` | 1.19.3 |
 
-# Command Code：--register 写入 thread-index.db + app-state.json，app 列表里直接可见
-node packages/cli/src/index.ts push "dsh:<session-dir>" \
-  --to command-code --home "$HOME/.commandcode" --register
+Sub-agent sessions: pass `--include-children`. DSH keeps the native parent/child tree; Claude Code and
+Command Code have no parent concept, so children are written as independent sessions (content preserved,
+relationship reported as lost).
 
-# 重启 Command Code 桌面端即可看到
-```
-## Supported formats
-
-undefined
-| Codex | planned | planned | — | — |
-| opencode | planned | planned | — | — |
-
-## How fidelity is handled
+## How fidelity works
 
 Reading and writing are asymmetric, so losses are tracked separately:
 
-- **`notices`** (per session, on read): what the source had but IR does not model — e.g. Kimi's UI message mirror, runtime/config events, and turns reverted by `undo` (reverted turns are cut so the target sees the post-undo context).
-- **`losses`** (per export, on write): what IR had but the target cannot represent — dropped thinking blocks, dropped sub-agent sessions, collapsed branch boundaries.
+- **notices** (per session, on read): what the source had but IR does not model — UI mirrors, runtime/config events,
+  harness-injected messages, reverted turns.
+- **losses** (per export, on write): what IR had but the target cannot represent.
 
-Losses are either **accepted design trade-offs** (no mapping exists, or we deliberately don't carry it —
-e.g. model bindings are not migrated, the target keeps its own default model and system prompt) or
-**actionable capability gaps** (sub-agent sessions, image attachments, branch boundaries). Injected harness
-messages (runtime context, skill catalogs, sub-agent notifications) are dropped by default because the target
-agent generates its own — pass `--keep-injected` to keep them. The former is
-reported but never "fixed"; the latter is roadmap work and must come with a verification case. See
+Losses are either **accepted design trade-offs** (no mapping exists, or we deliberately do not carry it — e.g. model
+bindings are never migrated; the target keeps its own default model and system prompt) or **actionable capability gaps**
+(sub-agent relationships on targets without sidechains, image attachments, branch boundaries). See
 [DESIGN.md §6.1](./DESIGN.md).
 
-## Privacy
+## Commands
 
-Session logs contain prompts, code, and sometimes secrets. sessionport is local-first with zero telemetry.
-Exported Kimi bundles include diagnostic logs by default (`kimi export --no-include-global-log` disables the global log);
-those files are not part of the conversation and adapters ignore them.
+```
+sessionport inspect <source>
+sessionport pull  <source> [--out ir.json]
+sessionport push  <source> --to <agent> [options]
+sessionport sync  <source> --to <agent> [options]
+sessionport verify --agent <agent> [options]
+```
+
+Sources: `kimi:<dir>`, `commandcode:<path|id>`, `dsh:<dir>`, `codex:<path|id>`, `opencode:<path|id>`, or an IR `.json`.
+Targets: `claude-code`, `command-code`, `dsh`, `codex`, `opencode`.
+
+Registers into the target app instead of just writing files: `--register` (Command Code desktop list / DSH workspace /
+Codex `threads` + `session_index.jsonl`).
+
+## Architecture
+
+```
+packages/
+├── core/                 # IR schema, loss collector, sync registry, sync planning
+├── adapters/
+│   ├── kimi-code/        # read
+│   ├── claude-code/      # write + verify
+│   ├── command-code/     # read/write/verify + desktop registration
+│   ├── dsh/              # read/write/verify + workspace registration
+│   ├── codex/            # read/write/verify + threads registration
+│   └── opencode/         # read/write/verify + import/export
+├── cli/                  # inspect / pull / push / sync / verify
+└── e2e fixtures live in each adapter’s test/ folder
+```
 
 ## Development
 
 ```bash
-node --test packages/core/test/*.test.ts packages/adapters/*/test/*.test.ts
+pnpm install
+node --test packages/core/test/*.test.ts packages/adapters/*/test/*.test.ts packages/cli/test/*.test.ts
 ```
 
-Requires Node >= 22.18 (TypeScript is executed directly via Node's built-in type stripping; no build step).
+Live resume smoke tests are gated (they cost real model calls):
+
+```bash
+SESSIONPORT_CC_RESUME=1     pnpm test   # Command Code
+SESSIONPORT_CODEX_RESUME=1  pnpm test   # Codex
+SESSIONPORT_OPENCODE_RESUME=1 SESSIONPORT_OPENCODE_MODEL=opencode-go/glm-5.2 pnpm test   # opencode
+```
+
+## Contributing & security
+
+Adapter contributions must include golden fixtures with the CLI version they were verified against —
+see [CONTRIBUTING.md](./CONTRIBUTING.md). Please report vulnerabilities per [SECURITY.md](./SECURITY.md).
+
+Session logs contain prompts, code, and sometimes secrets: sessionport is local-first with zero telemetry.
 
 ## License
 
-Apache-2.0
+[Apache-2.0](./LICENSE).
