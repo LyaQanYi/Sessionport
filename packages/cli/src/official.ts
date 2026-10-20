@@ -66,8 +66,9 @@ export const OFFICIAL_IMPORTS: OfficialSupport[] = [
     sources: [],
     store: '~/Library/Application Support/Cursor/User/globalStorage/state.vscdb',
     notes: [
-      'Cursor 没有官方会话导入（官方论坛只有 feature request），也没有 importer API',
-      '唯一可用路径是 sessionport 的直接写入：push --to cursor --confirm-real',
+      '官方文档没有会话导入；Cursor 3.25.9 有 Developer 命令 Import Chat... / Bulk Import Chats from Directory...，但只吃 Cursor 自己导出的 v1 JSON（protobuf conversationState + blobs）',
+      'Claude Code → Cursor 仍是 feature request（官方论坛），所以当前用 sessionport 直接写 state.vscdb：push --to cursor --confirm-real',
+      '后续可从 IR 生成 Cursor v1 export JSON，改走 Bulk Import Chats from Directory...（需要一份真实导出做模板）',
     ],
   },
 ];
