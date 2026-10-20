@@ -20,15 +20,19 @@ const USAGE = [
   '',
   '<source> 形式:',
   '  kimi:<目录>            Kimi Code 会话目录（kimi export 解包目录或原生会话目录）',
+  '  claude:<路径|id>       Claude Code transcript（~/.claude/projects/.../<uuid>.jsonl）',
   '  commandcode:<路径>     Command Code transcript（.jsonl）或会话 id',
   '  dsh:<目录>             DSH 会话目录（含 session.v4.jsonl.zstd）',
   '  codex:<路径|id>        Codex rollout（sessions/**/rollout-*.jsonl）或会话 id',
   '  opencode:<路径|id>     opencode 导出 JSON 或会话 id（ses_…）',
+  '  cursor:<id>            Cursor composer id（state.vscdb 内的 composerId）',
+  '  qoder:<路径|id>        Qoder CN transcript（~/.qoder-cn/projects/.../<uuid>.jsonl）',
+  '  workbuddy:<路径|id>    WorkBuddy transcript（~/.workbuddy/projects/...，只读）',
   '  <ir.json>              已有 IR 文件',
   '  <无前缀目录/文件>      按结构自动识别',
   '',
   '目标 agent（--to）:',
-  '  claude-code  |  command-code  |  dsh  |  codex  |  opencode',
+  '  claude-code  |  command-code  |  dsh  |  codex  |  opencode  |  cursor  |  qoder',
   '',
   '通用选项:',
   '  --home <dir>           目标数据根目录（claude: 配置目录；command-code: ~/.commandcode；dsh: DSH_HOME）',
@@ -42,6 +46,7 @@ const USAGE = [
   '  --write-ir <file>      同时把 IR 落盘',
   '  --json                 输出机器可读 JSON',
   '  --force                sync: 目标端有新增时仍然覆盖（会丢目标端新内容）',
+  '  --confirm-real         写 Cursor 真实库时必须显式确认（先用 --dry-run 看计划）',
   '  --fork                 sync: 目标端有新增时另建一个目标会话，保留旧会话',
   '  --state <dir>          registry 目录（默认 $SESSIONPORT_HOME 或 ~/.sessionport）',
   '  --limit <n>            list: 最多显示多少条（默认 200）',
@@ -61,17 +66,23 @@ function fail(message: string): never {
 }
 
 interface SourceKind {
-  kind: 'kimi' | 'command-code' | 'dsh' | 'ir';
+  kind: 'kimi' | 'claude-code' | 'command-code' | 'dsh' | 'codex' | 'opencode' | 'cursor' | 'qoder' | 'workbuddy' | 'ir';
   target: string;
 }
 
 function detectSource(raw: string): SourceKind {
   if (raw.startsWith('kimi:')) return { kind: 'kimi', target: raw.slice(5) };
+  if (raw.startsWith('claude:')) return { kind: 'claude-code', target: raw.slice(7) };
+  if (raw.startsWith('claudecode:')) return { kind: 'claude-code', target: raw.slice(11) };
   if (raw.startsWith('commandcode:')) return { kind: 'command-code', target: raw.slice(12) };
   if (raw.startsWith('cmd:')) return { kind: 'command-code', target: raw.slice(4) };
   if (raw.startsWith('dsh:')) return { kind: 'dsh', target: raw.slice(4) };
   if (raw.startsWith('codex:')) return { kind: 'codex', target: raw.slice(6) };
   if (raw.startsWith('opencode:')) return { kind: 'opencode', target: raw.slice(9) };
+  if (raw.startsWith('cursor:')) return { kind: 'cursor', target: raw.slice(7) };
+  if (raw.startsWith('qoder:')) return { kind: 'qoder', target: raw.slice(6) };
+  if (raw.startsWith('workbuddy:')) return { kind: 'workbuddy', target: raw.slice(10) };
+  if (raw.startsWith('wb:')) return { kind: 'workbuddy', target: raw.slice(3) };
   if (raw.endsWith('.json') && existsSync(raw) && !existsSync(join(raw, 'state.json'))) return { kind: 'ir', target: raw };
   if (existsSync(join(raw, 'state.json'))) return { kind: 'kimi', target: raw };
   if (existsSync(join(raw, 'session.v4.jsonl.zstd'))) return { kind: 'dsh', target: raw };
@@ -81,6 +92,9 @@ function detectSource(raw: string): SourceKind {
     try {
       const first = readFileSync(raw, 'utf8').split('\n', 1)[0] ?? '';
       if (first.includes('"session_meta"')) return { kind: 'codex', target: raw };
+      if (first.includes('"session-meta"')) return { kind: 'workbuddy', target: raw };
+      if (first.includes('"workspace-directories"')) return { kind: 'qoder', target: raw };
+      if (first.includes('"parentUuid"') || (first.includes('"sessionId"') && first.includes('"cwd"'))) return { kind: 'claude-code', target: raw };
     } catch {
       // 读不到就按后缀兜底
     }
@@ -114,6 +128,10 @@ async function loadBundle(source: string): Promise<IrBundle> {
     const mod = await import('@sessionport/adapter-kimi-code');
     return mod.readKimiBundle(resolve(detected.target));
   }
+  if (detected.kind === 'claude-code') {
+    const mod = await import('@sessionport/adapter-claude-code');
+    return mod.readClaudeSession(detected.target);
+  }
   if (detected.kind === 'opencode') {
     const mod = await import('@sessionport/adapter-opencode');
     return mod.readOpencodeSession(detected.target);
@@ -125,6 +143,18 @@ async function loadBundle(source: string): Promise<IrBundle> {
   if (detected.kind === 'codex') {
     const mod = await import('@sessionport/adapter-codex');
     return mod.readCodexSession(detected.target);
+  }
+  if (detected.kind === 'cursor') {
+    const mod = await import('@sessionport/adapter-cursor');
+    return mod.readCursorSession(detected.target);
+  }
+  if (detected.kind === 'qoder') {
+    const mod = await import('@sessionport/adapter-qoder');
+    return mod.readQoderSession(detected.target);
+  }
+  if (detected.kind === 'workbuddy') {
+    const mod = await import('@sessionport/adapter-workbuddy');
+    return mod.readWorkBuddySession(detected.target);
   }
   const mod = await import('@sessionport/adapter-dsh');
   return mod.readDshSession(detected.target);
@@ -164,6 +194,7 @@ function commonTargetOptions(values: Record<string, string | boolean | undefined
     includeChildren: Boolean(values['include-children']),
     userDataDir: typeof values['user-data-dir'] === 'string' ? values['user-data-dir'] : undefined,
     dryRun: Boolean(values['dry-run']),
+    confirmReal: Boolean(values['confirm-real']),
   };
 }
 
@@ -224,6 +255,17 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
   } else if (to === 'opencode') {
     const mod = await import('@sessionport/adapter-opencode');
     report = await mod.writeOpencodeSession(bundle, opts);
+  } else if (to === 'cursor') {
+    const mod = await import('@sessionport/adapter-cursor');
+    report = await mod.writeCursorSession(bundle, {
+      ...opts,
+      composerId: opts.id as string | undefined,
+      confirmReal: Boolean(values['confirm-real']),
+      keepSynthetic: Boolean(values['keep-inject']),
+    });
+  } else if (to === 'qoder') {
+    const mod = await import('@sessionport/adapter-qoder');
+    report = await mod.writeQoderSession(bundle, opts);
   } else {
     fail('不支持的目标 agent: ' + to);
   }
@@ -280,6 +322,17 @@ async function writeTarget(
     const report = await mod.writeCodexSession(bundle, { ...(opts as object), id, dryRun, filePath: forcedPath });
     return { target, targetId: report.sessionId, paths: report.paths, unit: 'rows', units: report.rows.length + 1, report };
   }
+  if (target === 'cursor') {
+    const mod = await import('@sessionport/adapter-cursor');
+    const report = await mod.writeCursorSession(bundle, { ...(opts as object), composerId: id, dryRun, confirmReal: Boolean(opts.confirmReal) });
+    const bubbles = report.rows.filter((row: { kind: string }) => row.kind === 'bubble').length;
+    return { target, targetId: report.composerId, paths: [report.dbPath], unit: 'rows', units: bubbles, report };
+  }
+  if (target === 'qoder') {
+    const mod = await import('@sessionport/adapter-qoder');
+    const report = await mod.writeQoderSession(bundle, { ...(opts as object), sessionId: id, dryRun });
+    return { target, targetId: report.sessionId, paths: [report.path], unit: 'rows', units: report.rows.length, report };
+  }
   const mod = await import('@sessionport/adapter-dsh');
   const report = await mod.writeDshSession(bundle, { ...(opts as object), id, dryRun });
   return { target, targetId: report.sessionId, paths: report.paths, unit: 'events', units: report.written.events, report };
@@ -301,6 +354,18 @@ async function countTarget(target: string, outcome: WriteOutcome, opts: Record<s
       // 目标端不落 JSON 文件（import 后临时文件会清理），通过 export 数消息
       const raw = await mod.exportOpencodeSession(outcome.targetId);
       return mod.countOpencodeTarget(raw);
+    } catch {
+      return { exists: false, units: 0 };
+    }
+  }
+  if (target === 'cursor') {
+    const mod = await import('@sessionport/adapter-cursor');
+    return mod.countCursorTarget({ home: opts.home as string | undefined, sessionId: outcome.targetId });
+  }
+  if (target === 'qoder') {
+    try {
+      const text = readFileSync(outcome.paths[0]!, 'utf8');
+      return { exists: true, units: text.split('\n').filter((line) => line.trim().length > 0).length };
     } catch {
       return { exists: false, units: 0 };
     }
@@ -367,6 +432,13 @@ async function cmdSync(source: string, values: Record<string, string | boolean |
   const targetId = useFork ? undefined : (ref?.targetId ?? (typeof opts.id === 'string' ? opts.id : undefined));
   if (useFork) process.stdout.write('fork      为当前源快照新建目标会话（旧会话保持不动）\n');
 
+  // 只新增型目标（cursor/qoder）在 refresh/fork 覆盖时需要显式允许
+  if (to === 'cursor') {
+    opts.confirmReal = true;
+    opts.allowOverwrite = true;
+  }
+  if (to === 'qoder') opts.overwrite = true;
+
   const outcome = await writeTarget(to, bundle, opts, targetId, false);
   printReport(outcome.report as Parameters<typeof printReport>[0]);
   printNotices(bundle.root.notices);
@@ -401,6 +473,10 @@ const AGENT_ALIASES: Record<string, AgentId> = {
   dsh: 'dsh',
   codex: 'codex',
   opencode: 'opencode',
+  cursor: 'cursor',
+  qoder: 'qoder',
+  workbuddy: 'workbuddy',
+  wb: 'workbuddy',
 };
 
 function resolveListAgent(raw: string): AgentId {
@@ -483,6 +559,24 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
     const file = typeof values.file === 'string' ? values.file : typeof opts.id === 'string' ? opts.id : undefined;
     if (!file) fail('codex 校验需要 --file <rollout> 或 --id');
     const report = await mod.verifyCodexSession({ filePath: file, home: opts.home as string | undefined });
+    result = { ok: report.ok, checks: report.checks };
+  } else if (agent === 'cursor') {
+    const mod = await import('@sessionport/adapter-cursor');
+    const id = typeof opts.id === 'string' ? opts.id : '';
+    if (!id) fail('cursor 校验需要 --id <composerId>');
+    const report = await mod.verifyCursorSession({ home: opts.home as string | undefined, sessionId: id });
+    result = { ok: report.ok, checks: report.checks };
+  } else if (agent === 'qoder') {
+    const mod = await import('@sessionport/adapter-qoder');
+    const file = typeof values.file === 'string' ? values.file : String(opts.id ?? '');
+    if (!file) fail('qoder 校验需要 --file 或 --id');
+    const report = await mod.verifyQoderSession(file, { home: opts.home as string | undefined });
+    result = { ok: report.ok, checks: report.checks };
+  } else if (agent === 'workbuddy') {
+    const mod = await import('@sessionport/adapter-workbuddy');
+    const file = typeof values.file === 'string' ? values.file : String(opts.id ?? '');
+    if (!file) fail('workbuddy 校验需要 --file 或 --id');
+    const report = await mod.verifyWorkBuddySession(file, { home: opts.home as string | undefined });
     result = { ok: report.ok, checks: report.checks };
   } else {
     const mod = await import('@sessionport/adapter-dsh');
@@ -615,6 +709,7 @@ async function main(): Promise<void> {
       register: { type: 'boolean' },
       'user-data-dir': { type: 'string' },
       'write-ir': { type: 'string' },
+      'confirm-real': { type: 'boolean' },
       resume: { type: 'boolean' },
       force: { type: 'boolean' },
       fork: { type: 'boolean' },

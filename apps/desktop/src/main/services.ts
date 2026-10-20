@@ -107,11 +107,15 @@ export interface SessionRefInput {
 }
 
 const READERS: Record<string, (input: SessionRefInput) => Promise<IrBundle>> = {
+  'claude-code': async (input) => (await import('@sessionport/adapter-claude-code')).readClaudeSession(requirePath(input)),
   'kimi-code': async (input) => (await import('@sessionport/adapter-kimi-code')).readKimiBundle(requirePath(input)),
   'command-code': async (input) => (await import('@sessionport/adapter-command-code')).readCommandCodeSession(requirePath(input)),
   dsh: async (input) => (await import('@sessionport/adapter-dsh')).readDshSession(requirePath(input)),
   codex: async (input) => (await import('@sessionport/adapter-codex')).readCodexSession(input.sessionId ?? requirePath(input)),
   opencode: async (input) => (await import('@sessionport/adapter-opencode')).readOpencodeSession(requireId(input)),
+  cursor: async (input) => (await import('@sessionport/adapter-cursor')).readCursorSession(input.sessionId ?? requirePath(input)),
+  qoder: async (input) => (await import('@sessionport/adapter-qoder')).readQoderSession(requirePath(input)),
+  workbuddy: async (input) => (await import('@sessionport/adapter-workbuddy')).readWorkBuddySession(requirePath(input)),
 };
 
 function requirePath(input: SessionRefInput): string {
@@ -228,6 +232,8 @@ const WRITERS: Record<string, (bundle: IrBundle, options: Record<string, unknown
   dsh: async (bundle, options) => (await import('@sessionport/adapter-dsh')).writeDshSession(bundle, options as never) as unknown as Promise<Record<string, unknown>>,
   codex: async (bundle, options) => (await import('@sessionport/adapter-codex')).writeCodexSession(bundle, options as never) as unknown as Promise<Record<string, unknown>>,
   opencode: async (bundle, options) => (await import('@sessionport/adapter-opencode')).writeOpencodeSession(bundle, options as never) as unknown as Promise<Record<string, unknown>>,
+  cursor: async (bundle, options) => (await import('@sessionport/adapter-cursor')).writeCursorSession(bundle, { ...(options as object), composerId: (options as { id?: string }).id, confirmReal: (options as { dryRun?: boolean }).dryRun !== true } as never) as unknown as Promise<Record<string, unknown>>,
+  qoder: async (bundle, options) => (await import('@sessionport/adapter-qoder')).writeQoderSession(bundle, { ...(options as object), sessionId: (options as { id?: string }).id } as never) as unknown as Promise<Record<string, unknown>>,
 };
 
 export function writableAgents(): AgentId[] {
@@ -466,6 +472,9 @@ export function pathsInfo(): PathsInfo {
     dsh: { label: 'DeepSeek Harness', path: join(home, '.dsh') },
     codex: { label: 'Codex', path: join(home, '.codex') },
     opencode: { label: 'opencode', path: join(home, '.local', 'share', 'opencode') },
+    cursor: { label: 'Cursor', path: join(home, 'Library', 'Application Support', 'Cursor') },
+    qoder: { label: 'Qoder', path: join(home, '.qoder-cn') },
+    workbuddy: { label: 'WorkBuddy', path: join(home, '.workbuddy') },
   };
   const registryDir = sessionportHome();
   return {
@@ -487,5 +496,8 @@ export function detectHomes(): Record<string, boolean> {
     dsh: existsSync(join(home, '.dsh')),
     codex: existsSync(join(home, '.codex')),
     opencode: existsSync(join(home, '.local/share/opencode')),
+    cursor: existsSync(join(home, 'Library', 'Application Support', 'Cursor')),
+    qoder: existsSync(join(home, '.qoder-cn')),
+    workbuddy: existsSync(join(home, '.workbuddy')),
   };
 }

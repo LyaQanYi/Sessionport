@@ -3,9 +3,11 @@
  *
  * 数据源：<CLAUDE_CONFIG_DIR>/projects/<slug>/<uuid>.jsonl（默认 ~/.claude）
  * - 每个会话一个 JSONL，行内自带会话级元数据：
- *   custom-title（用户命名）/ agent-name / cwd / timestamp；没有标题行时取首条真实 user 文本
- * - 为了轻量，只读文件头 256KB（找标题/元数据）+ 文件尾 64KB（补重命名后的标题与末条时间戳）
- * - 整段对话不解析；坏行只跳过
+ *   custom-title（用户命名）/ summary / agent-name / cwd / timestamp；
+ *   没有标题行时取首条真实 user 文本
+ * - 为了轻量，只读文件头 256KB（找标题/元数据）+ 文件尾 64KB（补重命名后追加的标题）
+ * - updatedAt 用文件 mtime（追加写，mtime 才是最后一次活动时间）
+ * - 整段对话不解析；坏行只跳过；只有元数据、没有对话行的文件跳过
  *
  * 容错：projects 目录不存在返回 []；单个文件读失败/没有合法行只跳过该文件。
  */
@@ -42,11 +44,13 @@ export async function listClaudeSessions(options: ListSessionsOptions = {}): Pro
 
 interface ClaudeHeadMeta {
   customTitle?: string;
+  summary?: string;
   agentName?: string;
   cwd?: string;
   firstTimestamp?: string;
-  lastTimestamp?: string;
   firstUserText?: string;
+  /** 见过有内容的 user/assistant 行才算有对话；只有元数据行的文件不展示 */
+  hasConversation?: boolean;
 }
 
 async function readClaudeSummary(filePath: string, slug: string): Promise<SessionSummary | undefined> {
@@ -60,6 +64,7 @@ async function readClaudeSummary(filePath: string, slug: string): Promise<Sessio
   if (headLines.length === 0) return undefined; // 不是 transcript（或全坏），跳过
 
   const headMeta = extractHeadMeta(headLines);
+  // 超大文件的对话行可能被 HEAD_BYTES 截掉；尾部也用于判断「空会话」
   let tailMeta: ClaudeHeadMeta | undefined;
   if (info.size > HEAD_BYTES) {
     const tailStart = Math.max(0, info.size - TAIL_BYTES);
@@ -73,14 +78,19 @@ async function readClaudeSummary(filePath: string, slug: string): Promise<Sessio
     nativePath: filePath,
     resumeHint: 'claude --resume ' + sessionId,
   };
-  const title = headMeta.customTitle ?? tailMeta?.customTitle ?? headMeta.agentName ?? tailMeta?.agentName ?? headMeta.firstUserText ?? tailMeta?.firstUserText;
+  if (headMeta.hasConversation !== true && tailMeta?.hasConversation !== true) return undefined;
+  // 重命名后的 custom-title / summary 追加在尾部，尾优先
+  const title =
+    tailMeta?.customTitle ?? headMeta.customTitle ??
+    tailMeta?.summary ?? headMeta.summary ??
+    tailMeta?.agentName ?? headMeta.agentName ??
+    headMeta.firstUserText ?? tailMeta?.firstUserText;
   if (title !== undefined) summary.title = title;
   const cwd = headMeta.cwd ?? tailMeta?.cwd ?? cwdFromSlug(slug);
   if (cwd !== undefined) summary.cwd = cwd;
   const createdAt = headMeta.firstTimestamp;
   if (createdAt !== undefined) summary.createdAt = createdAt;
-  const updatedAt = tailMeta?.lastTimestamp ?? headMeta.lastTimestamp ?? info.mtime.toISOString();
-  summary.updatedAt = updatedAt;
+  summary.updatedAt = info.mtime.toISOString();
   return summary;
 }
 
@@ -88,20 +98,21 @@ function extractHeadMeta(lines: Array<Record<string, unknown>>): ClaudeHeadMeta 
   const meta: ClaudeHeadMeta = {};
   for (const line of lines) {
     const type = typeof line.type === 'string' ? line.type : '';
+    if ((type === 'user' || type === 'assistant') && line.isSidechain !== true && messageHasContent(line)) meta.hasConversation = true;
     if (type === 'custom-title') {
       const title = textOf(line.customTitle);
       if (title !== undefined && meta.customTitle === undefined) meta.customTitle = title;
+    } else if (type === 'summary') {
+      const summary = textOf(line.summary);
+      if (summary !== undefined && meta.summary === undefined) meta.summary = summary;
     } else if (type === 'agent-name') {
       const name = textOf(line.agentName);
       if (name !== undefined && meta.agentName === undefined) meta.agentName = name;
     }
     const cwd = textOf(line.cwd);
     if (cwd !== undefined && cwd.startsWith('/') && meta.cwd === undefined) meta.cwd = cwd;
-    const timestamp = normalizeIso(line.timestamp);
-    if (timestamp !== undefined) {
-      if (meta.firstTimestamp === undefined) meta.firstTimestamp = timestamp;
-      meta.lastTimestamp = timestamp;
-    }
+    // createdAt 取最早 timestamp；updatedAt 统一用 mtime
+    if (meta.firstTimestamp === undefined) meta.firstTimestamp = normalizeIso(line.timestamp);
     if (type === 'user' && meta.firstUserText === undefined) {
       const text = firstUserText(line);
       if (text !== undefined) meta.firstUserText = text;
@@ -110,9 +121,19 @@ function extractHeadMeta(lines: Array<Record<string, unknown>>): ClaudeHeadMeta 
   return meta;
 }
 
+/** user/assistant 行必须有内容才算“有对话” */
+function messageHasContent(line: Record<string, unknown>): boolean {
+  const message = line.message;
+  if (message === null || typeof message !== 'object') return false;
+  const content = (message as Record<string, unknown>).content;
+  if (typeof content === 'string') return content.trim().length > 0;
+  if (Array.isArray(content)) return content.length > 0;
+  return false;
+}
+
 /** 首条“真实”用户消息（跳过 sidechain / meta / 工具结果回灌 / 注入指令） */
 function firstUserText(line: Record<string, unknown>): string | undefined {
-  if (line.isSidechain === true || line.isMeta === true) return undefined;
+  if (line.isSidechain === true || line.isMeta === true || line.isCompactSummary === true) return undefined;
   if (line.toolUseResult !== undefined) return undefined;
   const message = line.message;
   if (message === null || typeof message !== 'object') return undefined;

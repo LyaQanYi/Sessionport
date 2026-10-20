@@ -10,9 +10,12 @@ export const HOME_TO_AGENT: Record<string, string> = {
   dsh: 'dsh',
   codex: 'codex',
   opencode: 'opencode',
+  cursor: 'cursor',
+  qoder: 'qoder',
+  workbuddy: 'workbuddy',
 };
 
-export const ALL_AGENTS = ['claude-code', 'codex', 'command-code', 'dsh', 'opencode', 'kimi-code'];
+export const ALL_AGENTS = ['claude-code', 'codex', 'command-code', 'dsh', 'opencode', 'kimi-code', 'cursor', 'qoder', 'workbuddy'];
 
 function readStored(): string[] | null {
   try {

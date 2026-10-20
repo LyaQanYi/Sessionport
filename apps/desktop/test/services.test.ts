@@ -7,8 +7,8 @@ import { test } from 'node:test';
 import { listSessions, previewMigration, readSession, readableAgents, runMigration, writableAgents } from '../src/main/services.ts';
 
 test('capabilities：可读/可写 agent 列表', () => {
-  assert.deepEqual(readableAgents().sort(), ['codex', 'command-code', 'dsh', 'kimi-code', 'opencode'].sort());
-  assert.deepEqual(writableAgents().sort(), ['claude-code', 'command-code', 'codex', 'dsh', 'opencode'].sort());
+  assert.deepEqual(readableAgents().sort(), ['claude-code', 'codex', 'command-code', 'cursor', 'dsh', 'kimi-code', 'opencode', 'qoder', 'workbuddy'].sort());
+  assert.deepEqual(writableAgents().sort(), ['claude-code', 'command-code', 'codex', 'cursor', 'dsh', 'opencode', 'qoder'].sort());
 });
 
 test('listSessions 返回结构合法的行（无会话时也应是空数组）', async () => {

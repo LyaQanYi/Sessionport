@@ -7,8 +7,8 @@
 A conversation started in Kimi Code becomes a Claude Code session you can `/resume`.
 Not a pasted transcript, not a summarized context blob: a native session the target CLI loads by itself.
 
-> **Status: alpha.** Six adapters work today (read/write/verify): `claude-code`, `command-code`,
-> `dsh`, `codex`, `opencode` — plus `kimi-code` as a source. Every export prints exactly what it lost.
+> **Status: alpha.** Nine adapters: `claude-code`, `command-code`, `dsh`, `codex`, `opencode`,
+> `cursor`, `qoder` (read/write) and `kimi-code`, `workbuddy` (source). Every export prints exactly what it lost.
 > Design notes: [DESIGN.md](./DESIGN.md). Format research: [research/](./research/).
 
 ## Why
@@ -65,6 +65,9 @@ State lives in `~/.sessionport/registry.json` (`--state <dir>` to override).
 | Agent | Read | Write | Resume verified | Against |
 |---|---|---|---|---|
 | Kimi Code | ✅ `state.json` + `agents/*/wire.jsonl` | — | source only | CLI 2.1.1 / format v2 |
+| Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ new composer + header | app-visible on restart (manual send) | 3.25.9 |
+| Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ new transcript file | ✅ Qoder SDK `listSessions` sees it | 1.1.69 |
+| WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | source only | 5.8.3 |
 | Claude Code | — | ✅ JSONL session files | ✅ `claude -p --resume` | CLI 2.1.303 |
 | Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + desktop registration | ✅ `cmd -p --session` | 1.82.3 |
 | DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load + replay | 5.8.3 (format v4) |
@@ -98,8 +101,9 @@ sessionport sync  <source> --to <agent> [options]
 sessionport verify --agent <agent> [options]
 ```
 
-Sources: `kimi:<dir>`, `commandcode:<path|id>`, `dsh:<dir>`, `codex:<path|id>`, `opencode:<path|id>`, or an IR `.json`.
-Targets: `claude-code`, `command-code`, `dsh`, `codex`, `opencode`.
+Sources: `kimi:<dir>`, `claude:<path|id>`, `commandcode:<path|id>`, `dsh:<dir>`, `codex:<path|id>`,
+`opencode:<path|id>`, `cursor:<composerId>`, `qoder:<path|id>`, `workbuddy:<path|id>`, or an IR `.json`.
+Targets: `claude-code`, `command-code`, `dsh`, `codex`, `opencode`, `cursor` (needs `--confirm-real`), `qoder`.
 
 Registers into the target app instead of just writing files: `--register` (Command Code desktop list / DSH workspace /
 Codex `threads` + `session_index.jsonl`).
@@ -152,7 +156,10 @@ packages/
 │   ├── command-code/     # read/write/verify + desktop registration
 │   ├── dsh/              # read/write/verify + workspace registration
 │   ├── codex/            # read/write/verify + threads registration
-│   └── opencode/         # read/write/verify + import/export
+│   ├── opencode/         # read/write/verify + import/export
+│   ├── cursor/           # read/write/verify (state.vscdb composerData/bubbleId)
+│   ├── qoder/            # read/write/verify (projects/<slug>/<uuid>.jsonl)
+│   └── workbuddy/        # read/verify (projects/<slug>/<sessionId>.jsonl)
 ├── cli/                  # inspect / pull / push / sync / verify
 └── e2e fixtures live in each adapter’s test/ folder
 
