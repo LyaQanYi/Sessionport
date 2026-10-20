@@ -342,7 +342,10 @@ readback = 15 events / 7 user / 8 assistant，标题与 cwd 正确。
      发一条消息，才能验证续聊（后端是否接受本地构造的历史）。
   6. **本机真实库**的 9ac31713 写入发生在 Cursor 未运行时，磁盘结构 verify 全 PASS；
      真实库的 UI 可见性/续聊同样**需人工在 app 里确认**；bcd042da（含 agentLocation/完整气泡字段）的
-     verify 与 CLI `list` 首条已通过，但 app 未重启。
+     verify 与 CLI `list` 首条已通过；2026-10-20 18:07 重启真实 Cursor 后，
+     `main.log` 为 `[LocalAgentStorage] ... found 451 agent headers`，`conversation-search.db`
+     出现 bcd042da 行且正文正是写入的两条消息。→ 真实 app 进程枚举并索引了导入会话；
+     列表 UI 目视与“继续聊天”仍需人工确认。
 
 **关于 agentLocation 的判定依据（Lead 专门要求）**：
 - **[实测]** 不写 `agentLocation/agentLocationHistory` 的 d92bcea6 也被 `LocalAgentStorage`
