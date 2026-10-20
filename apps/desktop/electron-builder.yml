@@ -1,0 +1,51 @@
+appId: dev.sessionport.desktop
+productName: sessionport
+copyright: Copyright © 2026 sessionport contributors
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+  - node_modules/**/*
+
+asar: true
+npmRebuild: false
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  extendInfo:
+    NSHumanReadableCopyright: Copyright © 2026 sessionport contributors
+    LSMinimumSystemVersion: "12.0"
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  contents:
+    - x: 140
+      y: 200
+    - x: 400
+      y: 200
+      type: link
+      path: /Applications
+
+win:
+  target: [nsis]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+linux:
+  target: [AppImage]
+  category: Development
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+publish: null
