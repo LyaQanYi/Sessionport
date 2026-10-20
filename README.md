@@ -108,6 +108,24 @@ Targets: `claude-code`, `command-code`, `dsh`, `codex`, `opencode`, `cursor` (ne
 Registers into the target app instead of just writing files: `--register` (Command Code desktop list / DSH workspace /
 Codex `threads` + `session_index.jsonl`).
 
+### Reuse the target's official importer
+
+ZCode and Qoder ship their own migration flows, which also carry memories/MCP/skills and are
+maintained by the vendor. Prefer them when available:
+
+```bash
+sessionport import --into zcode claude:<id>     [--open] [--verify]
+sessionport import --into qoder workbuddy:<id>  [--open] [--verify]
+```
+
+| Pair | Official path | sessionport role |
+|---|---|---|
+| Claude Code → ZCode | ZCode onboarding / Settings → migrate sessions (scans `~/.claude/projects`) | ensure the Claude transcript exists, guide, verify against `tasks-index.sqlite` |
+| WorkBuddy → Qoder | Qoder Settings → Data import → WorkBuddy | confirm the source store, guide, verify against `~/.qoder-cn/projects` |
+| Claude Code → Cursor | none (only a feature request) | direct write: `push --to cursor --confirm-real` |
+
+Details and evidence: [research/official-import-paths.md](./research/official-import-paths.md).
+
 ## Desktop app (early)
 
 An Electron shell lives in `apps/desktop` — the renderer never touches the filesystem; all adapter work happens in
