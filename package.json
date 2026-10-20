@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:desktop": "node --test apps/desktop/test/*.test.ts",
     "dev:desktop": "pnpm --dir apps/desktop dev",
-    "build:desktop": "pnpm --dir apps/desktop build"
+    "build:desktop": "pnpm --dir apps/desktop build",
+    "dist:desktop": "pnpm --dir apps/desktop dist"
   },
   "workspaces": [
     "packages/*",

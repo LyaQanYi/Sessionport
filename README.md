@@ -114,9 +114,16 @@ pnpm install
 pnpm dev:desktop     # electron-vite dev (opens a window)
 pnpm build:desktop   # production bundles -> apps/desktop/out
 
+# distribute: .app + dmg + zip under apps/desktop/release (unsigned)
+pnpm dist:desktop
+pnpm --dir apps/desktop dist:dir   # unpacked .app only, faster
+
 # headless smoke (no window; useful in CI)
 cd apps/desktop && SESSIONPORT_SMOKE=1 ./node_modules/.bin/electron .
 ```
+
+The packaged app is unsigned by default (`mac.identity: null`), so first launch needs
+right-click → Open or `xattr -dr com.apple.quarantine`.
 
 Current screens: session browser (all agents), reader (IR events, notices, resume command), migration with
 dry-run loss preview before writing. IPC is a small typed allow-list with zod validation in the main process.

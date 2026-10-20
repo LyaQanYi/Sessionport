@@ -13,6 +13,7 @@ fixtures/private/
 
 # electron 构建产物
 apps/desktop/out/
+apps/desktop/release/
 
 # 系统
 .DS_Store
