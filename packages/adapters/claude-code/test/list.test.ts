@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -45,7 +45,8 @@ test('claude list: custom-title / cwd / 时间 / resumeHint', async () => {
     assert.equal(session.title, 'Claude 标题');
     assert.equal(session.cwd, '/tmp/demo/proj');
     assert.equal(session.createdAt, '2026-10-01T00:00:00.000Z');
-    assert.equal(session.updatedAt, '2026-10-01T00:05:00.000Z');
+    // updatedAt 用文件 mtime（Claude 是追加写，mtime 才是最后活动时间）
+    assert.equal(session.updatedAt, statSync(join(dir, id + '.jsonl')).mtime.toISOString());
     assert.equal(session.resumeHint, 'claude --resume ' + id);
     assert.match(session.nativePath, new RegExp(id + '\\.jsonl$'));
   } finally {
@@ -105,6 +106,42 @@ test('claude list: 目录不存在返回 []，全坏文件跳过', async () => {
     const dir = join(root, 'projects', '-tmp-demo-proj');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'bad.jsonl'), 'not json\nalso not json\n');
+    assert.deepEqual(await listClaudeSessions({ home: root }), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+test('claude list: 标题优先级 custom-title > summary > 首条 user 文本', async () => {
+  const { root, dir } = makeProject();
+  try {
+    const id = '44444444-4444-4444-8444-444444444444';
+    writeFileSync(
+      join(dir, id + '.jsonl'),
+      jsonl([
+        { type: 'summary', summary: '压缩摘要标题', sessionId: id },
+        { type: 'user', message: { role: 'user', content: '首条用户文本' }, timestamp: '2026-10-01T00:00:00.000Z', sessionId: id },
+      ]),
+    );
+    const sessions = await listClaudeSessions({ home: root });
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]!.title, '压缩摘要标题');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('claude list: 只有元数据、没有对话行的会话跳过', async () => {
+  const { root, dir } = makeProject();
+  try {
+    writeFileSync(
+      join(dir, '55555555-5555-4555-8555-555555555555.jsonl'),
+      jsonl([
+        { type: 'mode', mode: 'normal' },
+        { type: 'custom-title', customTitle: '只有标题' },
+        { type: 'file-history-snapshot', messageId: 'x' },
+        { type: 'user', isSidechain: true, message: { role: 'user', content: '子代理行' } },
+      ]),
+    );
     assert.deepEqual(await listClaudeSessions({ home: root }), []);
   } finally {
     rmSync(root, { recursive: true, force: true });

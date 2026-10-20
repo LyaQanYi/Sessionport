@@ -1,0 +1,20 @@
+{
+  "name": "@sessionport/adapter-qoder",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./read": "./src/read.ts",
+    "./write": "./src/write.ts",
+    "./verify": "./src/verify.ts",
+    "./wire": "./src/wire.ts"
+  },
+  "dependencies": {
+    "@sessionport/core": "workspace:*"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  }
+}

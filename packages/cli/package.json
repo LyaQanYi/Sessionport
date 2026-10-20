@@ -16,7 +16,10 @@
     "@sessionport/adapter-command-code": "workspace:*",
     "@sessionport/adapter-dsh": "workspace:*",
     "@sessionport/adapter-codex": "workspace:*",
-    "@sessionport/adapter-opencode": "workspace:*"
+    "@sessionport/adapter-opencode": "workspace:*",
+    "@sessionport/adapter-cursor": "workspace:*",
+    "@sessionport/adapter-qoder": "workspace:*",
+    "@sessionport/adapter-workbuddy": "workspace:*"
   },
   "license": "Apache-2.0",
   "engines": {

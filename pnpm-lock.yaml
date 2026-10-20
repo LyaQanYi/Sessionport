@@ -23,6 +23,9 @@ importers:
       '@sessionport/adapter-command-code':
         specifier: workspace:*
         version: link:../../packages/adapters/command-code
+      '@sessionport/adapter-cursor':
+        specifier: workspace:*
+        version: link:../../packages/adapters/cursor
       '@sessionport/adapter-dsh':
         specifier: workspace:*
         version: link:../../packages/adapters/dsh
@@ -32,6 +35,12 @@ importers:
       '@sessionport/adapter-opencode':
         specifier: workspace:*
         version: link:../../packages/adapters/opencode
+      '@sessionport/adapter-qoder':
+        specifier: workspace:*
+        version: link:../../packages/adapters/qoder
+      '@sessionport/adapter-workbuddy':
+        specifier: workspace:*
+        version: link:../../packages/adapters/workbuddy
       '@sessionport/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -111,6 +120,12 @@ importers:
         specifier: workspace:*
         version: link:../../core
 
+  packages/adapters/cursor:
+    dependencies:
+      '@sessionport/core':
+        specifier: workspace:*
+        version: link:../../core
+
   packages/adapters/dsh:
     dependencies:
       '@sessionport/core':
@@ -129,6 +144,18 @@ importers:
         specifier: workspace:*
         version: link:../../core
 
+  packages/adapters/qoder:
+    dependencies:
+      '@sessionport/core':
+        specifier: workspace:*
+        version: link:../../core
+
+  packages/adapters/workbuddy:
+    dependencies:
+      '@sessionport/core':
+        specifier: workspace:*
+        version: link:../../core
+
   packages/cli:
     dependencies:
       '@sessionport/adapter-claude-code':
@@ -140,6 +167,9 @@ importers:
       '@sessionport/adapter-command-code':
         specifier: workspace:*
         version: link:../adapters/command-code
+      '@sessionport/adapter-cursor':
+        specifier: workspace:*
+        version: link:../adapters/cursor
       '@sessionport/adapter-dsh':
         specifier: workspace:*
         version: link:../adapters/dsh
@@ -149,6 +179,12 @@ importers:
       '@sessionport/adapter-opencode':
         specifier: workspace:*
         version: link:../adapters/opencode
+      '@sessionport/adapter-qoder':
+        specifier: workspace:*
+        version: link:../adapters/qoder
+      '@sessionport/adapter-workbuddy':
+        specifier: workspace:*
+        version: link:../adapters/workbuddy
       '@sessionport/core':
         specifier: workspace:*
         version: link:../core

@@ -70,6 +70,9 @@ export const SESSION_AGENTS: readonly AgentId[] = [
   'kimi-code',
   'command-code',
   'dsh',
+  'cursor',
+  'qoder',
+  'workbuddy',
 ];
 
 export const DEFAULT_SESSION_LIMIT = 200;
@@ -133,13 +136,25 @@ async function loadBuiltinLister(agent: AgentId): Promise<SessionLister> {
       const mod = await import('../../adapters/dsh/src/index.ts');
       return (options) => mod.listDshSessions(options);
     }
+    case 'cursor': {
+      const mod = await import('../../adapters/cursor/src/index.ts');
+      return (options) => mod.listCursorSessions(options);
+    }
+    case 'qoder': {
+      const mod = await import('../../adapters/qoder/src/index.ts');
+      return (options) => mod.listQoderSessions(options);
+    }
+    case 'workbuddy': {
+      const mod = await import('../../adapters/workbuddy/src/index.ts');
+      return (options) => mod.listWorkBuddySessions(options);
+    }
   }
 }
 
 /**
  * 聚合列出本机所有 agent 的会话。
  *
- * - 默认 6 家全列，按 updatedAt 倒序，最多 200 条（可覆盖）
+ * - 默认 9 家全列，按 updatedAt 倒序，最多 200 条（可覆盖）
  * - 单个 adapter 抛错时降级为 warning，其它家照常返回
  * - 结果里的 agent 字段以请求的 agent 为准（防 adapter 标错）
  */

@@ -14,6 +14,9 @@ const AGENT_FOR_HOME: Record<string, string> = {
   dsh: 'dsh',
   codex: 'codex',
   opencode: 'opencode',
+  cursor: 'cursor',
+  qoder: 'qoder',
+  workbuddy: 'workbuddy',
 };
 
 export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: ThemeMode) => void; prefs: AgentPreferences }) {

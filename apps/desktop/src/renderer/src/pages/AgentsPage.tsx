@@ -6,6 +6,9 @@ import { AgentGlyph, AGENT_META, agentLabel } from '../agents.tsx';
 import type { AgentPreferences } from '../preferences.ts';
 import { Badge, Button, EmptyState, Spinner, Topbar, cn } from '../ui.tsx';
 
+/** 有无头 resume 冒烟（结构化校验之外）的 agent */
+const RESUME_SMOKE_AGENTS = new Set(['claude-code', 'codex', 'command-code', 'dsh', 'opencode']);
+
 const HOME_KEY: Record<string, string> = {
   'kimi-code': 'kimi',
   'claude-code': 'claude',
@@ -13,6 +16,9 @@ const HOME_KEY: Record<string, string> = {
   dsh: 'dsh',
   codex: 'codex',
   opencode: 'opencode',
+  cursor: 'cursor',
+  qoder: 'qoder',
+  workbuddy: 'workbuddy',
 };
 
 function Capability(props: { ok: boolean; label: string }) {
@@ -84,7 +90,7 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                       <Capability ok={readable.has(agent)} label="读取" />
                       <Capability ok={writable.has(agent)} label="写入" />
-                      <Capability ok={writable.has(agent)} label="resume 校验" />
+                      <Capability ok={RESUME_SMOKE_AGENTS.has(agent)} label="headless resume" />
                     </div>
 
                     <div className="min-w-0 rounded-control border border-border bg-subtle px-2.5 py-1.5">
