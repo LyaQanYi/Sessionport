@@ -1,0 +1,75 @@
+# 官方会话导入路径调研（2026-10-21）
+
+结论：**ZCode 与 Qoder 各自内置了官方会话导入**，可直接复用；**Cursor 没有**（社区 feature request）。
+三家的官方入口都没有可脚本触发的 CLI / 深链，因此 sessionport 的策略是「准备源 → 引导操作 → 事后验证」。
+
+## 1. 结论矩阵
+
+| 目标 | 官方支持 | 机制 | 官方读取的源 | 落库位置 | 触发方式 |
+| --- | --- | --- | --- | --- | --- |
+| ZCode 3.15.3 | ✅ | 内置 Claude Code 迁移 | `~/.claude/projects`（及 CLAUDE_CONFIG_DIR / HOME） | `~/.zcode/v2/tasks-index.sqlite` 的 `tasks` 表（含 `migration_source`） | 首次引导「迁移会话数据」/ 设置 → 迁移会话数据（GUI） |
+| Qoder CN 0.4.8 | ✅ | 设置 → 数据导入 | `~/.workbuddy`（以及 `.codebuddy` 等来源） | `~/.qoder-cn/projects/<projectKey>/<uuid>.jsonl` | 设置 → 数据导入 → 选择来源 → 开始导入（GUI） |
+| Cursor 3.25.9 | ❌ | 无 | — | — | 官方论坛只有 feature request；需要直接写 `state.vscdb` |
+
+## 2. 证据
+
+### ZCode [实测]
+
+- `/Applications/ZCode.app` 3.15.3（`dev.zcode.app`）。
+- 解包 `app.asar` 后，`out/main/chunk-ZCWQ2IP2.js` 中存在 `ClaudeNativeSessionImportRepo`：
+
+      getNativeProjectsRoots(){ let t=new Set; t.add(Mw()); ... [...t].map(a=>lr(a,".claude","projects")) }
+      readJsonLinesFileHead(...)   // 读 Claude transcript 头部
+      shouldIgnoreClaudeNativeTranscriptDir(...)  // 跳过 subagents/worktree
+
+- 渲染层 i18n：`occupationOnboarding.migration` = 「迁移会话数据」，`occupationOnboarding.migrationDescription` = 「从 Claude Code 迁移历史会话数据」；
+  另有 `settings.migration.reason.session_not_found_or_workspace_mismatch` 等失败原因文案，说明在设置里也有迁移入口。
+- 导入结果落在 `~/.zcode/v2/tasks-index.sqlite`：`tasks` 表有 `migration_source`、`workspace_path`、`task_id` 等列。
+- ZCode CLI（`Resources/glm/zcode.cjs`，0.16.9）只有 `--resume`/`--continue`/`-p`/`tui`/`app-server`，**没有 import/migrate 子命令**。
+
+### Qoder [实测]
+
+- `/Applications/Qoder CN.app` 0.4.8（`com.qodercn.app.stable`）。
+- 解包 `app.asar` 后，主进程 `electronMain.js` 里存在 WorkBuddy 来源识别与导入逻辑：
+
+      Lhe={quest:..., qoderWork:..., workbuddy:dhe}
+      YAe=/(?:~\/|\$HOME\/|%USERPROFILE%[\\\/]|Path\.home\(\)\s*\/\s*)\.(?:workbuddy(?:-ai)?|codebuddy)(?:[\\\/]|\b)/iu
+
+- 渲染层 i18n（`out/renderer/assets/DIR8HOYO.js`）：`importDataAction`「导入数据」、`importStart`「开始导入」、
+  `importSessionsViewInSettings`「可在设置 - 数据导入中查看进度」、`importSessionsStartedInBackground`、
+  `importSessionsNothing`、`importSessionToStore` 等；导入项包含会话、MCP 连接器、记忆（`importMcpAllFailed` / `importMemoryAllFailed`）。
+- 官方导入器自己扫描来源 app 的本地数据，写入 `~/.qoder-cn/projects`；不需要第三方写它的格式。
+- Qoder 没有独立 CLI（`qodercli` 是内置 agent runtime），也没有 import 深链。
+
+### Cursor [实测 + 仓库]
+
+- Cursor 3.25.9 的 `Resources/app/out` 中没有会话导入代码；CLI（`cursor`）只有 VS Code 风格参数（打开/合并/diff 等）。
+- 官方论坛帖（2026-07）标题即「Native Agent History Import / Importer API for Claude Code, Codex, and Cursor sessions」，
+  属于 **feature request**：作者自己实现了本地迁移工作流，希望 Cursor 提供官方 importer。结论：**目前无官方路径**。
+
+## 3. sessionport 如何复用
+
+新增命令（不重复实现官方逻辑，只做「准备 + 引导 + 验证」）：
+
+    sessionport import --into zcode  claude:<id>     [--open] [--verify]
+    sessionport import --into qoder  workbuddy:<id>  [--open] [--verify]
+    sessionport import --into cursor claude:<id>     # 明确报错：无官方导入，改用 push --to cursor --confirm-real
+
+- ZCode：确认 Claude transcript 已在 `~/.claude/projects`（源就是 Claude Code 时无需写任何东西），打印官方迁移步骤；
+  `--verify` 读 `tasks-index.sqlite`，按 cwd/标题匹配已导入任务。
+- Qoder：确认 `~/.workbuddy/projects` 存在，打印「设置 → 数据导入 → WorkBuddy → 开始导入」；
+  `--verify` 扫 `~/.qoder-cn/projects`，按 cwd/标题匹配新导入的 transcript。
+- 官方导入比我们直接写目标格式更完整（Qoder 还能带 MCP/记忆），所以**优先引导官方路径**；
+  `push --to qoder` 仍作为无 GUI 环境的兜底。
+
+## 4. 后续可做
+
+- 若官方暴露 CLI/IPC（例如 ZCode `app-server` 或 Qoder 内部 IPC），把 `import` 从「引导」升级为「直接调用」；
+- ZCode 的 `tasks-index.sqlite` 写入路径可作为无 GUI 兜底方案调研（注意 vendor 兼容性风险）；
+- Qoder 导入还包含 MCP/记忆，可在验证阶段一并统计（`importMcpSkippedDetail` 等）。
+
+## 5. 参考
+
+- Cursor 论坛 feature request: https://forum.cursor.com/t/native-agent-history-import-importer-api-for-claude-code-codex-and-cursor-sessions/164604
+- 同类开源项目（Claude Code/Codex/ZCode 六向迁移）: https://github.com/llxgdtop/Agent-Session-Migration
+- Qoder + Claude 桥接项目: https://github.com/ranxianglei/qoder-claude-bridge

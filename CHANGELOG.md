@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format loosely follows
   - Claude Code now also reads (readClaudeSession / listClaudeSessions), so it can be a
     migration source (e.g. Claude Code → Cursor).
 - **CLI**: `inspect`, `pull`, `push`, `sync`, `verify`, `list` with a sync registry
+  and `import --into zcode|qoder` for reusing the target apps' own official migration flows
   (`~/.sessionport/registry.json`) that refuses to overwrite turns added in the target app
   unless `--fork` or `--force`.
 - **Desktop app** (`apps/desktop`, Electron 44): harness-centric sidebar, virtualised session

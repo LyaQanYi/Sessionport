@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { bundleEventCount, describeDecision, eventKindCounts, findRef, listAllSessions, loadRegistry, planSync, saveRegistry, SESSION_AGENTS, sourceKeyOf, upsertRef, validateIrBundle } from '@sessionport/core';
 import type { AgentId, ExternalRef, SyncDecision } from '@sessionport/core';
 import type { IrBundle, IrNotice } from '@sessionport/core';
+import { planOfficialImport, verifyOfficialImport, officialSupport, type OfficialTarget } from './official.ts';
 
 const USAGE = [
   'sessionport — 在 AI 编程 agent 之间搬运会话',
@@ -17,6 +18,8 @@ const USAGE = [
   '  sessionport sync <source> --to <agent> [options]   # 安全重推：不覆盖目标端新增内容',
   '  sessionport verify --agent <agent> [options]',
   '  sessionport list [--agent <agent>] [--limit <n>] [--json]',
+  '  sessionport import --into <zcode|qoder> <source> [--open] [--verify]',
+  '                        复用目标 app 自带的官方会话导入（准备源 + 引导 + 事后验证）',
   '',
   '<source> 形式:',
   '  kimi:<目录>            Kimi Code 会话目录（kimi export 解包目录或原生会话目录）',
@@ -47,6 +50,8 @@ const USAGE = [
   '  --json                 输出机器可读 JSON',
   '  --force                sync: 目标端有新增时仍然覆盖（会丢目标端新内容）',
   '  --confirm-real         写 Cursor 真实库时必须显式确认（先用 --dry-run 看计划）',
+  '  --into <app>           import 的目标 app：zcode | qoder | cursor（cursor 无官方导入）',
+  '  --open                 import 时自动打开目标 app',
   '  --fork                 sync: 目标端有新增时另建一个目标会话，保留旧会话',
   '  --state <dir>          registry 目录（默认 $SESSIONPORT_HOME 或 ~/.sessionport）',
   '  --limit <n>            list: 最多显示多少条（默认 200）',
@@ -495,6 +500,46 @@ function formatListTime(iso: string | undefined): string {
 }
 
 /** sessionport list：汇总 6 家的会话元数据（不改动任何文件） */
+/** sessionport import：复用目标 app 的官方导入（目前 ZCode/Qoder 有，Cursor 没有） */
+async function cmdOfficialImport(
+  values: Record<string, string | boolean | undefined>,
+  positionals: string[],
+): Promise<void> {
+  const into = typeof values.into === 'string' ? values.into : '';
+  if (!into) fail('import 需要 --into <zcode|qoder|cursor>');
+  if (!['zcode', 'qoder', 'cursor'].includes(into)) fail('未知目标: ' + into + '（可选 zcode / qoder / cursor）');
+  const source = positionals[0] ?? (typeof values.source === 'string' ? values.source : '');
+  if (!source) fail('import 需要 <source>（例如 claude:<id> / workbuddy:<id>）');
+  const bundle = await loadBundle(source);
+  const home = typeof values.home === 'string' ? values.home : undefined;
+  const target = into as OfficialTarget;
+  const support = officialSupport(target);
+
+  if (!support.supported) {
+    process.stdout.write(support.target + ' 没有官方导入路径。官方建议：用 sessionport push --to cursor --confirm-real 直接写入 composer。\n');
+    for (const note of support.notes) process.stdout.write('  · ' + note + '\n');
+    if (values.verify) process.exitCode = 2;
+    return;
+  }
+
+  const result = await planOfficialImport({ target, bundle, home, open: Boolean(values.open) });
+  if (values.json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return;
+  }
+  process.stdout.write('official import: ' + result.support.appName + '（' + result.support.mechanism + '）\n');
+  process.stdout.write('source   ' + result.sourceAgent + (result.sourceTitle ? '  ' + result.sourceTitle : '') + '\n');
+  for (const line of result.lines) process.stdout.write(line + '\n');
+
+  if (values.verify) {
+    process.stdout.write('\n验证官方导入结果…\n');
+    const verify = await verifyOfficialImport({ target, cwd: result.sourceCwd, title: result.sourceTitle, home });
+    for (const line of verify.lines) process.stdout.write(line + '\n');
+    process.stdout.write(verify.ok ? 'VERIFY: PASS（目标 app 存储里已找到）\n' : 'VERIFY: 未找到（可能还没在 app 里点导入）\n');
+    if (!verify.ok) process.exitCode = 2;
+  }
+}
+
 async function cmdList(values: Record<string, string | boolean | undefined>): Promise<void> {
   const agentFilter = typeof values.agent === 'string' ? resolveListAgent(values.agent) : undefined;
   let limit: number | undefined;
@@ -710,6 +755,10 @@ async function main(): Promise<void> {
       'user-data-dir': { type: 'string' },
       'write-ir': { type: 'string' },
       'confirm-real': { type: 'boolean' },
+      into: { type: 'string' },
+      source: { type: 'string' },
+      open: { type: 'boolean' },
+      verify: { type: 'boolean' },
       resume: { type: 'boolean' },
       force: { type: 'boolean' },
       fork: { type: 'boolean' },
@@ -757,6 +806,10 @@ async function main(): Promise<void> {
   }
   if (command === 'verify') {
     await cmdVerify(values);
+    return;
+  }
+  if (command === 'import') {
+    await cmdOfficialImport(values, positionals);
     return;
   }
   if (command === 'list') {
