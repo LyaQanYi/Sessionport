@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowRight, CheckCircle2, Info, ListChecks, Loader2 } fr
 import { api, sessionRefOf } from '../api.ts';
 import type { AgentId, DivergedMode, SessionRow } from '../api.ts';
 import { Badge, Button, Card, CheckboxRow, Select, Spinner, Topbar, cn } from '../ui.tsx';
+import type { OfficialTarget, OfficialVerifyRow } from '../api.ts';
 import { agentLabel } from '../agents.tsx';
 
 const DECISION_TONE = {
@@ -24,6 +25,8 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
   const [register, setRegister] = useState(true);
   const [includeChildren, setIncludeChildren] = useState(false);
   const [mode, setMode] = useState<DivergedMode>('auto');
+  const [officialResults, setOfficialResults] = useState<Partial<Record<OfficialTarget, OfficialVerifyRow>>>({});
+  const officialQuery = useQuery({ queryKey: ['official'], queryFn: api.officialList });
 
   useEffect(() => {
     if (props.initial && sourceKey === null) setSourceKey(rowKey(props.initial));
@@ -63,6 +66,66 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
 
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto w-full max-w-3xl px-5 py-6">
+          <Card className="mb-4 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">官方导入（推荐）</span>
+              <span className="text-2xs text-fg-3">目标 app 自带的迁移功能，能一并带记忆/MCP，比直接写更稳</span>
+            </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-3">
+              {(officialQuery.data ?? []).map((row) => {
+                const sourceOk = source !== null && row.sources.includes(source.agent);
+                const verify = officialResults[row.target];
+                return (
+                  <div key={row.target} className="flex flex-col gap-2 rounded-panel border border-border p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-body font-medium">{row.appName}</span>
+                      {row.supported ? <Badge variant="success">官方支持</Badge> : <Badge variant="outline">无官方导入</Badge>}
+                      <span className="ml-auto text-3xs text-fg-3">{row.mechanism}</span>
+                    </div>
+                    <div className="truncate font-mono text-3xs text-fg-3" title={row.store}>{row.store}</div>
+                    {row.supported ? (
+                      <ol className="list-inside list-decimal space-y-0.5 text-2xs text-fg-2">
+                        {row.steps.slice(0, 3).map((step) => (<li key={step}>{step}</li>))}
+                        {row.steps.length > 3 ? (
+                          <li className="list-none text-3xs text-fg-3">…完整步骤见命令行 import 输出</li>
+                        ) : null}
+                      </ol>
+                    ) : (
+                      <div className="text-2xs text-fg-2">{row.notes.join('；')}</div>
+                    )}
+                    <div className="mt-auto flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!row.supported}
+                        onClick={() => void api.officialOpen(row.target).catch(() => undefined)}
+                      >
+                        打开 {row.appName}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!row.supported || !sourceOk}
+                        title={sourceOk ? '读取目标 app 自己的存储，确认导入是否落库' : '先在下方选择匹配来源的会话（' + row.sources.join(' / ') + '）'}
+                        onClick={() => {
+                          void api.officialVerify(row.target, { cwd: source?.cwd, title: source?.title }).then((result) => {
+                            setOfficialResults((current) => ({ ...current, [row.target]: result }));
+                          }).catch(() => undefined);
+                        }}
+                      >
+                        验证导入
+                      </Button>
+                    </div>
+                    {verify ? (
+                      <div className={cn('rounded-control border px-2 py-1.5 text-2xs', verify.ok ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400' : 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400')}>
+                        {verify.ok ? '已找到导入结果' : '未找到（可能还没在 app 里点导入）'} · 匹配 {verify.matches.length}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
           <Card className="p-4">
             <div className="grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-end">
               <label className="block space-y-1.5">

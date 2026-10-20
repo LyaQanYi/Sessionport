@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { bundleEventCount, describeDecision, eventKindCounts, findRef, listAllSessions, loadRegistry, planSync, saveRegistry, SESSION_AGENTS, sourceKeyOf, upsertRef, validateIrBundle } from '@sessionport/core';
 import type { AgentId, ExternalRef, SyncDecision } from '@sessionport/core';
 import type { IrBundle, IrNotice } from '@sessionport/core';
-import { planOfficialImport, verifyOfficialImport, officialSupport, type OfficialTarget } from './official.ts';
+import { openTargetApp, planOfficialImport, officialSupport, verifyOfficialImport, type OfficialTarget } from './official.ts';
 
 const USAGE = [
   'sessionport — 在 AI 编程 agent 之间搬运会话',
@@ -500,7 +500,7 @@ function formatListTime(iso: string | undefined): string {
 }
 
 /** sessionport list：汇总 6 家的会话元数据（不改动任何文件） */
-/** sessionport import：复用目标 app 的官方导入（目前 ZCode/Qoder 有，Cursor 没有） */
+/** sessionport import：复用目标 app 的官方导入（ZCode/Qoder 有，Cursor 没有） */
 async function cmdOfficialImport(
   values: Record<string, string | boolean | undefined>,
   positionals: string[],
@@ -522,14 +522,22 @@ async function cmdOfficialImport(
     return;
   }
 
-  const result = await planOfficialImport({ target, bundle, home, open: Boolean(values.open) });
+  const result = await planOfficialImport({ target, bundle, home });
+  if (values.open === true) {
+    const opened = openTargetApp(target);
+    process.stdout.write((opened ? 'open     ✅ 已打开 ' : 'open     ⚠️ 无法打开 ') + support.appName + '\n');
+  }
   if (values.json) {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     return;
   }
-  process.stdout.write('official import: ' + result.support.appName + '（' + result.support.mechanism + '）\n');
+  process.stdout.write('official import: ' + support.appName + '（' + support.mechanism + '）\n');
   process.stdout.write('source   ' + result.sourceAgent + (result.sourceTitle ? '  ' + result.sourceTitle : '') + '\n');
-  for (const line of result.lines) process.stdout.write(line + '\n');
+  process.stdout.write('prepare  ✅ ' + result.prepared + '\n');
+  process.stdout.write('steps    在 ' + support.appName + ' 里操作：\n');
+  result.steps.forEach((step, index) => process.stdout.write('  ' + (index + 1) + '. ' + step + '\n'));
+  process.stdout.write('notes\n');
+  for (const note of support.notes) process.stdout.write('  · ' + note + '\n');
 
   if (values.verify) {
     process.stdout.write('\n验证官方导入结果…\n');
@@ -539,7 +547,6 @@ async function cmdOfficialImport(
     if (!verify.ok) process.exitCode = 2;
   }
 }
-
 async function cmdList(values: Record<string, string | boolean | undefined>): Promise<void> {
   const agentFilter = typeof values.agent === 'string' ? resolveListAgent(values.agent) : undefined;
   let limit: number | undefined;

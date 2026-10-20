@@ -9,6 +9,9 @@ const CHANNELS = new Set([
   'app:capabilities',
   'app:paths',
   'app:openPath',
+  'official:list',
+  'official:verify',
+  'official:open',
 ]);
 
 const api = {

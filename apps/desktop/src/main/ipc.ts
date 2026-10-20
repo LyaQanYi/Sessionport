@@ -1,7 +1,7 @@
 import { app, ipcMain, shell } from 'electron';
 import { z } from 'zod';
 
-import { detectHomes, listSessions, pathsInfo, previewMigration, readSession, readableAgents, runMigration, writableAgents } from './services.ts';
+import { detectHomes, listSessions, officialImports, officialVerify, pathsInfo, previewMigration, readSession, readableAgents, runMigration, writableAgents } from './services.ts';
 
 const agentSchema = z.enum(['claude-code', 'command-code', 'dsh', 'codex', 'opencode', 'kimi-code']);
 
@@ -40,6 +40,9 @@ const channelSchemas = {
   'app:capabilities': z.object({}).default({}),
   'app:paths': z.object({}).default({}),
   'app:openPath': z.object({ key: z.enum(['kimi', 'claude', 'commandCode', 'dsh', 'codex', 'opencode', 'registry']) }),
+  'official:list': z.object({}).default({}),
+  'official:verify': z.object({ target: z.enum(['zcode', 'qoder', 'cursor']), cwd: z.string().optional(), title: z.string().optional() }),
+  'official:open': z.object({ target: z.enum(['zcode', 'qoder', 'cursor']) }),
 } as const;
 
 type Channel = keyof typeof channelSchemas;
@@ -78,6 +81,20 @@ export function registerIpc(): void {
     writable: writableAgents(),
     homes: detectHomes(),
   })));
+  ipcMain.handle('official:list', async () => wrap(() => officialImports()));
+  ipcMain.handle('official:verify', async (_event, payload: unknown) => wrap(() => {
+    const input = channelSchemas['official:verify'].parse(payload);
+    return officialVerify(input.target, { cwd: input.cwd, title: input.title });
+  }));
+  ipcMain.handle('official:open', async (_event, payload: unknown) => wrap(() => {
+    const input = channelSchemas['official:open'].parse(payload);
+    const appName = input.target === 'zcode' ? 'ZCode' : input.target === 'qoder' ? 'Qoder CN' : 'Cursor';
+    return new Promise<{ opened: boolean }>((resolve) => {
+      const child = spawn('open', ['-a', appName], { stdio: 'ignore' });
+      child.on('exit', (code) => resolve({ opened: code === 0 }));
+      child.on('error', () => resolve({ opened: false }));
+    });
+  }));
   ipcMain.handle('app:paths', async () => wrap(() => {
     const info = pathsInfo();
     return { ...info, version: app.getVersion(), electron: process.versions.electron ?? '' };

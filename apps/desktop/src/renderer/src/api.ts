@@ -101,6 +101,28 @@ export interface HomeInfo {
   exists: boolean;
 }
 
+export type OfficialTarget = 'zcode' | 'qoder' | 'cursor';
+
+export interface OfficialSupportRow {
+  target: OfficialTarget;
+  appName: string;
+  supported: boolean;
+  mechanism: string;
+  sources: string[];
+  store: string;
+  steps: string[];
+  notes: string[];
+}
+
+export interface OfficialVerifyRow {
+  target: OfficialTarget;
+  store: string;
+  ok: boolean;
+  checked: number;
+  matches: Array<{ id: string; title?: string; workspace?: string; at?: string }>;
+  lines: string[];
+}
+
 export interface PathsInfo {
   homes: Record<string, HomeInfo>;
   registryDir: string;
@@ -149,6 +171,10 @@ export const api = {
   capabilities: () => invoke<Capabilities>('app:capabilities'),
   paths: () => invoke<PathsInfo>('app:paths'),
   openPath: (key: string) => invoke<{ opened: string }>('app:openPath', { key }),
+  officialList: () => invoke<OfficialSupportRow[]>('official:list'),
+  officialVerify: (target: OfficialTarget, options: { cwd?: string; title?: string } = {}) =>
+    invoke<OfficialVerifyRow>('official:verify', { target, ...options }),
+  officialOpen: (target: OfficialTarget) => invoke<{ opened: boolean }>('official:open', { target }),
 };
 
 export function formatTime(iso?: string): string {

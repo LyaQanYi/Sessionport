@@ -48,7 +48,6 @@ test('planOfficialImport：ZCode 准备已存在的 Claude transcript', async ()
     const result = await planOfficialImport({ target: 'zcode', bundle });
     assert.equal(result.prepared, file);
     assert.ok(result.steps.some((step) => step.includes('迁移会话数据')));
-    assert.equal(result.opened, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -6,8 +6,8 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { describeDecision, findRef, loadRegistry, planSync, saveRegistry, sessionportHome, sourceKeyOf, upsertRef } from '@sessionport/core';
-import type { AgentId, ExternalRef, IrBundle, LossEntry, SyncDecision } from '@sessionport/core';
+import { describeDecision, findRef, loadRegistry, OFFICIAL_IMPORTS, officialSupport, planSync, saveRegistry, sessionportHome, sourceKeyOf, upsertRef, verifyOfficialImport } from '@sessionport/core';
+import type { AgentId, ExternalRef, IrBundle, LossEntry, OfficialSupport, OfficialTarget, OfficialVerifyResult, SyncDecision } from '@sessionport/core';
 
 export type ReadableAgent = 'kimi-code' | 'command-code' | 'dsh' | 'codex' | 'opencode';
 
@@ -500,4 +500,19 @@ export function detectHomes(): Record<string, boolean> {
     qoder: existsSync(join(home, '.qoder-cn')),
     workbuddy: existsSync(join(home, '.workbuddy')),
   };
+}
+/** 官方导入支持矩阵（ZCode/Qoder 有，Cursor 没有） */
+export function officialImports(): OfficialSupport[] {
+  return OFFICIAL_IMPORTS;
+}
+
+/** 读取目标 app 自己的存储，验证官方导入结果 */
+export async function officialVerify(
+  target: OfficialTarget,
+  options: { cwd?: string; title?: string } = {},
+): Promise<OfficialVerifyResult> {
+  if (!officialSupport(target).supported) {
+    throw new Error(target + ' 没有官方导入路径');
+  }
+  return verifyOfficialImport({ target, cwd: options.cwd, title: options.title });
 }

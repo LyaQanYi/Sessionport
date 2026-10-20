@@ -150,6 +150,9 @@ right-click → Open or `xattr -dr com.apple.quarantine`.
 Current screens: session browser (all agents), reader (IR events, notices, resume command), migration with
 dry-run loss preview before writing. IPC is a small typed allow-list with zod validation in the main process.
 
+The migration page also lists the vendor's own import flows (ZCode ← Claude Code, Qoder ← WorkBuddy)
+with a one-click "open app" and a "verify import" button that reads the target app's own store.
+
 | Session browser | Adapters | Settings |
 |---|---|---|
 | ![session browser](docs/desktop-sessions.png) | ![adapters](docs/desktop-agents.png) | ![settings](docs/desktop-settings.png) |
