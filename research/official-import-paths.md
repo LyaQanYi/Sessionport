@@ -41,11 +41,28 @@
 - 官方导入器自己扫描来源 app 的本地数据，写入 `~/.qoder-cn/projects`；不需要第三方写它的格式。
 - Qoder 没有独立 CLI（`qodercli` 是内置 agent runtime），也没有 import 深链。
 
-### Cursor [实测 + 仓库]
+### Cursor [实测 + 官方文档 + 仓库]
 
-- Cursor 3.25.9 的 `Resources/app/out` 中没有会话导入代码；CLI（`cursor`）只有 VS Code 风格参数（打开/合并/diff 等）。
-- 官方论坛帖（2026-07）标题即「Native Agent History Import / Importer API for Claude Code, Codex, and Cursor sessions」，
-  属于 **feature request**：作者自己实现了本地迁移工作流，希望 Cursor 提供官方 importer。结论：**目前无官方路径**。
+**官方文档**：cursor.com/llms.txt 全量索引里没有任何「会话导入」文档；只有
+`/help/getting-started/migrate-vscode`、`migrate-jetbrains`（迁移设置/扩展）和 Cloud Agent API 的
+environment history（远端环境历史，不是本地 chat）。结论：**没有文档化的 Claude Code/Codex 会话导入**。
+
+**但 Cursor 3.25.9 里有开发者导入命令**（`f1` 默认 true，命令面板可见，category=Developer）：
+
+- `developer.exportChat` — `Export Chat (Developer)`：把当前 composer 导出成 **Cursor Chat export JSON**，
+  结构为 `{ version: 1, name, conversationState: base64(protobuf), blobs: { key: base64 } }`。
+- `developer.importChat` — `Import Chat... (Developer)`：选择上述 `.json` 导入当前 workspace
+  （必须已打开文件夹；只接受 `version === 1`，导入后 `openComposer` 打开）。
+- `developer.bulkImportChats` — `Bulk Import Chats from Directory... (Developer)`：选一个目录批量导入
+  目录下所有 `.json` 导出。
+
+**这说明**：Cursor 有官方导入面，但只吃 **Cursor 自己导出的 protobuf 格式**，不是 Claude Code transcript。
+所以 Claude Code → Cursor 目前仍**没有原生导入**；论坛帖只是 feature request（Cursor 员工回复认可，未提供 API），
+社区插件（0smboy/agent-migration-cursor-plugin）依旧 patch 私有 `state.vscdb`。
+
+**可复用路径（下一阶段）**：从 IR 生成 v1 Cursor Chat export JSON，然后让用户执行
+`Bulk Import Chats from Directory... (Developer)`。需要先拿到一份真实导出作为模板（用户在任意 chat 上
+点 Export Chat (Developer)），再从 bundle 逆向 `conversationState` 的 protobuf 字段。
 
 ## 3. sessionport 如何复用
 
@@ -53,7 +70,7 @@
 
     sessionport import --into zcode  claude:<id>     [--open] [--verify]
     sessionport import --into qoder  workbuddy:<id>  [--open] [--verify]
-    sessionport import --into cursor claude:<id>     # 明确报错：无官方导入，改用 push --to cursor --confirm-real
+    sessionport import --into cursor claude:<id>     # 说明无原生 Claude 导入；Cursor 的 Developer Import Chat 只吃它自己的导出格式
 
 - ZCode：确认 Claude transcript 已在 `~/.claude/projects`（源就是 Claude Code 时无需写任何东西），打印官方迁移步骤；
   `--verify` 读 `tasks-index.sqlite`，按 cwd/标题匹配已导入任务。
