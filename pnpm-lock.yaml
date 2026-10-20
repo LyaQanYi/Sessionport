@@ -10,6 +10,10 @@ importers:
 
   apps/desktop:
     dependencies:
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.7
+    devDependencies:
       '@sessionport/adapter-claude-code':
         specifier: workspace:*
         version: link:../../packages/adapters/claude-code
@@ -37,25 +41,6 @@ importers:
       '@tanstack/react-virtual':
         specifier: ^3.13.0
         version: 3.14.21(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      clsx:
-        specifier: ^2.1.1
-        version: 2.1.1
-      lucide-react:
-        specifier: ^0.542.0
-        version: 0.542.0(react@18.3.1)
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.3.1
-        version: 18.3.1(react@18.3.1)
-      tailwind-merge:
-        specifier: ^3.3.1
-        version: 3.7.0
-      zod:
-        specifier: ^4.1.0
-        version: 4.6.7
-    devDependencies:
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.2
@@ -71,6 +56,9 @@ importers:
       autoprefixer:
         specifier: ^10.4.20
         version: 10.6.1(postcss@8.5.30)
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
       electron:
         specifier: ^44.9.0
         version: 44.9.0
@@ -80,9 +68,21 @@ importers:
       electron-vite:
         specifier: ^6.0.0
         version: 6.0.0(vite@7.3.7(@types/node@24.19.2)(jiti@1.21.7))
+      lucide-react:
+        specifier: ^0.542.0
+        version: 0.542.0(react@18.3.1)
       postcss:
         specifier: ^8.4.49
         version: 8.5.30
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
+      tailwind-merge:
+        specifier: ^3.3.1
+        version: 3.7.0
       tailwindcss:
         specifier: ^3.4.17
         version: 3.4.19
