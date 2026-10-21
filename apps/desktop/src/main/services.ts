@@ -87,6 +87,14 @@ export interface MigrationOptions {
   stateHome?: string;
   /** 目标端已有新增时的处理：auto 拒绝 / force 覆盖 / fork 新会话 */
   onDiverged?: 'auto' | 'force' | 'fork';
+  /** dsh 目标：精简导入（截断内容，日志也损） */
+  slim?: boolean;
+  /** dsh 目标：压缩导入（保留完整日志 + 原生 compaction 链） */
+  compact?: boolean;
+  /** dsh 目标：压缩导入时最近 step 的字符预算 */
+  compactBudgetChars?: number;
+  /** dsh 目标：压缩导入时强制保留的最近 step 数 */
+  compactKeepRecentSteps?: number;
 }
 
 export interface MigrationResult {
@@ -274,7 +282,15 @@ async function writeTarget(
   }
   if (target === 'dsh') {
     const mod = await import('@sessionport/adapter-dsh');
-    const report = await mod.writeDshSession(bundle, { ...base, home: options.home, id: options.id });
+    const report = await mod.writeDshSession(bundle, {
+      ...base,
+      home: options.home,
+      id: options.id,
+      slim: options.slim === true,
+      compact: options.compact === true,
+      compactBudgetChars: options.compactBudgetChars,
+      compactKeepRecentSteps: options.compactKeepRecentSteps,
+    });
     return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.written.events, unit: 'events' };
   }
   if (target === 'codex') {

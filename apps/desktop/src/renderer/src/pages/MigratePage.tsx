@@ -24,6 +24,7 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
   const [target, setTarget] = useState<AgentId | null>(null);
   const [register, setRegister] = useState(true);
   const [includeChildren, setIncludeChildren] = useState(false);
+  const [dshMode, setDshMode] = useState<'full' | 'slim' | 'compact'>('compact');
   const [mode, setMode] = useState<DivergedMode>('auto');
   const [officialResults, setOfficialResults] = useState<Partial<Record<OfficialTarget, OfficialVerifyRow>>>({});
   const officialQuery = useQuery({ queryKey: ['official'], queryFn: api.officialList });
@@ -47,11 +48,24 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
   }, [target, targets]);
 
   const preview = useMutation({
-    mutationFn: () => api.previewMigration(source!.agent, sessionRefOf(source!), target!, { register, includeChildren }),
+    mutationFn: () =>
+      api.previewMigration(source!.agent, sessionRefOf(source!), target!, {
+        register,
+        includeChildren,
+        ...(target === 'dsh' ? { slim: dshMode === 'slim', compact: dshMode === 'compact' } : {}),
+      }),
   });
   const run = useMutation({
     mutationFn: () =>
-      api.runMigration({ agent: source!.agent, ref: sessionRefOf(source!), target: target!, register, includeChildren, onDiverged: mode }),
+      api.runMigration({
+        agent: source!.agent,
+        ref: sessionRefOf(source!),
+        target: target!,
+        register,
+        includeChildren,
+        onDiverged: mode,
+        ...(target === 'dsh' ? { slim: dshMode === 'slim', compact: dshMode === 'compact' } : {}),
+      }),
     onSuccess: (result) => {
       if (!result.refused) preview.mutate();
     },
@@ -154,6 +168,30 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                 </Select>
               </label>
             </div>
+
+            {target === 'dsh' ? (
+              <div className="mt-4 flex flex-wrap items-center gap-2 rounded-control border border-border bg-subtle px-3 py-2 text-caption text-fg-2">
+                <span className="text-fg-1">导入模式</span>
+                {([
+                  { value: 'compact' as const, label: '压缩（推荐）', hint: '保留完整日志 + compaction，上下文=摘要+最近 step' },
+                  { value: 'full' as const, label: '全量', hint: '超大文件可能超出模型上下文' },
+                  { value: 'slim' as const, label: '精简', hint: '截断工具内容，日志也损' },
+                ]).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setDshMode(option.value)}
+                    title={option.hint}
+                    className={cn(
+                      'h-6 rounded px-2 text-caption transition-colors',
+                      dshMode === option.value ? 'bg-card text-fg-1 shadow-sm' : 'text-fg-2 hover:text-fg-1',
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
               <CheckboxRow checked={register} onChange={setRegister}>

@@ -87,6 +87,12 @@ export interface MigrationOptions {
   model?: string;
   stateHome?: string;
   onDiverged?: DivergedMode;
+  /** dsh：精简导入（日志也损） */
+  slim?: boolean;
+  /** dsh：压缩导入（保留完整日志 + compaction） */
+  compact?: boolean;
+  compactBudgetChars?: number;
+  compactKeepRecentSteps?: number;
 }
 
 export interface Capabilities {
