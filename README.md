@@ -178,6 +178,9 @@ right-click → Open or `xattr -dr com.apple.quarantine`.
 Current screens: session browser (all agents), reader (IR events, notices, resume command), migration with
 dry-run loss preview before writing. IPC is a small typed allow-list with zod validation in the main process.
 
+The UI is bilingual (zh-CN / en-US): it follows the system language by default and Settings → Language can
+pin one; the choice is stored locally and applies immediately (loss/notice descriptions are translated by code).
+
 The migration page also lists the vendor's own import flows (ZCode ← Claude Code, Qoder ← WorkBuddy)
 with a one-click "open app" and a "verify import" button that reads the target app's own store.
 
