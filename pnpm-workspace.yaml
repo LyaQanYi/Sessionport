@@ -3,8 +3,6 @@ packages:
   - packages/adapters/*
   - apps/*
 allowBuilds:
-  electron-winstaller: set this to true or false
-  esbuild: set this to true or false
-onlyBuiltDependencies:
-  - electron
-  - esbuild
+  electron: true
+  electron-winstaller: true
+  esbuild: true
