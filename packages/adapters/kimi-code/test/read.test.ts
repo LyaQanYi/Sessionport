@@ -15,7 +15,7 @@ test('读取真实 Kimi bundle 的结构与统计', { skip: hasBundle ? false : 
   const bundle = await readKimiBundle(BUNDLE);
   assert.equal(bundle.irVersion, '0.1');
   assert.equal(bundle.root.source.agent, 'kimi-code');
-  assert.equal(bundle.root.meta.cwd, '/Users/lyaqanyi');
+  assert.match(bundle.root.meta.cwd ?? '', /^\/Users\/.+/u);
   assert.equal(bundle.root.meta.title, '多平台会话同步工具查询');
   assert.equal(bundle.children.length, 1);
   assert.equal(bundle.children[0]!.label, 'explore');

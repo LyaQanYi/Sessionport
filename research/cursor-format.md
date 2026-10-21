@@ -203,7 +203,7 @@ key：`cursorDiskKV['bubbleId:<composerId>:<bubbleId>']`，单条 JSON。本机�
 `workspaceStorage/<workspaceId>/workspace.json`：
 
 ```json
-{"folder":"file:///Users/lyaqanyi/Documents/Coding/00N.E.K.O.Verse-top"}
+{"folder":"file:///Users/example/Documents/Coding/00N.E.K.O.Verse-top"}
 // 多根：{"workspace":"file:///.../xxx.code-workspace"}
 ```
 
@@ -304,7 +304,7 @@ readback = 15 events / 7 user / 8 assistant，标题与 cwd 正确。
 - 源：真实 Claude Code transcript `219e0e77-b848-47f3-aa66-f6930c31dcfe.jsonl`（40 行，cwd 是
   neko-auth-platform 的 worktree），转成 IR 后 8 events：2 message 可写，3 tool_call + 3 tool_result
   被丢弃并记 losses。
-- 目标 cwd 选主仓 `/Users/lyaqanyi/Documents/GitHub/neko-auth-platform`，复用已存在的
+- 目标 cwd 选主仓 `/Users/example/Documents/GitHub/neko-auth-platform`，复用已存在的
   workspaceId `161b097fe314c56623925ee7c9e5f2fe`；标题
   「Claude Code 导入：main 分支最新代码」；composerId `bcd042da-8c54-4a1b-9af8-d36ec4a8ff74`。
 - 先 dryRun：rows=4（composerData 1 + header 1 + bubble 2），4 个 key 全部不存在；
@@ -337,7 +337,7 @@ readback = 15 events / 7 user / 8 assistant，标题与 cwd 正确。
      `[MainThreadCursorAgentHost] ensureLoaded: transcript without checkpoint-backed conversationState
      for dddbb5eb-… {"resolutionSource":"top-level-fallback","headerCount":3}`，
      紧接着 `created host session dddbb5eb-… {"turnCount":0,"coldBootstrap":false,
-     "workspacePaths":["/Users/lyaqanyi/Documents/Coding/0auth-neko"]}`。
+     "workspacePaths":["/Users/example/Documents/Coding/0auth-neko"]}`。
      → app 打开并 hydrate 了导入会话（3 条 header = 3 个气泡），workspace 路径解析正确；
      `turnCount:0` 表示还没发新消息。
   4. **[推测] glass 列表可见**：列表代码与上述扫描/索引同源于 composerHeaders（§8.1），

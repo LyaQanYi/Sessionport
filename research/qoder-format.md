@@ -139,7 +139,7 @@ SDK 的 `listSessions()`（asar 内函数 `il`）：
 ## 8. 人工确认步骤（GUI）
 
 1. 打开 Qoder CN。
-2. 打开（或切换）项目 `/Users/lyaqanyi/Documents/GitHub/neko-auth-platform`。
+2. 打开（或切换）项目 `/Users/example/Documents/GitHub/neko-auth-platform`。
 3. 会话列表应出现标题「分析项目架构」，首条用户消息「分析一下项目架构」。
 4. 双击进入，应看到 13 条 user/assistant 文本、20 条 thinking、42 组工具调用/结果（Read/Bash/Grep/Glob 等）。
 5. 若列表没刷新：退出并重开 Qoder CN（[推测] 会话列表可能按项目缓存，需重进项目）。

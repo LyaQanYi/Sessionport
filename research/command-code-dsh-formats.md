@@ -75,7 +75,7 @@ node "/Applications/Command Code.app/Contents/Resources/app/node_modules/command
 
 workspace 目录名转义（projectKey，见 [dsh-spec](./dsh-spec.md)）：
 /、\\、: 的连续段折叠成一个 -，开头 - 去掉；[A-Za-z0-9._-] 原样保留；其他字符按 UTF-16 code unit 转 ~XXXX；结果用 -- 前后包起来。
-例如 /Users/lyaqanyi/Documents/GitHub/sessionport → --Users-lyaqanyi-Documents-GitHub-sessionport--。
+例如 /Users/example/Documents/GitHub/sessionport → --Users-example-Documents-GitHub-sessionport--。
 注意：路径里的点号保留（N.E.K.O.HarmonyOS 原样），大小写保留。
 
 workspace.json 结构（节选）：

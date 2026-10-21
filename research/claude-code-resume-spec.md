@@ -5,7 +5,7 @@
 > 结论标注约定：**实测确认** / **源码确认**（从 2.1.303 bundle 提取函数）/ **推测** / **未验证**。
 
 > 目标：回答「让 `claude --resume <uuid>` 成功加载并继续对话，会话 JSONL 的最小行集合是什么」，供 sessionport 的 claude-code adapter `writeSession` 直接实现。
-> 验证对象：claude 2.1.303（macOS arm64，`/Users/lyaqanyi/.local/share/claude/versions/2.1.303`），隔离 `CLAUDE_CONFIG_DIR=.spikes/claude-resume/home`。
+> 验证对象：claude 2.1.303（macOS arm64，`/Users/example/.local/share/claude/versions/2.1.303`），隔离 `CLAUDE_CONFIG_DIR=.spikes/claude-resume/home`。
 > 证据目录：`.spikes/claude-resume/evidence/`。标注约定：**实测确认** = 无头 resume 实测；**源码确认** = 从 2.1.303 自带 bundle 中读出对应代码；**推测** = 未直接验证的推断；**未验证** = 明确没测出来。
 
 ---
