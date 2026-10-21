@@ -245,7 +245,9 @@ win32 用 birthtimeMs）。本机 78 个 workspace.json 中可 stat 的目录全
    `conversationState:"~"`、随机 base64 加密 key。
 3. 每个消息一个 `bubbleId:<id>:<uuid>`：user 带 `text` + ProseMirror richText；
    assistant 带 `text`；reasoning → type=2 thinking 气泡（`thinking:{text,signature:""}`，
-   `capabilityType:30`）。
+   `capabilityType:30`）；tool_call/tool_result → 一个 type=2 工具气泡
+   （`capabilityType:15` + `toolFormerData`，结果内联在同一个气泡；字段/映射见
+   [cursor-toolformer.md](./cursor-toolformer.md)）。
 4. `lastUpdatedAt/recency`：**默认用写入时刻 now**（列表按 recency 倒序，导入会话应出现在顶部），
    header 的 `createdAt` 和气泡 `createdAt` 仍保留源时间；`preserveUpdatedAt:true` 可改为使用源时间。
 5. 安全：`PRAGMA busy_timeout=5000`；`BEGIN IMMEDIATE`/COMMIT（失败 ROLLBACK）；
@@ -254,8 +256,10 @@ win32 用 birthtimeMs）。本机 78 个 workspace.json 中可 stat 的目录全
    `INSERT OR ABORT` 显式覆盖列的 `ON CONFLICT REPLACE` 默认策略（并发下也不会静默替换）；
    默认真实用户库路径必须显式 `confirmReal:true`（先 dryRun）。
 
-**没有写**：toolFormerData（工具枚举是 Cursor 内部契约，无法安全映射，丢弃并记 losses）、
+**没有写**：`toolCallBinary`（agent.v1.ToolCall 的 protobuf；当前只写 params/result，
+UI 渲染需人工确认）、edit 的 `precomputedDiff`/`beforeContentId`/`afterContentId`、
 子代理 composer、图片二进制、conversationState protobuf、checkpoint/diff 数据。
+工具映射的已确认/推测边界见 [cursor-toolformer.md](./cursor-toolformer.md)。
 
 ### 9.1 真实库写入证据（2026-10-20，实测）
 
@@ -361,7 +365,10 @@ readback = 15 events / 7 user / 8 assistant，标题与 cwd 正确。
   本机真实库的 9ac31713 与 bcd042da 都是改动前写的，仍按源时间排序。
 - 写入默认带 `agentLocation/agentLocationHistory`；[实测] 不带也能被 app 枚举与索引，
   [推测] 列表可见不受影响，但 Agents 窗口的本地项目分组可能更依赖它。
-- toolFormerData 的工具枚举/结构是内部契约，写回未实现（读已实现）。
+- toolFormerData 已写回常见工具（shell/read/edit/write/grep/glob/list/delete/todo），
+  写入 `params`/`result`/`additionalData` 与 `_sessionport` 往返扩展；但
+  `toolCallBinary` 未写、edit diff 不可用、UI 渲染仍需人工确认。证据/字段表/未验证项见
+  [cursor-toolformer.md](./cursor-toolformer.md)。
 - 图片只有 uuid/尺寸，没有本地二进制，读写都只能占位。
 - `conversationState`、`blobEncryptionKey`、`speculativeSummarizationEncryptionKey` 用占位值；
   发送新消息后 app 可能重写这些字段（未验证是否影响首条续聊）。

@@ -61,6 +61,7 @@ import type {
   CursorHeaderRow,
   CursorToolFormerData,
 } from './wire.ts';
+import { cursorToolName } from './toolformer.ts';
 
 /** core 的 AgentId 目前还没有 'cursor'（集成时由 core 补），这里做一次集中断言 */
 export const CURSOR_AGENT_ID = 'cursor' as unknown as AgentId;
@@ -351,7 +352,34 @@ function eventTime(bubble: CursorBubble, entry: CursorConversationHeaderEntry | 
   return fallback;
 }
 
+function toolExtension(data: CursorToolFormerData): Record<string, unknown> | undefined {
+  return isRecord(data._sessionport) ? data._sessionport : undefined;
+}
+
+function isIrContentArray(value: unknown): value is IrContent[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((item) => {
+    if (!isRecord(item) || typeof item.type !== 'string') return false;
+    switch (item.type) {
+      case 'text':
+      case 'diff':
+      case 'terminal':
+        return typeof item.text === 'string';
+      case 'json':
+        return true;
+      case 'image':
+        return typeof item.ref === 'string';
+      default:
+        return false;
+    }
+  });
+}
+
 function toolCallInput(data: CursorToolFormerData): unknown {
+  // 我们写出去的 bubble 带 _sessionport.input，可精确还原源 IR 的参数；
+  // 原生 Cursor 气泡没有这个键，仍按 params/rawArgs 解码（保持既有行为）。
+  const extension = toolExtension(data);
+  if (extension !== undefined && 'input' in extension) return extension.input;
   const params = typeof data.params === 'string' ? data.params : undefined;
   if (params !== undefined && params.length > 0) {
     const parsed = tryParseJson(params);
@@ -368,8 +396,26 @@ function toolCallInput(data: CursorToolFormerData): unknown {
 
 function toolResultContent(data: CursorToolFormerData): { content: IrContent[]; isError: boolean } | undefined {
   const status = typeof data.status === 'string' ? data.status : '';
+  const extension = toolExtension(data);
+  if (extension !== undefined && isIrContentArray(extension.content)) {
+    return { content: extension.content, isError: extension.isError === true || status === 'error' };
+  }
   const raw = data.result;
-  if (raw === undefined || raw === null) return undefined;
+  if (raw === undefined || raw === null) {
+    // 原生 Cursor 的 grep/list 在落库时会把 result 剪成 additionalData 摘要
+    // （serializeToolformerBubbleData.js 的 fgo/fYv），这里把摘要保留成 json 结果。
+    if (
+      (data.tool === 41 ||
+        data.tool === 39 ||
+        data.name === 'ripgrep_raw_search' ||
+        data.name === 'list_dir_v2') &&
+      isRecord(data.additionalData) &&
+      data.additionalData.isPruned === true
+    ) {
+      return { content: [{ type: 'json', value: data.additionalData }], isError: status === 'error' };
+    }
+    return undefined;
+  }
   let content: IrContent[];
   if (typeof raw === 'string') {
     if (raw.length === 0) return undefined;
@@ -485,10 +531,17 @@ function loadComposerSession(
           typeof tool.toolCallId === 'string' && tool.toolCallId.length > 0
             ? tool.toolCallId
             : 'cursor-tool-' + entry.bubbleId;
+        const extension = toolExtension(tool);
+        const extensionName =
+          extension !== undefined && typeof extension.name === 'string' && extension.name.length > 0
+            ? extension.name
+            : undefined;
         const name =
-          typeof tool.name === 'string' && tool.name.length > 0
+          extensionName ??
+          (typeof tool.name === 'string' && tool.name.length > 0
             ? tool.name
-            : 'cursor_tool_' + String(typeof tool.tool === 'number' ? tool.tool : 'unknown');
+            : cursorToolName(typeof tool.tool === 'number' ? tool.tool : -1) ??
+              'cursor_tool_' + String(typeof tool.tool === 'number' ? tool.tool : 'unknown'));
         counters.toolCalls += 1;
         push({ kind: 'tool_call', at, callId, name, input: toolCallInput(tool) });
         const result = toolResultContent(tool);

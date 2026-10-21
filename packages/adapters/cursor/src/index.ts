@@ -22,6 +22,7 @@ export {
   assistantGrouping,
   printWriteReport,
   thinkingGrouping,
+  toolGrouping,
   userGrouping,
   writeCursorSession,
 } from './write.ts';
@@ -45,6 +46,27 @@ export type {
   VerifyCursorOptions,
   VerifyCursorReport,
 } from './verify.ts';
+
+export {
+  CAPABILITY_TOOL_FORMER,
+  CURSOR_TOOL,
+  CURSOR_TOOL_STATUSES,
+  buildCursorToolFormerData,
+  cursorToolName,
+  irContentText,
+  isCursorToolStatus,
+  resolveCursorTool,
+} from './toolformer.ts';
+export type {
+  BuildToolFormerResult,
+  BuiltToolFormer,
+  CursorToolCallSpec,
+  CursorToolKind,
+  CursorToolResultSpec,
+  CursorToolStatus,
+  RejectedToolFormer,
+  ToolFormerWarning,
+} from './toolformer.ts';
 
 export {
   CURSOR_HOME_ENV,
