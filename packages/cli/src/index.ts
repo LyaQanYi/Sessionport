@@ -186,7 +186,11 @@ function summarize(bundle: IrBundle): string {
   lines.push('  title=' + (bundle.root.meta.title ?? '(none)') + '  model=' + (bundle.root.meta.model ?? '?'));
   lines.push('root kinds: ' + JSON.stringify(eventKindCounts(bundle.root)));
   for (const child of bundle.children) {
-    lines.push('child ' + child.session.id + '  events=' + child.session.events.length + '  label=' + (child.label ?? '?'));
+    const parts = ['child ' + child.session.id, 'events=' + child.session.events.length, 'label=' + (child.label ?? '?')];
+    if (child.session.meta.profile !== undefined) parts.push('profile=' + child.session.meta.profile);
+    if (child.session.meta.title !== undefined) parts.push('title=' + child.session.meta.title.slice(0, 60));
+    if (child.viaToolCallId !== undefined) parts.push('via=' + child.viaToolCallId);
+    lines.push(parts.join('  '));
   }
   lines.push('root source: ' + JSON.stringify(bundle.root.source));
   return lines.join('\n');
