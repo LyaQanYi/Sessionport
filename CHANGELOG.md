@@ -13,8 +13,8 @@ All notable changes to this project are documented here. Format loosely follows
   to Cursor's native tools; a `tool_call` + `tool_result` pair becomes one capability-15 bubble;
   unsupported tools and orphan results stay explicit losses. IR round-trips through a
   `_sessionport` passthrough key that Cursor's loader ignores. `toolCallBinary` is deliberately not
-  generated and edit diffs are unavailable; Cursor UI rendering still needs manual confirmation.
-  See `research/cursor-toolformer.md`.
+  generated and edit diffs are unavailable; shell tool cards were manually confirmed to render
+  command + output in Cursor 3.25.9. See `research/cursor-toolformer.md`.
 - **Desktop i18n (zh-CN / en-US)**: zero-dependency dictionary (225 UI keys, typed so the English
   dictionary cannot drift), structured main-process error codes (`AppError` → `code`/`params`),
   English mappings for all current loss/notice codes, and Settings → Language
