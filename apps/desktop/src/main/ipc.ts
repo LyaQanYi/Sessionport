@@ -28,6 +28,7 @@ const channelSchemas = {
     compact: z.boolean().optional(),
     compactBudgetChars: z.number().int().positive().optional(),
     compactKeepRecentSteps: z.number().int().positive().optional(),
+    summaryCommand: z.string().optional(),
   }),
   'migrate:run': z.object({
     agent: agentSchema,
@@ -44,6 +45,7 @@ const channelSchemas = {
     compact: z.boolean().optional(),
     compactBudgetChars: z.number().int().positive().optional(),
     compactKeepRecentSteps: z.number().int().positive().optional(),
+    summaryCommand: z.string().optional(),
   }),
   'app:capabilities': z.object({}).default({}),
   'app:paths': z.object({}).default({}),
@@ -75,6 +77,7 @@ export function registerIpc(): void {
       compact: input.compact,
       compactBudgetChars: input.compactBudgetChars,
       compactKeepRecentSteps: input.compactKeepRecentSteps,
+      summaryCommand: input.summaryCommand,
     });
   }));
   ipcMain.handle('migrate:run', async (_event, payload: unknown) => wrap(() => {

@@ -26,7 +26,8 @@ All notable changes to this project are documented here. Format loosely follows
     migration source (e.g. Claude Code → Cursor).
 - **CLI**: `inspect`, `pull`, `push`, `sync`, `verify`, `list` with a sync registry
   and `import --into zcode|qoder` for reusing the target apps' own official migration flows
-- **Desktop**: DSH import-mode selector (compressed / full / slim) wired through preview + run;
+- **Desktop**: DSH import-mode selector (compressed / full / slim) and summary-engine selector
+  (extractive / Claude / Codex, LLM opt-in) wired through preview + run;
   official-import cards on the migration page (open the target app, verify against its
   own store) alongside the direct-write loss-preview flow
   (`~/.sessionport/registry.json`) that refuses to overwrite turns added in the target app
