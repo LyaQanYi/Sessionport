@@ -255,6 +255,10 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 - 错误态、缺结果、未知工具、孤立结果、参数不可用都有显式 status/loss。
 - 原生 Cursor 的 grep/list `additionalData` 摘要能读成 `tool_result(json)`。
 - 真实库只读回归：321 events / 115 tool_call / 113 tool_result，verify 全 PASS。
+- **真实 Cursor UI（3.25.9）目视确认**（2026-10-21，用户实测）：测试 composer
+  `7d8c3ddf-64d1-49ca-b0d7-148fd9f012a7` 在 Cursor 里正常打开，`run_terminal_command_v2`
+  工具卡片渲染出命令摘要与结果正文（不是 “Ran tool” 空卡片），reasoning 显示为
+  “Thought briefly”，`_sessionport` 不影响加载。→ **不需要补 `toolCallBinary`**（至少 shell 卡片）。
 - **真实库写入回归**（2026-10-21，sessionport 自测）：把一条真实 Claude 会话（225 events、
   103 个 tool_call）写进真实 `state.vscdb`，composer
   `7d8c3ddf-64d1-49ca-b0d7-148fd9f012a7`（标题 `[sessionport 测试] 工具卡片（PR #213 review）`）。
@@ -271,10 +275,9 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 
 ### 未验证（需要人工在 Cursor 里确认）
 
-1. **UI 渲染**：导入会话里的工具卡片是否显示命令/路径/结果。当前只写 `params`/`result`，
-   **没有写 `toolCallBinary`**；如果某个工具卡片依赖 `toolFormerData.toolCall`（而不是
-   params/result），它可能退化成“Ran tool”/空卡片。真实库里已经写好测试会话
-   `7d8c3ddf-64d1-49ca-b0d7-148fd9f012a7`，重启 Cursor 后打开即可确认。
+1. **其余工具的 UI 外观**：shell（`run_terminal_command_v2`）卡片已实测正常（命令摘要 + 结果正文）；
+   read / edit / grep / glob / list / delete / todo 的卡片尚未逐项目视确认（同一套
+   `params`/`result` 渲染路径，预期一致）。若某类卡片退化成 “Ran tool”，再补 `toolCallBinary`。
 2. **app 是否回写/删除 `_sessionport`**：打开会话、发消息、退出 app 后再读库对比。
 3. **edit 的 diff 卡片**：没有 before/after 全文与 `beforeContentId`/`afterContentId`，
    预期只显示路径与结果，不显示可展开 diff。
