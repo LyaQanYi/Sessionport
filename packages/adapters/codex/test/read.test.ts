@@ -8,8 +8,20 @@ const HOME = process.env.CODEX_HOME ?? process.env.HOME + '/.codex';
 const SESSIONS = existsSync(HOME) ? await listCodexSessions() : [];
 const hasReal = SESSIONS.length > 0;
 
-test('读取真实 Codex 会话：response_item 映射与双轨去重', { skip: hasReal ? false : '本机没有 Codex rollout 样本' }, async () => {
-  const bundle = await readCodexSession(SESSIONS[0]!.id, { home: HOME });
+test('读取真实 Codex 会话：response_item 映射与双轨去重', { skip: hasReal ? false : '本机没有 Codex rollout 样本' }, async (t) => {
+  // 最新的 rollout 可能只有极少事件（刚创建/被截断）：挑一个事件量足够的样本
+  let bundle: Awaited<ReturnType<typeof readCodexSession>> | undefined;
+  for (const candidate of SESSIONS.slice(0, 8)) {
+    const parsed = await readCodexSession(candidate.id, { home: HOME });
+    if (parsed.root.events.length > 10) {
+      bundle = parsed;
+      break;
+    }
+  }
+  if (bundle === undefined) {
+    t.skip('本机 Codex 样本事件量不足（<=10），跳过映射断言');
+    return;
+  }
   assert.equal(bundle.root.source.agent, 'codex');
   assert.ok(bundle.root.events.length > 10);
   assert.equal(bundle.root.head, bundle.root.events.at(-1)!.id);
