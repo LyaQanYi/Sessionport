@@ -96,8 +96,9 @@ type IrContent =
 
 - **统一 `callId`**：源端 `id` / `call_id` / `callID` / `toolCallId` 各自映射进来
 - **subagent 归一为"独立 session + parent 边"**：源端行内标记（Claude `isSidechain`）、
-  边表（Codex `thread_spawn_edges`）、列标记（opencode `message.agent`）、独立事件目录
-  （Kimi `subagent.spawned`）在 import 时统一
+  独立 transcript 目录（Claude `<sessionId>/subagents/agent-*.jsonl`，Qoder/WorkBuddy 同构；
+  磁盘 transcript 优先于行内镜像）、边表（Codex `thread_spawn_edges`）、列标记
+  （opencode `message.agent`）、独立事件目录（Kimi `subagent.spawned`）在 import 时统一
 - **来源指纹**：每个 session 记录 `{ agent, cliVersion, formatVersion }`——
   版本警告与回归测试的依据。四家都有版本字段可探测（Claude 行内 `version`、
   Codex `session_meta.cli_version`、`opencode.session.version` 列、
