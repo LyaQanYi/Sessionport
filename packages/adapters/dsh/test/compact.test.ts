@@ -34,6 +34,27 @@ function buildBigBundle(cwd: string): IrBundle {
   };
 }
 
+test('compact：summaryCommand 可注入 LLM 摘要（用假命令验证 plumbing）', async () => {
+  const home = await makeTempDir('compact-llm-');
+  try {
+    const bundle = buildBigBundle('/tmp/sessionport-compact-llm/project');
+    const report = await writeDshSession(bundle, {
+      home,
+      id: 'session-44444444-4444-4444-8444-444444444444',
+      compact: true,
+      compactKeepRecentSteps: 2,
+      summaryCommand: "printf '## Fake LLM summary\\n- user wants to build a bridge'",
+    });
+    const summary = report.rows.find((row) => row.type === 'compaction/summary')!;
+    assert.match(JSON.stringify(summary.data.summary), /Fake LLM summary/);
+    assert.ok(report.losses.some((loss) => loss.code === 'dsh.summary-llm'));
+    const verify = await verifyDshSession({ home, sessionId: 'session-44444444-4444-4444-8444-444444444444' });
+    assert.equal(verify.ok, true);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('compact：保留全部事件，写入合法 compaction 链（start/summary/checkpoint/end）', async () => {
   const home = await makeTempDir('compact-');
   try {

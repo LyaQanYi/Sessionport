@@ -17,6 +17,7 @@
  *   所以 workspace 注册不是必须的（registerWorkspace 只是可选加速）。
  * - projcache 是投影缓存，缺省时应用会回放事件重建，所以不写（也不伪造 v7 记录）。
  */
+import { spawn } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 
@@ -86,6 +87,8 @@ export interface WriteDshOptions {
   compactKeepRecentSteps?: number;
   /** compact 时可见上下文（最近 step）的字符预算，默认 200000 */
   compactBudgetChars?: number;
+  /** compact 时用外部 CLI 生成 LLM 摘要（prompt 走 stdin，stdout 读摘要），例如 "claude -p" */
+  summaryCommand?: string;
   /** 写进 compaction 摘要元数据的模型 id */
   model?: string;
   /** 精简导入：截断过长的 tool_result / tool_call 参数，丢弃较早 reasoning，避免目标端上下文超限 */
@@ -412,6 +415,110 @@ async function writeWorkspaceRegistration(home: string, cwd: string, sessionId: 
 
 const SYNTH_PREFIX = 'sessionport';
 
+const LLM_CHUNK_CHARS = 30000;
+
+function runSummaryCommand(command: string, input: string, timeoutMs = 180000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('summarizer timed out after ' + timeoutMs + 'ms'));
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve(stdout);
+      else reject(new Error('summarizer exited ' + String(code) + ': ' + stderr.slice(-400)));
+    });
+    child.stdin.write(input);
+    child.stdin.end();
+  });
+}
+
+function cleanSummaryOutput(raw: string): string {
+  return raw
+    .split('\n')
+    .filter((line) => !/^\[claude-code:[^\]]*\]/.test(line.trim()))
+    .join('\n')
+    .trim();
+}
+
+function summarizerSegments(steps: Array<{ users: Array<{ parts: Array<{ type: string; text?: string }> }>; assistant?: { parts: Array<{ type: string; text?: string }> }; toolCalls: Array<{ name: string }> }>): string {
+  const lines: string[] = [];
+  for (const step of steps) {
+    for (const user of step.users) {
+      const text = user.parts.filter((part) => part.type === 'text' && typeof part.text === 'string').map((part) => part.text as string).join(' ');
+      if (text.trim().length > 0) lines.push('USER: ' + clipText(text, 900));
+    }
+    if (step.assistant !== undefined) {
+      const text = step.assistant.parts.filter((part) => part.type === 'text' && typeof part.text === 'string').map((part) => part.text as string).join(' ');
+      if (text.trim().length > 0) lines.push('ASSISTANT: ' + clipText(text, 600));
+    }
+    const names = [...new Set(step.toolCalls.map((call) => call.name))];
+    if (names.length > 0) lines.push('TOOLS: ' + names.join(', '));
+  }
+  return lines.join('\n');
+}
+
+/**
+ * LLM 多轮摘要：把被 shadow 的历史切成段，逐段摘要，再合并（必要时多轮合并）。
+ * 复用用户已登录的 CLI（claude -p / codex exec -），避免要求新的 API key。
+ */
+async function buildLlmCompactionSummary(
+  steps: Array<{ users: Array<{ parts: Array<{ type: string; text?: string }> }>; assistant?: { parts: Array<{ type: string; text?: string }> }; toolCalls: Array<{ name: string }> }>,
+  command: string,
+  budgetChars: number,
+  losses: LossCollector,
+): Promise<string> {
+  const transcript = summarizerSegments(steps);
+  const chunks: string[] = [];
+  for (let index = 0; index < transcript.length; index += LLM_CHUNK_CHARS) {
+    chunks.push(transcript.slice(index, index + LLM_CHUNK_CHARS));
+  }
+  const segmentInstruction =
+    'You are compacting an AI coding-agent conversation so another agent can continue the work. ' +
+    'Summarize the conversation segment below as terse Markdown bullets. Preserve: the user goals and requests, ' +
+    'decisions made, files and code touched, errors and how they were fixed, pending work. ' +
+    'Use the language of the conversation. Output only the bullets, no preamble.\n\n--- SEGMENT ---\n';
+  const partials: string[] = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const raw = await runSummaryCommand(command, segmentInstruction + chunks[index]);
+    const clean = cleanSummaryOutput(raw);
+    if (clean.length > 0) partials.push(clean);
+    void index;
+  }
+  if (partials.length === 0) throw new Error('summarizer returned no text');
+  let merged = partials.join('\n\n');
+  let round = 0;
+  while (merged.length > budgetChars && round < 3) {
+    round += 1;
+    const mergeInstruction =
+      'Merge the following segment summaries of one AI coding-agent conversation into a single structured checkpoint ' +
+      'that lets another model resume with no loss of essential context. Keep these sections in order, terse bullets: ' +
+      '## Primary Request and Intent / ## Key Technical Concepts / ## Files and Code / ## Errors and Fixes / ## Pending Jobs. ' +
+      'Use the language of the conversation. Output only the summary, no preamble.\n\n--- SUMMARIES ---\n';
+    merged = cleanSummaryOutput(await runSummaryCommand(command, mergeInstruction + merged));
+  }
+  if (merged.length > budgetChars) merged = merged.slice(0, budgetChars) + '\n…（摘要超出预算，已截断）';
+  losses.add(
+    'dsh.summary-llm',
+    '使用外部 CLI 生成 LLM 摘要：' + chunks.length + ' 段 + ' + round + ' 轮合并',
+    { count: 1, severity: 'info' },
+  );
+  return merged;
+}
+
 const CHECKPOINT_PREAMBLE =
   'This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint.';
 
@@ -476,6 +583,7 @@ async function writeOneSession(session: IrSession, options: {
   compact?: boolean;
   compactKeepRecentSteps?: number;
   compactBudgetChars?: number;
+  summaryCommand?: string;
 }): Promise<{ filePath: string; sessionDir: string; header: DshSessionHeaderLine; rows: DshEventLine[]; counts: WriteDshResult['written'] }> {
   const cwd = options.cwd;
   const createdAtMs = msOf(session.meta.createdAt, Date.now());
@@ -767,7 +875,17 @@ async function writeOneSession(session: IrSession, options: {
         const shadowedChars = shadowedRows.reduce((sum, row) => sum + JSON.stringify(row).length, 0);
         const shadowedTokenCount = Math.max(1, Math.round(shadowedChars / 3.2));
         const summaryBudget = Math.max(800, Math.min(4000, Math.floor(shadowedChars / 20)));
-        const summaryText = buildCompactionSummary(steps.slice(0, shadowSteps), summaryBudget);
+        let summaryText: string;
+        if (options.summaryCommand !== undefined && options.summaryCommand.trim().length > 0 && options.dryRun !== true) {
+          try {
+            summaryText = await buildLlmCompactionSummary(steps.slice(0, shadowSteps), options.summaryCommand, summaryBudget, options.losses);
+          } catch (error) {
+            options.losses.add('dsh.summary-llm-failed', 'LLM 摘要失败，回退到抽取式摘要: ' + String(error), { count: 1, severity: 'warning' });
+            summaryText = buildCompactionSummary(steps.slice(0, shadowSteps), summaryBudget);
+          }
+        } else {
+          summaryText = buildCompactionSummary(steps.slice(0, shadowSteps), summaryBudget);
+        }
         const compactionId = randomUuid();
         const startEvent = emit(ctx, 'compaction/start', ctx.lastTime, { compactionId, turn: ctx.turn });
         const summaryEvent = emit(ctx, 'compaction/summary', ctx.lastTime, {
@@ -885,6 +1003,7 @@ export async function writeDshSession(bundle: IrBundle, options: WriteDshOptions
     compact: options.compact === true,
     compactKeepRecentSteps: options.compactKeepRecentSteps,
     compactBudgetChars: options.compactBudgetChars,
+    summaryCommand: options.summaryCommand,
     slim: options.slim === true,
     keepRecentReasoning: options.keepRecentReasoning,
     maxToolResultChars: options.maxToolResultChars,
