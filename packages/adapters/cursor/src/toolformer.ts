@@ -154,8 +154,12 @@ function normalizeToolName(name: string): string {
 
 const TOOL_BY_NAME = new Map<string, CursorToolDefinition>();
 for (const definition of TOOL_DEFINITIONS) {
-  for (const alias of [definition.cursorName, ...definition.aliases]) {
-    TOOL_BY_NAME.set(normalizeToolName(alias), definition);
+  // edit 和 write 共用 cursorName=edit_file_v2：先到先得，保证原生 edit_file_v2 仍按 edit 解码。
+  const cursorKey = normalizeToolName(definition.cursorName);
+  if (!TOOL_BY_NAME.has(cursorKey)) TOOL_BY_NAME.set(cursorKey, definition);
+  for (const alias of definition.aliases) {
+    const key = normalizeToolName(alias);
+    if (!TOOL_BY_NAME.has(key)) TOOL_BY_NAME.set(key, definition);
   }
 }
 
@@ -420,7 +424,12 @@ function mapShellInput(input: Record<string, unknown>): MappedToolInput | undefi
   if (cwd !== undefined) params.cwd = cwd;
   const isBackground = firstBoolean(input, ['is_background', 'isBackground', 'background']);
   if (isBackground === true) params.isBackground = true;
-  const timeout = firstNumber(input, ['timeout', 'timeout_ms', 'timeoutMs', 'yield_time_ms', 'command_timeout_ms']);
+  const nestedOptions = isRecord(input.options) ? input.options : undefined;
+  const timeout =
+    firstNumber(input, ['timeout', 'timeout_ms', 'timeoutMs', 'yield_time_ms', 'command_timeout_ms']) ??
+    (nestedOptions === undefined
+      ? undefined
+      : numberOf(nestedOptions.timeout ?? nestedOptions.commandRunTimeoutMs ?? nestedOptions.command_run_timeout_ms));
   if (timeout !== undefined) params.options = { timeout };
   const description = firstString(input, ['description', 'command_description', 'commandDescription', 'explanation']);
   if (description !== undefined) params.commandDescription = description;
@@ -468,8 +477,10 @@ function mapEditInput(input: Record<string, unknown>, isWrite: boolean): MappedT
   ]);
   const patchText = firstString(input, ['new_string', 'newString', 'new_text', 'newText', 'new_str', 'replacement', 'new_code']);
   const params: Record<string, unknown> = { relativeWorkspacePath: path, noCodeblock: true, cloudAgentEdit: false };
+  const streamingContent = firstString(input, ['streamingContent', 'streaming_content']);
   if (fullContent !== undefined) params.contentsAfterEdit = fullContent;
   else if (patchText !== undefined) params.streamingContent = patchText;
+  else if (streamingContent !== undefined) params.streamingContent = streamingContent;
   const resultForModel = firstString(input, ['result_for_model', 'resultForModel']);
   if (resultForModel !== undefined) params.resultForModel = resultForModel;
   if (isWrite && fullContent === undefined) return undefined;
@@ -611,10 +622,10 @@ function mapInput(kind: CursorToolKind, input: Record<string, unknown> | undefin
 // 结果映射
 // ---------------------------------------------------------------------------
 
-function shellResult(text: string, isError: boolean): Record<string, unknown> {
+function shellResult(text: string, isError: boolean, exitCode: number): Record<string, unknown> {
   return {
     output: text,
-    exitCode: isError ? 1 : 0,
+    exitCode,
     rejected: false,
     notInterrupted: true,
     outputRaw: text,
@@ -804,7 +815,14 @@ function mapResult(
         status: isError ? 'error' : 'success',
         startedAtMs: call.atMs,
       };
-      return { result: shellResult(text, isError), additionalData, warnings };
+      let output = text;
+      let exitCode = isError ? 1 : 0;
+      if (isRecord(json)) {
+        if (typeof json.output === 'string') output = json.output;
+        if (typeof json.exitCode === 'number') exitCode = json.exitCode;
+        else if (typeof json.exit_code === 'number') exitCode = json.exit_code;
+      }
+      return { result: shellResult(output, isError, exitCode), additionalData, warnings };
     }
     case 'read': {
       let contents = text;
@@ -849,6 +867,10 @@ function mapResult(
     case 'grep': {
       // 错误文本不是 grep 结果，别把它解析成 totalFiles/topFiles；错误信息在 error 字段里。
       if (isError) return { warnings };
+      // 从原生 Cursor 读回来的摘要已经是我们需要的形状，直接复用。
+      if (isRecord(json) && json.isPruned === true) {
+        return { additionalData: json, warnings };
+      }
       return { additionalData: buildGrepSummary(text, mapped.params, mapped.outputMode), warnings };
     }
     case 'glob': {
@@ -859,6 +881,9 @@ function mapResult(
     }
     case 'list': {
       if (isError) return { warnings };
+      if (isRecord(json) && json.isPruned === true) {
+        return { additionalData: json, warnings };
+      }
       return { additionalData: buildListSummary(text, json, mapped.params), warnings };
     }
     case 'delete': {

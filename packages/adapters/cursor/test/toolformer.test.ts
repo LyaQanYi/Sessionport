@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import type { IrEvent } from '@sessionport/core';
 
-import { CAPABILITY_TOOL_FORMER } from '../src/index.ts';
+import { CAPABILITY_TOOL_FORMER, buildCursorToolFormerData, resolveCursorTool } from '../src/index.ts';
 import { readCursorSession, verifyCursorSession, writeCursorSession } from '../src/index.ts';
 import { closeCursorDb, openCursorDb, readDiskKvEntries, readDiskKvValue } from '../src/wire.ts';
 import {
@@ -18,6 +18,7 @@ import {
 import type { CursorFixture } from './helpers.ts';
 
 const TOOL_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const COPY_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 function at(offset: number): string {
   return new Date(BASE_MS + offset).toISOString();
@@ -476,6 +477,22 @@ test('原生 Cursor 的 grep additionalData 摘要读成 tool_result', async () 
     const value = (resultEvent.content[0] as { value: Record<string, unknown> }).value;
     assert.equal(value.isPruned, true);
     assert.equal(value.totalMatches, 2);
+
+    // 再写回 Cursor：additionalData 应复用原生摘要，而不是把 JSON 文本重新 grep 一遍
+    await writeCursorSession(bundle, {
+      home: fixture.home,
+      composerId: COPY_ID,
+      backupDir: join(fixture.home, 'backup'),
+    });
+    const copiedTool = storedBubbles(fixture, COPY_ID)
+      .map(({ bubble }) => toolFormerOf(bubble))
+      .find((tool) => tool !== undefined);
+    assert.ok(copiedTool !== undefined);
+    assert.deepEqual(copiedTool.additionalData, value);
+    const copiedRead = await readCursorSession(COPY_ID, { home: fixture.home, includeChildren: false });
+    const copiedResult = copiedRead.root.events.find((event) => event.kind === 'tool_result');
+    assert.ok(copiedResult !== undefined && copiedResult.kind === 'tool_result');
+    assert.deepEqual(copiedResult.content, resultEvent.content);
   } finally {
     fixture.cleanup();
   }
@@ -510,6 +527,25 @@ test('verify 能发现坏掉的 toolFormerData.params', async () => {
     assert.ok(failed.includes('toolformer-params-json'), failed.join(','));
   } finally {
     fixture.cleanup();
+  }
+});
+
+test('原生 edit_file_v2 名称不会被 Write 映射抢走', () => {
+  const edit = resolveCursorTool('edit_file_v2');
+  assert.ok(edit !== undefined);
+  assert.equal(edit.cursorName, 'edit_file_v2');
+  assert.equal(edit.kind, 'edit');
+  const write = resolveCursorTool('Write');
+  assert.ok(write !== undefined);
+  assert.equal(write.kind, 'write');
+  const built = buildCursorToolFormerData(
+    { callId: 'e-native', name: 'edit_file_v2', input: { relativeWorkspacePath: '/tmp/work/a.ts', new_string: 'b' }, atMs: 0 },
+    undefined,
+  );
+  assert.equal(built.ok, true);
+  if (built.ok) {
+    assert.equal(built.data.name, 'edit_file_v2');
+    assert.equal(typeof (JSON.parse(String(built.data.params)) as Record<string, unknown>).streamingContent, 'string');
   }
 });
 
