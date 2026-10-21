@@ -718,7 +718,11 @@ function buildGlobDirectories(text: string, json: unknown, targetDirectory: stri
     }
   }
   if (relPaths.length === 0) {
-    for (const line of splitLines(text)) relPaths.push(stripDotSlash(line));
+    for (const line of splitLines(text)) {
+      const cleaned = stripDotSlash(line);
+      const prefix = targetDirectory.endsWith('/') ? targetDirectory : targetDirectory + '/';
+      relPaths.push(cleaned.startsWith(prefix) ? cleaned.slice(prefix.length) : cleaned);
+    }
   }
   return [
     {
