@@ -7,6 +7,8 @@ import type { AgentId, DivergedMode, SessionRow } from '../api.ts';
 import { Badge, Button, Card, CheckboxRow, Select, Spinner, Topbar, cn } from '../ui.tsx';
 import type { OfficialTarget, OfficialVerifyRow } from '../api.ts';
 import { agentLabel } from '../agents.tsx';
+import { useT } from '../i18n/I18nProvider.tsx';
+import type { MessageKey } from '../i18n/messages.ts';
 
 const DECISION_TONE = {
   fresh: 'default',
@@ -15,7 +17,24 @@ const DECISION_TONE = {
   diverged: 'warning',
 } as const;
 
+/** core 的官方导入步骤/说明在 renderer 侧按目标重写，保证两种语言都完整。 */
+const OFFICIAL_TEXT: Record<OfficialTarget, { steps: MessageKey[]; notes: MessageKey[] }> = {
+  zcode: {
+    steps: ['official.zcode.step1', 'official.zcode.step2', 'official.zcode.step3', 'official.zcode.step4'],
+    notes: ['official.zcode.note1', 'official.zcode.note2'],
+  },
+  qoder: {
+    steps: ['official.qoder.step1', 'official.qoder.step2', 'official.qoder.step3', 'official.qoder.step4'],
+    notes: ['official.qoder.note1', 'official.qoder.note2'],
+  },
+  cursor: {
+    steps: [],
+    notes: ['official.cursor.note1', 'official.cursor.note2', 'official.cursor.note3'],
+  },
+};
+
 export function MigratePage(props: { initial: SessionRow | null; enabledAgents: string[] }) {
+  const { locale, t, tError, tLoss, tDecision, tSyncDescription, tMechanism } = useT();
   const sessionsQuery = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
   const capsQuery = useQuery({ queryKey: ['capabilities'], queryFn: api.capabilities });
 
@@ -96,39 +115,49 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
 
   const losses = preview.data?.losses ?? [];
   const warned = losses.filter((loss) => loss.severity === 'warning').length;
+  const refused = run.data?.refused;
+  const refusedText = refused
+    ? locale === 'zh-CN' || refused.code !== 'migrate.diverged'
+      ? refused.reason
+      : t('migrate.refused.diverged')
+    : '';
 
   return (
     <div className="flex h-full flex-col">
-      <Topbar title="迁移" subtitle="选源 → 选目标 → 先预览损失清单，再写入" />
+      <Topbar title={t('migrate.title')} subtitle={t('migrate.subtitle')} />
 
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto w-full max-w-3xl px-5 py-6">
           <Card className="mb-4 p-4">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">官方导入（推荐）</span>
-              <span className="text-2xs text-fg-3">目标 app 自带的迁移功能，能一并带记忆/MCP，比直接写更稳</span>
+              <span className="text-sm font-medium">{t('migrate.official.title')}</span>
+              <span className="text-2xs text-fg-3">{t('migrate.official.subtitle')}</span>
             </div>
             <div className="mt-3 grid gap-3 lg:grid-cols-3">
               {(officialQuery.data ?? []).map((row) => {
                 const sourceOk = source !== null && row.sources.includes(source.agent);
                 const verify = officialResults[row.target];
+                const copy = OFFICIAL_TEXT[row.target];
+                // 以 core 的步骤/说明数量为准：core 增删步骤时回退到原文，避免漏展示
+                const steps = row.steps.length === copy.steps.length ? copy.steps.map((key) => t(key)) : row.steps;
+                const notes = row.notes.length === copy.notes.length ? copy.notes.map((key) => t(key)) : row.notes;
                 return (
                   <div key={row.target} className="flex flex-col gap-2 rounded-panel border border-border p-3">
                     <div className="flex items-center gap-2">
                       <span className="text-body font-medium">{row.appName}</span>
-                      {row.supported ? <Badge variant="success">官方支持</Badge> : <Badge variant="outline">无官方导入</Badge>}
-                      <span className="ml-auto text-3xs text-fg-3">{row.mechanism}</span>
+                      {row.supported ? <Badge variant="success">{t('migrate.official.supported')}</Badge> : <Badge variant="outline">{t('migrate.official.unsupported')}</Badge>}
+                      <span className="ml-auto text-3xs text-fg-3">{tMechanism(row.mechanism)}</span>
                     </div>
                     <div className="truncate font-mono text-3xs text-fg-3" title={row.store}>{row.store}</div>
                     {row.supported ? (
                       <ol className="list-inside list-decimal space-y-0.5 text-2xs text-fg-2">
-                        {row.steps.slice(0, 3).map((step) => (<li key={step}>{step}</li>))}
-                        {row.steps.length > 3 ? (
-                          <li className="list-none text-3xs text-fg-3">…完整步骤见命令行 import 输出</li>
+                        {steps.slice(0, 3).map((step) => (<li key={step}>{step}</li>))}
+                        {steps.length > 3 ? (
+                          <li className="list-none text-3xs text-fg-3">{t('migrate.official.moreSteps')}</li>
                         ) : null}
                       </ol>
                     ) : (
-                      <div className="text-2xs text-fg-2">{row.notes.join('；')}</div>
+                      <div className="text-2xs text-fg-2">{notes.join(t('common.listSeparator'))}</div>
                     )}
                     <div className="mt-auto flex flex-wrap items-center gap-2">
                       <Button
@@ -137,25 +166,25 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                         disabled={!row.supported}
                         onClick={() => void api.officialOpen(row.target).catch(() => undefined)}
                       >
-                        打开 {row.appName}
+                        {t('migrate.official.open', { app: row.appName })}
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         disabled={!row.supported || !sourceOk}
-                        title={sourceOk ? '读取目标 app 自己的存储，确认导入是否落库' : '先在下方选择匹配来源的会话（' + row.sources.join(' / ') + '）'}
+                        title={sourceOk ? t('migrate.official.verifyHint') : t('migrate.official.sourceHint', { sources: row.sources.join(' / ') })}
                         onClick={() => {
                           void api.officialVerify(row.target, { cwd: source?.cwd, title: source?.title }).then((result) => {
                             setOfficialResults((current) => ({ ...current, [row.target]: result }));
                           }).catch(() => undefined);
                         }}
                       >
-                        验证导入
+                        {t('migrate.official.verify')}
                       </Button>
                     </div>
                     {verify ? (
                       <div className={cn('rounded-control border px-2 py-1.5 text-2xs', verify.ok ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400' : 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400')}>
-                        {verify.ok ? '已找到导入结果' : '未找到（可能还没在 app 里点导入）'} · 匹配 {verify.matches.length}
+                        {verify.ok ? t('migrate.official.found') : t('migrate.official.notFound')} · {t('migrate.official.matches', { count: verify.matches.length })}
                       </div>
                     ) : null}
                   </div>
@@ -166,9 +195,9 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
           <Card className="p-4">
             <div className="grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-end">
               <label className="block space-y-1.5">
-                <div className="text-2xs font-medium text-muted-foreground">来源会话</div>
+                <div className="text-2xs font-medium text-muted-foreground">{t('migrate.source')}</div>
                 <Select value={sourceKey ?? ''} onChange={(event) => setSourceKey(event.target.value || null)}>
-                  <option value="">（选择）</option>
+                  <option value="">{t('common.select')}</option>
                   {sessions.map((row) => (
                     <option key={rowKey(row)} value={rowKey(row)}>
                       {agentLabel(row.agent)} · {row.title ?? row.sessionId}
@@ -180,9 +209,9 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                 <ArrowRight className="h-4 w-4" />
               </div>
               <label className="block space-y-1.5">
-                <div className="text-2xs font-medium text-muted-foreground">目标 agent</div>
+                <div className="text-2xs font-medium text-muted-foreground">{t('migrate.target')}</div>
                 <Select value={target ?? ''} onChange={(event) => setTarget((event.target.value || null) as AgentId | null)}>
-                  <option value="">（选择）</option>
+                  <option value="">{t('common.select')}</option>
                   {targets.map((agent) => (
                     <option key={agent} value={agent}>
                       {agentLabel(agent)}
@@ -194,11 +223,11 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
 
             {target === 'dsh' ? (
               <div className="mt-4 flex flex-wrap items-center gap-2 rounded-control border border-border bg-subtle px-3 py-2 text-caption text-fg-2">
-                <span className="text-fg-1">导入模式</span>
+                <span className="text-fg-1">{t('migrate.importMode')}</span>
                 {([
-                  { value: 'compact' as const, label: '压缩（推荐）', hint: '保留完整日志 + compaction，上下文=摘要+最近 step' },
-                  { value: 'full' as const, label: '全量', hint: '超大文件可能超出模型上下文' },
-                  { value: 'slim' as const, label: '精简', hint: '截断工具内容，日志也损' },
+                  { value: 'compact' as const, label: t('migrate.importMode.compact'), hint: t('migrate.importMode.compactHint') },
+                  { value: 'full' as const, label: t('migrate.importMode.full'), hint: t('migrate.importMode.fullHint') },
+                  { value: 'slim' as const, label: t('migrate.importMode.slim'), hint: t('migrate.importMode.slimHint') },
                 ]).map((option) => (
                   <button
                     key={option.value}
@@ -213,11 +242,11 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                     {option.label}
                   </button>
                 ))}
-                <span className="ml-3 text-fg-1">摘要</span>
+                <span className="ml-3 text-fg-1">{t('migrate.summary')}</span>
                 {([
-                  { value: 'off' as const, label: '抽取式', hint: '零成本、不调用模型' },
-                  { value: 'claude' as const, label: 'Claude', hint: '复用已登录的 claude CLI 生成多轮摘要' },
-                  { value: 'codex' as const, label: 'Codex', hint: '复用已登录的 codex CLI 生成多轮摘要' },
+                  { value: 'off' as const, label: t('migrate.summary.off'), hint: t('migrate.summary.offHint') },
+                  { value: 'claude' as const, label: t('migrate.summary.claude'), hint: t('migrate.summary.claudeHint') },
+                  { value: 'codex' as const, label: t('migrate.summary.codex'), hint: t('migrate.summary.codexHint') },
                 ]).map((option) => (
                   <button
                     key={option.value}
@@ -237,10 +266,10 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
 
             <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
               <CheckboxRow checked={register} onChange={setRegister}>
-                写入目标 app 索引
+                {t('migrate.register')}
               </CheckboxRow>
               <CheckboxRow checked={includeChildren} onChange={setIncludeChildren}>
-                包含子代理会话
+                {t('migrate.includeChildren')}
               </CheckboxRow>
               <Button
                 className="ml-auto"
@@ -249,13 +278,13 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                 onClick={() => preview.mutate()}
               >
                 {preview.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ListChecks className="h-3.5 w-3.5" />}
-                预览损失清单
+                {t('migrate.preview')}
               </Button>
             </div>
             {preview.error ? (
               <div className="mt-3 flex items-center gap-1.5 text-xs text-destructive">
                 <AlertTriangle className="h-3.5 w-3.5" />
-                {String(preview.error)}
+                {tError(preview.error)}
               </div>
             ) : null}
           </Card>
@@ -269,15 +298,19 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                   <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
                   <span className="font-medium">{agentLabel(preview.data.target)}</span>
                   <Badge variant={DECISION_TONE[preview.data.sync.decision]} className="ml-auto">
-                    {preview.data.sync.decision}
+                    {tDecision(preview.data.sync.decision)}
                   </Badge>
                 </div>
-                <div className="mt-1 text-2xs text-muted-foreground">{preview.data.sync.description}</div>
+                <div className="mt-1 text-2xs text-muted-foreground" title={locale === 'en-US' ? preview.data.sync.description : undefined}>
+                  {locale === 'zh-CN'
+                    ? preview.data.sync.description
+                    : tSyncDescription(preview.data.sync.decision, preview.data.sync.targetExtra)}
+                </div>
                 <div className="mt-2 grid gap-1 font-mono text-3xs text-muted-foreground">
-                  <div>source events = {preview.data.sync.sourceEvents}</div>
-                  <div>target units = {preview.data.sync.targetUnits}</div>
-                  {preview.data.sync.targetPath ? <div className="truncate">target path = {preview.data.sync.targetPath}</div> : null}
-                  <div className="truncate">registry = {preview.data.sync.stateFile}</div>
+                  <div>{t('migrate.sync.sourceEvents', { count: preview.data.sync.sourceEvents })}</div>
+                  <div>{t('migrate.sync.targetUnits', { count: preview.data.sync.targetUnits })}</div>
+                  {preview.data.sync.targetPath ? <div className="truncate">{t('migrate.sync.targetPath', { path: preview.data.sync.targetPath })}</div> : null}
+                  <div className="truncate">{t('migrate.sync.registry', { path: preview.data.sync.stateFile })}</div>
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border pt-3">
@@ -293,13 +326,13 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                 <Card className="border-amber-500/30 bg-amber-500/5 p-4">
                   <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                     <AlertTriangle className="h-3.5 w-3.5" />
-                    目标端在上次迁移后新增了 {preview.data.sync.targetExtra ?? 0} 条内容
+                    {t('migrate.diverged.count', { count: preview.data.sync.targetExtra ?? 0 })}
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-3">
                     {([
-                      { value: 'fork' as DivergedMode, title: 'fork', hint: '另建一会话，保留旧的（推荐）' },
-                      { value: 'force' as DivergedMode, title: 'force', hint: '覆盖目标端，新增内容会丢' },
-                      { value: 'auto' as DivergedMode, title: '拒绝', hint: '不写入' },
+                      { value: 'fork' as DivergedMode, title: t('migrate.diverged.fork'), hint: t('migrate.diverged.forkHint') },
+                      { value: 'force' as DivergedMode, title: t('migrate.diverged.force'), hint: t('migrate.diverged.forceHint') },
+                      { value: 'auto' as DivergedMode, title: t('migrate.diverged.auto'), hint: t('migrate.diverged.autoHint') },
                     ]).map((option) => (
                       <button
                         key={option.value}
@@ -320,17 +353,17 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
 
               <Card className="overflow-hidden">
                 <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-                  <span className="text-xs font-medium">损失清单</span>
-                  <Badge variant="secondary">{losses.length} 类</Badge>
-                  {warned > 0 ? <Badge variant="warning">{warned} 项 warning</Badge> : <Badge variant="success">无 warning</Badge>}
+                  <span className="text-xs font-medium">{t('migrate.losses.title')}</span>
+                  <Badge variant="secondary">{t('migrate.losses.types', { count: losses.length })}</Badge>
+                  {warned > 0 ? <Badge variant="warning">{t('migrate.losses.warnings', { count: warned })}</Badge> : <Badge variant="success">{t('migrate.losses.noWarnings')}</Badge>}
                 </div>
                 <table className="w-full text-left text-xs">
                   <thead className="bg-muted text-2xs text-muted-foreground">
                     <tr>
-                      <th className="px-4 py-2 font-medium">severity</th>
-                      <th className="px-4 py-2 font-medium">loss</th>
-                      <th className="px-4 py-2 font-medium">count</th>
-                      <th className="px-4 py-2 font-medium">说明</th>
+                      <th className="px-4 py-2 font-medium">{t('migrate.losses.severity')}</th>
+                      <th className="px-4 py-2 font-medium">{t('migrate.losses.code')}</th>
+                      <th className="px-4 py-2 font-medium">{t('migrate.losses.count')}</th>
+                      <th className="px-4 py-2 font-medium">{t('migrate.losses.description')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -339,21 +372,26 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                         <td className="px-4 py-4 text-muted-foreground" colSpan={4}>
                           <div className="flex items-center gap-1.5">
                             <Info className="h-3.5 w-3.5" />
-                            没有损失（或该 adapter 未报告）
+                            {t('migrate.losses.empty')}
                           </div>
                         </td>
                       </tr>
                     ) : (
-                      losses.map((loss) => (
-                        <tr key={loss.code + loss.message} className="border-t border-border">
-                          <td className="px-4 py-2">
-                            <Badge variant={loss.severity === 'warning' ? 'warning' : 'outline'}>{loss.severity}</Badge>
-                          </td>
-                          <td className="px-4 py-2 font-mono text-[11px]">{loss.code}</td>
-                          <td className="px-4 py-2 text-muted-foreground">{loss.count}</td>
-                          <td className="px-4 py-2 text-muted-foreground">{loss.message}</td>
-                        </tr>
-                      ))
+                      losses.map((loss) => {
+                        const message = tLoss(loss);
+                        return (
+                          <tr key={loss.code + loss.message} className="border-t border-border">
+                            <td className="px-4 py-2">
+                              <Badge variant={loss.severity === 'warning' ? 'warning' : 'outline'}>
+                                {loss.severity === 'warning' ? t('migrate.severity.warning') : t('migrate.severity.info')}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-2 font-mono text-[11px]">{loss.code}</td>
+                            <td className="px-4 py-2 text-muted-foreground">{loss.count}</td>
+                            <td className="px-4 py-2 text-muted-foreground" title={message === loss.message ? undefined : loss.message}>{message}</td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -362,24 +400,24 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
               <div className="flex flex-wrap items-center gap-3">
                 <Button disabled={run.isPending} onClick={() => run.mutate()}>
                   {run.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  确认写入 {agentLabel(preview.data.target)}
+                  {t('migrate.confirmWrite', { target: agentLabel(preview.data.target) })}
                 </Button>
-                <span className="text-2xs text-muted-foreground">写入前会重新计算一次；目标端已有新增时按上面的策略处理</span>
+                <span className="text-2xs text-muted-foreground">{t('migrate.writeHint')}</span>
               </div>
 
               {run.error ? (
-                <Card className="border-destructive bg-destructive/10 p-3 text-xs text-destructive">{String(run.error)}</Card>
+                <Card className="border-destructive bg-destructive/10 p-3 text-xs text-destructive">{tError(run.error)}</Card>
               ) : null}
-              {run.data?.refused ? (
+              {refused ? (
                 <Card className="border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600 dark:text-amber-400">
-                  {run.data.refused.reason}
+                  <span title={refused.reason}>{refusedText}</span>
                 </Card>
               ) : null}
               {run.data && !run.data.refused ? (
                 <Card className="p-4">
                   <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    已写入 {agentLabel(run.data.target)} · <span className="font-mono">{run.data.sessionId}</span>
+                    {t('migrate.written', { target: agentLabel(run.data.target) })} · <span className="font-mono">{run.data.sessionId}</span>
                   </div>
                   <ul className="mt-2 space-y-0.5 font-mono text-3xs text-muted-foreground">
                     {run.data.paths.map((path) => (
@@ -393,7 +431,7 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
             </div>
           ) : sessionsQuery.isLoading ? (
             <div className="mt-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-              <Spinner /> 加载会话列表中…
+              <Spinner /> {t('migrate.loadingSessions')}
             </div>
           ) : null}
         </div>

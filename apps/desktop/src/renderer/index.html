@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>sessionport</title>
+    <script>
+      // 在 React 挂载前先确定 <html lang>，避免读屏器读到错误的语言
+      try {
+        const stored = localStorage.getItem('sessionport.locale');
+        const locale =
+          stored === 'zh-CN' || stored === 'en-US'
+            ? stored
+            : (navigator.language || '').toLowerCase().startsWith('zh')
+              ? 'zh-CN'
+              : 'en-US';
+        document.documentElement.lang = locale;
+      } catch {
+        // localStorage 不可用时交给 I18nProvider
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -6,6 +6,7 @@ import { api } from './api.ts';
 import type { SessionRow } from './api.ts';
 import { AgentGlyph, AGENT_META, agentLabel } from './agents.tsx';
 import { HOME_TO_AGENT, useAgentPreferences } from './preferences.ts';
+import { useT } from './i18n/I18nProvider.tsx';
 import { cn } from './ui.tsx';
 import { SessionsPage } from './pages/SessionsPage.tsx';
 import { ReaderPage } from './pages/ReaderPage.tsx';
@@ -41,6 +42,7 @@ function useTheme(): [ThemeMode, (mode: ThemeMode) => void] {
 }
 
 export function App() {
+  const { t } = useT();
   const [view, setView] = useState<View>('sessions');
   const [active, setActive] = useState<SessionRow | null>(null);
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
@@ -73,13 +75,14 @@ export function App() {
   }, [theme]);
 
   const nextTheme = (): void => setTheme(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
+  const themeLabel = theme === 'system' ? t('theme.system') : theme === 'light' ? t('theme.light') : t('theme.dark');
 
   const navBack = (): void => setView('sessions');
 
   const globalNav = [
-    { view: 'sessions' as View, label: '会话', icon: MessagesSquare },
-    { view: 'agents' as View, label: '适配器', icon: Blocks },
-    { view: 'migrate' as View, label: '迁移', icon: ArrowLeftRight },
+    { view: 'sessions' as View, label: t('nav.sessions'), icon: MessagesSquare },
+    { view: 'agents' as View, label: t('nav.agents'), icon: Blocks },
+    { view: 'migrate' as View, label: t('nav.migrate'), icon: ArrowLeftRight },
   ];
 
   const rowClass = (selected: boolean): string =>
@@ -99,13 +102,13 @@ export function App() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-title leading-tight">sessionport</div>
-            <div className="truncate text-caption text-sidebar-muted">跨 agent 会话搬运</div>
+            <div className="truncate text-caption text-sidebar-muted">{t('app.tagline')}</div>
           </div>
           <button
             type="button"
             onClick={() => setCollapsed(true)}
             className="flex h-6 w-6 items-center justify-center rounded-control text-sidebar-muted hover:bg-sidebar-row hover:text-sidebar-foreground"
-            title="收起侧栏"
+            title={t('app.collapseSidebar')}
           >
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
@@ -119,15 +122,15 @@ export function App() {
               type="button"
               onClick={() => setView('settings')}
               className="text-3xs text-sidebar-muted hover:text-sidebar-foreground"
-              title="在设置里选择显示哪些 harness"
+              title={t('app.manageHarnessHint')}
             >
-              管理
+              {t('app.manageHarness')}
             </button>
           </div>
           <div className="flex flex-col gap-0.5">
             {enabledAgents.length === 0 ? (
               <button type="button" onClick={() => setView('settings')} className={cn(rowClass(false), 'justify-start')}>
-                还没有启用的 harness…
+                {t('app.noHarness')}
               </button>
             ) : (
               enabledAgents.map((agent) => {
@@ -210,7 +213,7 @@ export function App() {
           >
             {view === 'settings' ? <span className="absolute left-0 top-1.5 h-5 w-0.5 rounded-full bg-ring" /> : null}
             <Settings2 className="h-4 w-4 shrink-0 opacity-80" />
-            <span className="truncate">设置</span>
+            <span className="truncate">{t('app.settings')}</span>
           </button>
           <div className="flex items-center justify-between rounded-control px-1">
             <span className="text-3xs text-sidebar-muted">v0.0.0 · alpha</span>
@@ -218,10 +221,10 @@ export function App() {
               type="button"
               onClick={nextTheme}
               className="flex h-6 items-center gap-1 rounded px-1.5 text-3xs text-sidebar-muted hover:bg-sidebar-row hover:text-sidebar-foreground"
-              title={'主题：' + theme}
+              title={t('theme.title', { mode: themeLabel })}
             >
               {themeIcon}
-              <span>{theme === 'system' ? '跟随系统' : theme === 'light' ? '浅色' : '深色'}</span>
+              <span>{themeLabel}</span>
             </button>
           </div>
         </div>
@@ -232,7 +235,7 @@ export function App() {
           type="button"
           onClick={() => setCollapsed(false)}
           className="absolute left-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-control border border-border bg-card text-fg-2 shadow-sm hover:text-fg-1"
-          title="展开侧栏"
+          title={t('app.expandSidebar')}
         >
           <ChevronRight className="h-4 w-4" />
         </button>

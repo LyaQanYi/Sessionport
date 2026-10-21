@@ -1,6 +1,9 @@
 import { app, ipcMain, shell } from 'electron';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { z } from 'zod';
 
+import { AppError } from './errors.ts';
 import { detectHomes, listSessions, officialImports, officialVerify, pathsInfo, previewMigration, readSession, readableAgents, runMigration, writableAgents } from './services.ts';
 
 const agentSchema = z.enum(['claude-code', 'command-code', 'dsh', 'codex', 'opencode', 'kimi-code']);
@@ -118,18 +121,44 @@ export function registerIpc(): void {
     const input = channelSchemas['app:openPath'].parse(payload);
     const info = pathsInfo();
     const target = input.key === 'registry' ? info.registryDir : info.homes[input.key]?.path;
-    if (!target) throw new Error('未知目录: ' + input.key);
-    if (!existsSync(target)) throw new Error('目录不存在: ' + target);
+    if (!target) throw new AppError('path.unknown', '未知目录: ' + input.key, { key: input.key });
+    if (!existsSync(target)) throw new AppError('path.notFound', '目录不存在: ' + target, { path: target });
     const error = await shell.openPath(target);
-    if (error) throw new Error(error);
+    if (error) throw new AppError('path.openFailed', error, { message: error });
     return { opened: target };
   }));
 }
 
-async function wrap<T>(run: () => Promise<T> | T): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+interface IpcFailure {
+  ok: false;
+  error: string;
+  code?: string;
+  params?: Record<string, unknown>;
+}
+
+async function wrap<T>(run: () => Promise<T> | T): Promise<{ ok: true; data: T } | IpcFailure> {
   try {
     return { ok: true, data: await run() };
   } catch (error) {
+    if (error instanceof AppError) {
+      return {
+        ok: false,
+        error: error.message,
+        code: error.code,
+        ...(error.params === undefined ? {} : { params: error.params }),
+      };
+    }
+    if (error instanceof z.ZodError) {
+      const details = error.issues
+        .map((issue) => (issue.path.length > 0 ? issue.path.join('.') + ': ' : '') + issue.message)
+        .join('; ');
+      return {
+        ok: false,
+        error: '请求参数不合法: ' + details,
+        code: 'ipc.invalidPayload',
+        params: { issues: details },
+      };
+    }
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

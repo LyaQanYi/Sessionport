@@ -75,7 +75,8 @@ export interface MigrationResult {
   losses: LossEntry[];
   imported: boolean;
   sync: SyncInfo;
-  refused?: { reason: string };
+  /** code/params 是后加的结构化信息；reason 保留给旧调用方 / 未知 code 回退 */
+  refused?: { reason: string; code?: string; params?: Record<string, unknown> };
 }
 
 export type DivergedMode = 'auto' | 'force' | 'fork';
@@ -139,7 +140,22 @@ export interface PathsInfo {
   electron: string;
 }
 
-type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
+type IpcResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; code?: string; params?: Record<string, unknown> };
+
+/** 主进程返回的结构化错误；renderer 的 i18n 层按 code 映射文案 */
+export class IpcError extends Error {
+  readonly code?: string;
+  readonly params?: Record<string, unknown>;
+
+  constructor(message: string, code?: string, params?: Record<string, unknown>) {
+    super(message);
+    this.name = 'IpcError';
+    if (code !== undefined) this.code = code;
+    if (params !== undefined) this.params = params;
+  }
+}
 
 interface SessionportBridge {
   invoke: (channel: string, payload?: unknown) => Promise<unknown>;
@@ -156,8 +172,8 @@ declare global {
 
 async function invoke<T>(channel: string, payload?: unknown): Promise<T> {
   const result = (await window.sessionport.invoke(channel, payload)) as IpcResult<T>;
-  if (!result || typeof result !== 'object') throw new Error('IPC 返回格式异常');
-  if (result.ok !== true) throw new Error(result.error);
+  if (!result || typeof result !== 'object') throw new IpcError('IPC 返回格式异常', 'ipc.badResponse');
+  if (result.ok !== true) throw new IpcError(result.error, result.code, result.params);
   return result.data;
 }
 
@@ -176,7 +192,7 @@ export const api = {
   previewMigration: (agent: AgentId, ref: SessionRef, target: AgentId, options: MigrationOptions = {}) =>
     invoke<MigrationPreview>('migrate:preview', { agent, ...ref, target, ...options }),
   runMigration: (payload: { agent: AgentId; ref: SessionRef; target: AgentId } & MigrationOptions) =>
-    invoke<MigrationResult>('migrate:run', { agent: payload.agent, ...payload.ref, target: payload.target, ...payload }),
+    invoke<MigrationResult>('migrate:run', { ...payload, ...payload.ref, agent: payload.agent, target: payload.target }),
   capabilities: () => invoke<Capabilities>('app:capabilities'),
   paths: () => invoke<PathsInfo>('app:paths'),
   openPath: (key: string) => invoke<{ opened: string }>('app:openPath', { key }),
@@ -186,10 +202,10 @@ export const api = {
   officialOpen: (target: OfficialTarget) => invoke<{ opened: boolean }>('official:open', { target }),
 };
 
-export function formatTime(iso?: string): string {
+export function formatTime(iso?: string, locale: string = 'zh-CN'): string {
   if (!iso) return '—';
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return iso;
   const date = new Date(ms);
-  return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return date.toLocaleString(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }

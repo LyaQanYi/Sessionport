@@ -4,6 +4,7 @@ import { ExternalLink, FolderOpen, Info, Monitor, Moon, Settings2, Sun } from 'l
 import { api } from '../api.ts';
 import type { ThemeMode } from '../App.tsx';
 import { AgentGlyph, agentLabel } from '../agents.tsx';
+import { useT } from '../i18n/I18nProvider.tsx';
 import { ALL_AGENTS, type AgentPreferences } from '../preferences.ts';
 import { Badge, Button, SettingsBlock, SettingsCard, SettingsRow, SegmentedControl, Spinner, Topbar } from '../ui.tsx';
 
@@ -20,31 +21,48 @@ const AGENT_FOR_HOME: Record<string, string> = {
 };
 
 export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: ThemeMode) => void; prefs: AgentPreferences }) {
+  const { t, preference, setPreference } = useT();
   const pathsQuery = useQuery({ queryKey: ['paths'], queryFn: api.paths });
   const paths = pathsQuery.data;
 
   return (
     <div className="flex h-full flex-col">
-      <Topbar icon={<Settings2 className="h-4 w-4" />} title="设置" subtitle="外观、数据目录与同步状态" />
+      <Topbar icon={<Settings2 className="h-4 w-4" />} title={t('settings.title')} subtitle={t('settings.subtitle')} />
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto w-full max-w-3xl space-y-6 px-5 py-6">
-          <SettingsBlock title="外观" description="主题会跟随系统变化，也可以手动固定">
+          <SettingsBlock title={t('settings.appearance')} description={t('settings.appearance.desc')}>
             <SettingsCard>
-              <SettingsRow label="主题" description="浅色 / 深色 / 跟随系统">
+              <SettingsRow label={t('settings.theme')} description={t('settings.theme.desc')}>
                 <SegmentedControl
                   value={props.theme}
                   onChange={props.onThemeChange}
                   options={[
-                    { value: 'system', label: <span className="flex items-center gap-1"><Monitor className="h-3 w-3" />跟随系统</span> },
-                    { value: 'light', label: <span className="flex items-center gap-1"><Sun className="h-3 w-3" />浅色</span> },
-                    { value: 'dark', label: <span className="flex items-center gap-1"><Moon className="h-3 w-3" />深色</span> },
+                    { value: 'system', label: <span className="flex items-center gap-1"><Monitor className="h-3 w-3" />{t('theme.system')}</span> },
+                    { value: 'light', label: <span className="flex items-center gap-1"><Sun className="h-3 w-3" />{t('theme.light')}</span> },
+                    { value: 'dark', label: <span className="flex items-center gap-1"><Moon className="h-3 w-3" />{t('theme.dark')}</span> },
                   ]}
                 />
               </SettingsRow>
             </SettingsCard>
           </SettingsBlock>
 
-          <SettingsBlock title="Harness" description="只列出你实际会用到的；开关会影响侧栏、会话列表和迁移目标">
+          <SettingsBlock title={t('settings.language')} description={t('settings.language.desc')}>
+            <SettingsCard>
+              <SettingsRow label={t('settings.language.row')} description={t('settings.language.desc')}>
+                <SegmentedControl
+                  value={preference}
+                  onChange={setPreference}
+                  options={[
+                    { value: 'system' as const, label: t('settings.language.system') },
+                    { value: 'zh-CN' as const, label: t('settings.language.zh') },
+                    { value: 'en-US' as const, label: t('settings.language.en') },
+                  ]}
+                />
+              </SettingsRow>
+            </SettingsCard>
+          </SettingsBlock>
+
+          <SettingsBlock title={t('settings.harness')} description={t('settings.harness.desc')}>
             <SettingsCard>
               {ALL_AGENTS.map((agent) => {
                 const detected = props.prefs.detected.includes(agent);
@@ -58,43 +76,43 @@ export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: Th
                         {agentLabel(agent)}
                       </span>
                     }
-                    description={detected ? '本机已检测到数据目录' : '本机未检测到数据目录'}
+                    description={detected ? t('settings.harness.detected') : t('settings.harness.notDetected')}
                   >
-                    {detected ? <Badge variant="success">已安装</Badge> : <Badge variant="outline">未检测</Badge>}
+                    {detected ? <Badge variant="success">{t('settings.harness.installed')}</Badge> : <Badge variant="outline">{t('settings.harness.notDetectedBadge')}</Badge>}
                     <input
                       type="checkbox"
                       checked={enabled}
                       onChange={() => props.prefs.toggle(agent)}
                       className="h-4 w-4 rounded border-input accent-[hsl(var(--ring))]"
-                      title={enabled ? '在侧栏显示' : '隐藏'}
+                      title={enabled ? t('settings.harness.showInSidebar') : t('settings.harness.hide')}
                     />
                   </SettingsRow>
                 );
               })}
               <SettingsRow
-                label="显示策略"
-                description={props.prefs.customized ? '已自定义（点右侧恢复自动检测）' : '跟随本机检测结果'}
+                label={t('settings.harness.policy')}
+                description={props.prefs.customized ? t('settings.harness.customized') : t('settings.harness.followDetected')}
               >
                 <Button variant="outline" size="sm" onClick={props.prefs.resetToDetected}>
-                  恢复自动检测
+                  {t('settings.harness.reset')}
                 </Button>
               </SettingsRow>
             </SettingsCard>
           </SettingsBlock>
 
           <SettingsBlock
-            title="数据目录"
-            description="只读扫描，不会修改这些目录"
+            title={t('settings.paths')}
+            description={t('settings.paths.desc')}
             actions={
               <Button variant="ghost" size="sm" onClick={() => void pathsQuery.refetch()}>
-                重新检测
+                {t('common.redetect')}
               </Button>
             }
           >
             <SettingsCard>
               {pathsQuery.isLoading ? (
                 <div className="flex items-center gap-2 px-4 py-3 text-caption text-fg-2">
-                  <Spinner /> 检测中…
+                  <Spinner /> {t('common.detecting')}
                 </div>
               ) : (
                 Object.entries(paths?.homes ?? {}).map(([key, home]) => (
@@ -108,10 +126,10 @@ export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: Th
                     }
                     description={<span className="font-mono text-3xs">{home.path}</span>}
                   >
-                    {home.exists ? <Badge variant="success">已检测</Badge> : <Badge variant="outline">未检测到</Badge>}
+                    {home.exists ? <Badge variant="success">{t('settings.paths.detected')}</Badge> : <Badge variant="outline">{t('settings.paths.notDetected')}</Badge>}
                     <Button variant="outline" size="sm" disabled={!home.exists} onClick={() => void api.openPath(key).catch(() => undefined)}>
                       <FolderOpen className="h-3.5 w-3.5" />
-                      打开
+                      {t('settings.paths.open')}
                     </Button>
                   </SettingsRow>
                 ))
@@ -119,29 +137,29 @@ export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: Th
             </SettingsCard>
           </SettingsBlock>
 
-          <SettingsBlock title="同步状态" description="sessionport 自己的状态目录（不含会话正文）">
+          <SettingsBlock title={t('settings.sync')} description={t('settings.sync.desc')}>
             <SettingsCard>
               <SettingsRow label="registry" description={<span className="font-mono text-3xs">{paths?.registryFile ?? '—'}</span>}>
                 <Button variant="outline" size="sm" onClick={() => void api.openPath('registry').catch(() => undefined)}>
                   <FolderOpen className="h-3.5 w-3.5" />
-                  打开
+                  {t('settings.paths.open')}
                 </Button>
               </SettingsRow>
-              <SettingsRow label="状态目录" description={<span className="font-mono text-3xs">{paths?.registryDir ?? '—'}</span>}>
+              <SettingsRow label={t('settings.sync.stateDir')} description={<span className="font-mono text-3xs">{paths?.registryDir ?? '—'}</span>}>
                 <Badge variant="outline">registry.json</Badge>
               </SettingsRow>
             </SettingsCard>
           </SettingsBlock>
 
-          <SettingsBlock title="关于">
+          <SettingsBlock title={t('settings.about')}>
             <SettingsCard>
-              <SettingsRow label="sessionport desktop" description="本地优先，无遥测；会话正文只在本机流动">
+              <SettingsRow label="sessionport desktop" description={t('settings.about.desc')}>
                 <Badge variant="outline">v{paths?.version ?? '0.0.0'}</Badge>
               </SettingsRow>
-              <SettingsRow label="运行环境" description={'Electron ' + (paths?.electron ?? '—') + ' · ' + (window.sessionport?.platform ?? '—')}>
+              <SettingsRow label={t('settings.about.runtime')} description={'Electron ' + (paths?.electron ?? '—') + ' · ' + (window.sessionport?.platform ?? '—')}>
                 <Info className="h-3.5 w-3.5 text-fg-3" />
               </SettingsRow>
-              <SettingsRow label="迁移语义" description="fresh / up-to-date / refresh / diverged（目标端有新增默认拒绝）">
+              <SettingsRow label={t('settings.about.semantics')} description={t('settings.about.semanticsDesc')}>
                 <ExternalLink className="h-3.5 w-3.5 text-fg-3" />
               </SettingsRow>
             </SettingsCard>
