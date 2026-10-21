@@ -243,3 +243,40 @@ test('subagents 目录：坏行计入子会话 notice，不影响其它行', asy
     await rm(dir, { recursive: true, force: true });
   }
 });
+test('subagents 目录：meta.json 损坏不影响读取（标题回退首条用户文本）', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sessionport-claude-subagents-'));
+  try {
+    const filePath = await writeMainSession(dir, SESSION_ID, mainRows());
+    const childPath = await writeSubagent(dir, SESSION_ID, AGENT_ID, agentRows(AGENT_ID, ['子代理任务', '子代理执行']));
+    await writeFile(childPath.replace(/\.jsonl$/u, '.meta.json'), '{oops', 'utf8');
+
+    const bundle = await readClaudeSession(filePath, { configDir: dir });
+
+    assert.deepEqual(validateIrBundle(bundle), []);
+    assert.equal(bundle.children.length, 1);
+    assert.equal(bundle.children[0]!.session.meta.title, '子代理任务');
+    assert.equal(bundle.children[0]!.session.meta.profile, undefined);
+    assert.equal(bundle.children[0]!.viaToolCallId, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('subagents 目录：同一 agent 出现两份拷贝时按 uuid 去重', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sessionport-claude-subagents-'));
+  try {
+    const filePath = await writeMainSession(dir, SESSION_ID, mainRows());
+    const rows = agentRows(AGENT_ID, ['子代理任务', '子代理执行', '子代理收尾']);
+    await writeSubagent(dir, SESSION_ID, AGENT_ID, rows);
+    await writeSubagent(dir, SESSION_ID, AGENT_ID, rows, { relativeDir: ['workflows', 'wf_dup'] });
+
+    const bundle = await readClaudeSession(filePath, { configDir: dir });
+
+    assert.deepEqual(validateIrBundle(bundle), []);
+    assert.equal(bundle.children.length, 1);
+    assert.equal(bundle.children[0]!.session.events.length, 5);
+    assert.deepEqual(messageTexts(bundle.children[0]!.session.events), ['子代理任务', '子代理执行', '子代理收尾']);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
