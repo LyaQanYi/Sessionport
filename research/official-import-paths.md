@@ -57,12 +57,21 @@ environment history（远端环境历史，不是本地 chat）。结论：**没
   目录下所有 `.json` 导出。
 
 **这说明**：Cursor 有官方导入面，但只吃 **Cursor 自己导出的 protobuf 格式**，不是 Claude Code transcript。
+
+**但它们是开发者命令，正式版不可用** [实测]：
+
+- `developer.exportChat`：`f1:!1`（命令面板隐藏），前置条件 `isDevelopment || isDevUser`；菜单项只在
+  `editor scheme == composer` 且 dev 上下文为真时注入编辑器标题菜单。
+- `developer.importChat` / `bulkImportChats`：同样带 `isDevelopment || isDevUser` 前置条件。
+- 本机正式版 Cursor 3.25.9 中，命令面板搜不到 Export/Import Chat（已验证），也没有设置项可以打开。
+- 想验证这条路径，需要以**扩展开发模式**启动 Cursor（`--extensionDevelopmentPath=...`）让 `isDevelopment` 为真，
+  或者伪造 `isDevUser` 存储标记（不建议改正式 profile）。因此**官方导入不是稳定的用户级集成面**。
+
 所以 Claude Code → Cursor 目前仍**没有原生导入**；论坛帖只是 feature request（Cursor 员工回复认可，未提供 API），
 社区插件（0smboy/agent-migration-cursor-plugin）依旧 patch 私有 `state.vscdb`。
 
-**可复用路径（下一阶段）**：从 IR 生成 v1 Cursor Chat export JSON，然后让用户执行
-`Bulk Import Chats from Directory... (Developer)`。需要先拿到一份真实导出作为模板（用户在任意 chat 上
-点 Export Chat (Developer)），再从 bundle 逆向 `conversationState` 的 protobuf 字段。
+**结论**：官方导入路径在正式版被开发者门槛挡住，暂不作为 sessionport 的方案；继续使用已验证的
+直接写入 `state.vscdb`（`push --to cursor --confirm-real`）。若未来 Cursor 把导入转为用户功能，再切回官方入口。
 
 ## 3. sessionport 如何复用
 
