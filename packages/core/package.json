@@ -1,7 +1,6 @@
 {
   "name": "@sessionport/core",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
@@ -13,5 +12,35 @@
   "license": "Apache-2.0",
   "engines": {
     "node": ">=24"
-  }
+  },
+  "description": "sessionport core: IR schema, loss collector, sync registry and session listing",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sessionport/sessionport.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/sessionport/sessionport#readme",
+  "bugs": {
+    "url": "https://github.com/sessionport/sessionport/issues"
+  },
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "session",
+    "migration",
+    "claude-code",
+    "codex",
+    "cursor",
+    "dsh"
+  ],
+  "author": {
+    "name": "sessionport contributors"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "private": true
 }

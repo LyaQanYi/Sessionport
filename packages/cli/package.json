@@ -1,28 +1,51 @@
 {
   "name": "@sessionport/cli",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
   "bin": {
-    "sessionport": "./src/index.ts"
+    "sessionport": "./dist/index.js"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./dist/index.js"
   },
-  "dependencies": {
-    "@sessionport/core": "workspace:*",
-    "@sessionport/adapter-kimi-code": "workspace:*",
-    "@sessionport/adapter-claude-code": "workspace:*",
-    "@sessionport/adapter-command-code": "workspace:*",
-    "@sessionport/adapter-dsh": "workspace:*",
-    "@sessionport/adapter-codex": "workspace:*",
-    "@sessionport/adapter-opencode": "workspace:*",
-    "@sessionport/adapter-cursor": "workspace:*",
-    "@sessionport/adapter-qoder": "workspace:*",
-    "@sessionport/adapter-workbuddy": "workspace:*"
-  },
+  "dependencies": {},
   "license": "Apache-2.0",
   "engines": {
     "node": ">=24"
+  },
+  "description": "sessionport CLI: move AI coding-agent sessions between CLIs via a lossless IR",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sessionport/sessionport.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/sessionport/sessionport#readme",
+  "bugs": {
+    "url": "https://github.com/sessionport/sessionport/issues"
+  },
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "session",
+    "migration",
+    "claude-code",
+    "codex",
+    "cursor",
+    "dsh"
+  ],
+  "author": {
+    "name": "sessionport contributors"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node ../../scripts/build-cli.mjs"
   }
 }

@@ -15,5 +15,12 @@ fixtures/private/
 apps/desktop/out/
 apps/desktop/release/
 
+# npm 发布时由 scripts/prepare-npm.mjs 生成
+packages/**/LICENSE
+packages/**/NOTICE
+packages/**/README.md
+.tmp/pack/
+packages/cli/dist/
+
 # 系统
 .DS_Store

@@ -21,11 +21,25 @@ Existing tools either translate one direction, or re-feed a summarized context b
 - **Loss list**: every export reports what could not be preserved, and whether it is a design trade-off or a known gap.
 - **Native resume**: the only acceptance test that matters — the target CLI must load the session and continue it.
 
+## Install
+
+Requires **Node.js >= 24** (TypeScript sources are executed via Node type stripping; the published CLI is a
+single bundled JS file).
+
+```bash
+npm install -g @sessionport/cli     # or: npx @sessionport/cli inspect ...
+sessionport inspect "kimi:./session_.../"
+```
+
+The desktop app is distributed separately as an unsigned macOS `.dmg`/zip (see the releases page or
+`pnpm dist:desktop` from a checkout).
+
 ## Quick start
 
 Requires Node >= 22.18 (TypeScript runs directly via built-in type stripping; no build step).
 
 ```bash
+# from a checkout (development / hacking on adapters):
 git clone https://github.com/sessionport/sessionport && cd sessionport
 pnpm install
 
