@@ -24,6 +24,8 @@ All notable changes to this project are documented here. Format loosely follows
   - WorkBuddy (read: ~/.workbuddy/projects/*.jsonl plus subagent transcripts)
   - Claude Code now also reads (readClaudeSession / listClaudeSessions), so it can be a
     migration source (e.g. Claude Code → Cursor).
+  - Claude Code reader: in-file `isSidechain` rows are grouped into child sessions (agentId or
+    parentUuid connectivity) instead of being skipped; main-session events stay byte-identical.
 - **CLI**: `inspect`, `pull`, `push`, `sync`, `verify`, `list` with a sync registry
   and `import --into zcode|qoder` for reusing the target apps' own official migration flows
 - **Desktop**: DSH import-mode selector (compressed / full / slim) and summary-engine selector
