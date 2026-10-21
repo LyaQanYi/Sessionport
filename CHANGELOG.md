@@ -34,6 +34,9 @@ All notable changes to this project are documented here. Format loosely follows
   browser grouped by project/time, transcript reader with notices and paged loading, and a
   migration flow with dry-run loss preview plus fresh/up-to-date/refresh/diverged decisions.
   Light and dark themes, adapters overview, settings with data-directory detection.
+- **DSH `--slim` import**: truncates tool output/arguments, keeps only recent steps' tool events and drops
+  reasoning for oversized sessions (each cut recorded as a loss), so migrations stay inside the target
+  model's context window.
 - **Distribution**: unsigned macOS `.app`/`.dmg` via electron-builder
   (`pnpm dist:desktop`), plus a CI packaging job.
 - **Docs**: README, DESIGN decision log, CONTRIBUTING (adapter contract), SECURITY,

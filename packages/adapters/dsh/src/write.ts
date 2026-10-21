@@ -80,6 +80,16 @@ export interface WriteDshOptions {
   includeChildren?: boolean;
   /** 是否顺带更新 storages/workspace.json（默认 false；官方启动会自动重建） */
   registerWorkspace?: boolean;
+  /** 精简导入：截断过长的 tool_result / tool_call 参数，丢弃较早 reasoning，避免目标端上下文超限 */
+  slim?: boolean;
+  /** slim 时保留最近多少个 step 的 reasoning（默认 10） */
+  keepRecentReasoning?: number;
+  /** slim 时 tool_result 文本截断上限（默认 800 字符） */
+  maxToolResultChars?: number;
+  /** slim 时保留最近多少个 step 的完整工具结果（更早的用占位符，默认 12） */
+  keepRecentSteps?: number;
+  /** slim 时 tool_call 参数截断上限（默认 160 字符） */
+  maxToolCallChars?: number;
 }
 
 export interface WriteDshResult extends WriteReport {
@@ -415,6 +425,28 @@ async function writeOneSession(session: IrSession, options: {
   });
 
   const { steps, counts } = groupSteps(session, options.losses);
+  const slim = options.slim === true;
+  const slimKeep = options.keepRecentReasoning ?? 0;
+  const slimStepKeep = options.keepRecentSteps ?? 6;
+  const slimOldBefore = Math.max(0, steps.length - slimStepKeep);
+  const slimDropReasoningBefore = Math.max(0, steps.length - slimKeep);
+  const maxResultChars = options.maxToolResultChars ?? 200;
+  const maxCallChars = options.maxToolCallChars ?? 100;
+  const slimStats = { reasoning: 0, results: 0, calls: 0, omittedSteps: 0, oldToolEvents: 0 };
+  const markOldStep = (step: number): void => {
+    if (slim && step <= slimOldBefore) slimStats.omittedSteps = Math.max(slimStats.omittedSteps, step);
+  };
+  let stepNumberForSlim = 0;
+  const argsOf = (call: Extract<IrEvent, { kind: 'tool_call' }>): string => {
+    if (slim && stepNumberForSlim <= slimOldBefore) {
+      slimStats.calls += 1;
+      return '{}';
+    }
+    const raw = toolCallArgumentsString(call);
+    if (!slim || raw.length <= maxCallChars) return raw;
+    slimStats.calls += 1;
+    return raw.slice(0, maxCallChars) + '…[sessionport slim: truncated ' + (raw.length - maxCallChars) + ' chars]';
+  };
   const firstEvent = session.events[0];
   const ctx: EmitContext = {
     session,
@@ -441,6 +473,7 @@ async function writeOneSession(session: IrSession, options: {
 
   for (const step of steps) {
     stepNumber += 1;
+    stepNumberForSlim = stepNumber;
     const at = msOf(step.at, ctx.lastTime);
     emit(ctx, 'step/start', at, { turn: ctx.turn, step: stepNumber });
 
@@ -489,22 +522,34 @@ async function writeOneSession(session: IrSession, options: {
     const content: unknown[] = [];
     for (const text of step.reasoning) {
       if (text.length === 0) continue;
-      content.push({ type: 'reasoning', text });
+      if (slim && stepNumber <= slimDropReasoningBefore) {
+        slimStats.reasoning += 1;
+        continue;
+      }
+      content.push({ type: 'reasoning', text: slim && text.length > 2000 ? text.slice(0, 2000) + '…[sessionport slim: truncated]' : text });
     }
     if (step.assistant !== undefined) {
       let images = 0;
       for (const part of step.assistant.parts) {
-        if (part.type === 'text') content.push({ type: 'text', text: part.text });
-        else images += 1;
+        if (part.type === 'text') {
+          const text = slim && part.text.length > 2000 ? part.text.slice(0, 2000) + '…[sessionport slim: truncated]' : part.text;
+          content.push({ type: 'text', text });
+        } else {
+          images += 1;
+        }
       }
       imagePartLoss(options.losses, images);
     }
     for (const call of step.toolCalls) {
+      if (slim && stepNumber <= slimOldBefore) {
+        slimStats.oldToolEvents += 1;
+        continue;
+      }
       content.push({
         type: 'tool-call',
         id: call.callId,
         name: call.name,
-        arguments: toolCallArgumentsString(call),
+        arguments: argsOf(call),
       });
     }
     const hasToolCalls = step.toolCalls.length > 0;
@@ -534,15 +579,20 @@ async function writeOneSession(session: IrSession, options: {
 
     const toolTime = msOf(step.toolCalls[0]?.at ?? step.results[0]?.at, at);
     for (const call of step.toolCalls) {
+      if (slim && stepNumber <= slimOldBefore) continue;
       emit(ctx, 'tool/call', msOf(call.at, toolTime), {
         turn: ctx.turn,
         step: stepNumber,
         callId: call.callId,
         name: call.name,
-        arguments: toolCallArgumentsString(call),
+        arguments: argsOf(call),
       });
     }
     for (const result of step.results) {
+      if (slim && stepNumber <= slimOldBefore) {
+        slimStats.oldToolEvents += 1;
+        continue;
+      }
       if (result.callId.length === 0) {
         options.losses.add('dsh.tool-result-without-call-id', 'tool/result 缺少 callId，已跳过', { count: 1, severity: 'warning' });
         continue;
@@ -551,6 +601,21 @@ async function writeOneSession(session: IrSession, options: {
         options.losses.add('dsh.orphan-tool-result-dropped', '孤立 tool/result（找不到对应 tool_call）已丢弃', { count: 1, severity: 'warning' });
         continue;
       }
+      const rawBlocks = slim && stepNumber <= slimOldBefore
+        ? [{ type: 'text', text: '[sessionport slim: tool result omitted, ' + JSON.stringify(result.content).length + ' chars]' }]
+        : contentBlocksForResult(result.content, options.losses);
+      const resultBlocks = slim
+        ? rawBlocks.map((block) => {
+            if (block !== null && typeof block === 'object' && (block as { type?: string }).type === 'text') {
+              const text = (block as { text?: string }).text ?? '';
+              if (text.length > maxResultChars) {
+                slimStats.results += 1;
+                return { ...block, text: text.slice(0, maxResultChars) + '…[sessionport slim: truncated ' + (text.length - maxResultChars) + ' chars]' };
+              }
+            }
+            return block;
+          })
+        : rawBlocks;
       emit(ctx, 'tool/result', msOf(result.at, toolTime), {
         turn: ctx.turn,
         step: stepNumber,
@@ -558,7 +623,7 @@ async function writeOneSession(session: IrSession, options: {
           role: 'tool',
           source: { kind: 'tool', callId: result.callId },
           toolCallId: result.callId,
-          content: contentBlocksForResult(result.content, options.losses),
+          content: resultBlocks,
           isError: result.isError === true,
           id: nativeMessageId(result, 'tool'),
         },
@@ -583,6 +648,22 @@ async function writeOneSession(session: IrSession, options: {
     }
 
     emit(ctx, 'step/end', at, { turn: ctx.turn, step: stepNumber });
+  }
+
+  if (slimStats.oldToolEvents > 0) {
+    options.losses.add('dsh.slim-old-tool-events-dropped', '精简导入：较早步骤的 tool_call/tool_result 事件整体丢弃（只保留最近 ' + slimStepKeep + ' 个 step 的工具交互）', { count: slimStats.oldToolEvents, severity: 'info' });
+  }
+  if (slimStats.omittedSteps > 0) {
+    options.losses.add('dsh.slim-old-steps-omitted', '精简导入：保留最近 ' + slimStepKeep + ' 个 step 的完整工具结果，更早步骤的结果替换为占位符', { count: slimStats.omittedSteps, severity: 'info' });
+  }
+  if (slimStats.reasoning > 0) {
+    options.losses.add('dsh.slim-reasoning-dropped', '精简导入：丢弃较早步骤的 reasoning 块（保留最近 ' + slimKeep + ' 个 step）', { count: slimStats.reasoning, severity: 'info' });
+  }
+  if (slimStats.results > 0) {
+    options.losses.add('dsh.slim-tool-result-truncated', '精简导入：tool_result 文本超过 ' + maxResultChars + ' 字符的部分已截断', { count: slimStats.results, severity: 'warning' });
+  }
+  if (slimStats.calls > 0) {
+    options.losses.add('dsh.slim-tool-call-arguments-truncated', '精简导入：tool_call 参数超过 ' + maxCallChars + ' 字符的部分已截断', { count: slimStats.calls, severity: 'warning' });
   }
 
   if (title !== undefined && title.length > 0) {
@@ -648,6 +729,9 @@ export async function writeDshSession(bundle: IrBundle, options: WriteDshOptions
     id: sessionId,
     title,
     delegationDepth: 0,
+    slim: options.slim === true,
+    keepRecentReasoning: options.keepRecentReasoning,
+    maxToolResultChars: options.maxToolResultChars,
     // 不写 agentPreset：headless one-shot runner 只 compose 自己的 preset，
     // 写了 "standard" 会被拒绝加载（实测错误：agent preset "standard" ... does not compose）。
     // GUI 会话会自己写入 standard；跨端导入交给目标端默认 preset 更稳。
@@ -671,6 +755,9 @@ export async function writeDshSession(bundle: IrBundle, options: WriteDshOptions
             parentSession: sessionId,
             delegationDepth: 1,
             origin: 'subagent',
+            slim: options.slim === true,
+            keepRecentReasoning: options.keepRecentReasoning,
+            maxToolResultChars: options.maxToolResultChars,
             losses,
             dryRun,
           });

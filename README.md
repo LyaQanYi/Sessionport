@@ -108,6 +108,10 @@ Targets: `claude-code`, `command-code`, `dsh`, `codex`, `opencode`, `cursor` (ne
 Registers into the target app instead of just writing files: `--register` (Command Code desktop list / DSH workspace /
 Codex `threads` + `session_index.jsonl`).
 
+Large sessions: the `dsh` target supports `--slim` — tool results/call arguments are truncated, older steps keep
+only messages, and reasoning is dropped, so the imported session fits the target model's context window
+(each cut is reported in the loss list).
+
 ### Reuse the target's official importer
 
 ZCode and Qoder ship their own migration flows, which also carry memories/MCP/skills and are
