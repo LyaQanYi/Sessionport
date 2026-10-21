@@ -77,6 +77,9 @@ sessionport inspect "claude:93bcfa78-fd45-4802-a7b3-866d106d5e74"
 
 单测：`packages/adapters/claude-code/test/subagents.test.ts`（磁盘发现 / 覆盖镜像 / workflows 嵌套 / 坏行）。
 
+全量回读（本机 16 个含 subagents 目录的真实会话）：**16/16 读取成功、239/239 个子代理全部读入、
+`validateIrBundle` 0 错误**。
+
 端到端：把这条真实会话（1 根 + 4 个 workflow 子代理）用 `push --to dsh --include-children`
 写进隔离 `DSH_HOME`，再用 DSH reader 读回：5 个会话、4 个 child（`parentSession` 指向根会话）、
 子代理事件数 3/25/27/46 与源端一致，`validateIrBundle` 无错误。
