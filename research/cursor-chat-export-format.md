@@ -49,12 +49,32 @@
   - 文本片段。
 - 说明它是一棵 **content-addressed DAG**：每个 blob 可再引用子 blob，root 的 field 1 只列出顶层节点。
 
+## protobuf schema（从 Cursor 3.25.9 bundle 提取）[实测]
+
+Cursor 用 protobuf-es 定义了一组 `agent.v1.*` 消息；导出/导入相关的关键消息：
+
+- `agent.v1.ConversationStateStructure`（导出 JSON 的 `conversationState`）：
+  - 1 `root_prompt_messages_json` bytes repeated（每项 = 32 字节 blob id）
+  - 8 `turns` bytes repeated（每项 = blob id，指向 `AgentConversationTurnStructure`）
+  - 3 `todos`、6 `summary`、7 `plan`、11 `summary_archive`、13 `summary_archives`：bytes / blob id
+  - 4 `pending_tool_calls` strings、5 `token_details` message、9 `previous_workspace_uris` strings、10 `mode` enum
+  - 12/15 `file_states`/`file_states_v2` map、14 `turn_timings`、16 `subagent_states`、18 `read_paths`、26 `conversation_started_timestamp_ms`、27 `conversation_started_time_zone`、38 `recent_user_message_ids` 等
+- `agent.v1.AgentConversationTurnStructure`：1 `user_message`（blob id）、2 `steps`（blob id 数组）、3 `request_id`、10 `user_message_id` 等
+- `agent.v1.UserMessage`：text / message_id / selected_context / mode / timestamps 等
+- `agent.v1.AssistantMessage`：text + started/completed 时间
+- `agent.v1.ThinkingMessage`：text / duration_ms / 时间戳
+- 工具调用/结果：`ReadToolCall`、`EditToolCall`、`ShellToolCall`、`GrepToolCall`、`McpToolCall` 等（每个都是独立消息类型，含 args/result）
+
+因此导出文件 = **一层 protobuf 状态 + 内容寻址的 blob DAG**：conversationState 里存 blob id，blobs 里存
+turns/steps/messages 的 protobuf 序列化结果（hash = sha256）。
+
 ## 对 sessionport 的含义
 
 1. **导出格式已确认**：`{version:1, name, conversationState, blobs, exportedAt}`；写入侧必须生成合法的
    conversationState protobuf 与 blobs，且 blob key = sha256(content)。
-2. **从 IR 直接生成 export JSON 可行但成本高**：需要 Cursor 的 protobuf schema（conversationState 与
-   blob 各消息类型）。这份 schema 未公开，可以从 app bundle 逆向，但属于长期维护接口。
+2. **从 IR 直接生成 export JSON 可行**：protobuf schema 已从 bundle 提取（见上），blob hash = sha256。
+   但需要实现 turn/step/message/tool 的完整编码，并保持与 Cursor 版本同步；工作量约 1~2 天，属于长期维护接口。
+   另外导入入口目前仍只对 dev 账号（isDevUser）可见。
 3. **导入侧仍是 dev-only**（`isDevelopment || isDevUser` 前置条件），正式版用户无法调用；
    所以即使能生成 JSON，也不能作为稳定的用户级导入通道。
 4. 因此现有策略不变：Claude/其他 agent → Cursor 用已验证的直接写 `state.vscdb`；
