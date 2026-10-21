@@ -720,7 +720,13 @@ async function readSubagentSidecar(filePath: string): Promise<SubagentSidecar> {
   } catch {
     return {};
   }
-  const record = recordOf(JSON.parse(raw) as unknown);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  const record = recordOf(parsed);
   if (record === undefined) return {};
   const sidecar: SubagentSidecar = {};
   const agentType = textOf(record.agentType);
@@ -781,8 +787,18 @@ async function discoverSubagentTranscripts(filePath: string): Promise<DiskSubage
     if (agentId === undefined) continue;
     const existing = byAgent.get(agentId);
     if (existing !== undefined) {
-      // 同一个 agent 出现多份（重复拷贝 / 重试）时合并，保留先发现的那份路径
-      existing.rows.push(...parsed.rows);
+      // 同一个 agent 出现多份（重复拷贝 / 重试）时按 uuid 去重合并，保留先发现的那份路径
+      const seen = new Set<string>();
+      for (const row of existing.rows) {
+        const uuid = textOf(row.uuid);
+        if (uuid !== undefined) seen.add(uuid);
+      }
+      for (const row of parsed.rows) {
+        const uuid = textOf(row.uuid);
+        if (uuid !== undefined && seen.has(uuid)) continue;
+        if (uuid !== undefined) seen.add(uuid);
+        existing.rows.push(row);
+      }
       existing.badLines += parsed.badLines;
       continue;
     }
