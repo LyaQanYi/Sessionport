@@ -52,6 +52,8 @@ const USAGE = [
   '  --confirm-real         写 Cursor 真实库时必须显式确认（先用 --dry-run 看计划）',
   '  --slim                 dsh 目标精简导入：截断 tool_result/参数、丢弃较早 reasoning（日志也损）',
   '  --compact              dsh 目标压缩导入：保留全部事件日志，写 DSH 原生 compaction（摘要+最近 step）',
+  '  --compact-budget-chars <n>  压缩导入时可见上下文（最近 step）的字符预算（默认 200000）',
+  '  --compact-keep-steps <n>    强制保留最近 n 个 step（默认按预算自适应）',
   '  --into <app>           import 的目标 app：zcode | qoder | cursor（cursor 无官方导入）',
   '  --open                 import 时自动打开目标 app',
   '  --fork                 sync: 目标端有新增时另建一个目标会话，保留旧会话',
@@ -204,6 +206,10 @@ function commonTargetOptions(values: Record<string, string | boolean | undefined
     confirmReal: Boolean(values['confirm-real']),
     slim: Boolean(values.slim),
     compact: Boolean(values.compact),
+    compactBudgetChars:
+      typeof values['compact-budget-chars'] === 'string' ? Number(values['compact-budget-chars']) : undefined,
+    compactKeepRecentSteps:
+      typeof values['compact-keep-steps'] === 'string' ? Number(values['compact-keep-steps']) : undefined,
   };
 }
 
@@ -768,6 +774,8 @@ async function main(): Promise<void> {
       'confirm-real': { type: 'boolean' },
       slim: { type: 'boolean' },
       compact: { type: 'boolean' },
+      'compact-budget-chars': { type: 'string' },
+      'compact-keep-steps': { type: 'string' },
       into: { type: 'string' },
       source: { type: 'string' },
       open: { type: 'boolean' },

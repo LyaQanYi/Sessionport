@@ -24,6 +24,10 @@ const channelSchemas = {
     includeChildren: z.boolean().optional(),
     stateHome: z.string().optional(),
     onDiverged: z.enum(['auto', 'force', 'fork']).optional(),
+    slim: z.boolean().optional(),
+    compact: z.boolean().optional(),
+    compactBudgetChars: z.number().int().positive().optional(),
+    compactKeepRecentSteps: z.number().int().positive().optional(),
   }),
   'migrate:run': z.object({
     agent: agentSchema,
@@ -36,6 +40,10 @@ const channelSchemas = {
     model: z.string().optional(),
     stateHome: z.string().optional(),
     onDiverged: z.enum(['auto', 'force', 'fork']).optional(),
+    slim: z.boolean().optional(),
+    compact: z.boolean().optional(),
+    compactBudgetChars: z.number().int().positive().optional(),
+    compactKeepRecentSteps: z.number().int().positive().optional(),
   }),
   'app:capabilities': z.object({}).default({}),
   'app:paths': z.object({}).default({}),
@@ -63,6 +71,10 @@ export function registerIpc(): void {
       includeChildren: input.includeChildren,
       stateHome: input.stateHome,
       onDiverged: input.onDiverged,
+      slim: input.slim,
+      compact: input.compact,
+      compactBudgetChars: input.compactBudgetChars,
+      compactKeepRecentSteps: input.compactKeepRecentSteps,
     });
   }));
   ipcMain.handle('migrate:run', async (_event, payload: unknown) => wrap(() => {

@@ -112,6 +112,8 @@ Large sessions: the `dsh` target supports `--slim` — tool results/call argumen
 only messages, and reasoning is dropped, so the imported session fits the target model's context window
 (each cut is reported in the loss list).
 
+The desktop migration page exposes the same choice for the `dsh` target (compressed / full / slim).
+
 `--compact` is the lossless-log variant: the full event log is kept and a **native DSH compaction chain**
 (`compaction/start` → `compaction/summary` → checkpoint `surfaceOp: replace` → `compaction/end`) is written,
 so the model only sees the summary plus the most recent steps. The history stays recoverable and can be
