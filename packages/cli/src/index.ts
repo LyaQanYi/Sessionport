@@ -54,6 +54,8 @@ const USAGE = [
   '  --compact              dsh 目标压缩导入：保留全部事件日志，写 DSH 原生 compaction（摘要+最近 step）',
   '  --compact-budget-chars <n>  压缩导入时可见上下文（最近 step）的字符预算（默认 200000）',
   '  --compact-keep-steps <n>    强制保留最近 n 个 step（默认按预算自适应）',
+  '  --summary-llm <claude|codex>  压缩导入时用已登录的 CLI 生成 LLM 多轮摘要',
+  '  --summary-cmd <命令>        自定义摘要命令（prompt 走 stdin，stdout 读摘要）',
   '  --into <app>           import 的目标 app：zcode | qoder | cursor（cursor 无官方导入）',
   '  --open                 import 时自动打开目标 app',
   '  --fork                 sync: 目标端有新增时另建一个目标会话，保留旧会话',
@@ -190,6 +192,21 @@ function summarize(bundle: IrBundle): string {
   return lines.join('\n');
 }
 
+const SUMMARY_PRESETS: Record<string, string> = {
+  claude: 'claude -p',
+  codex: 'codex exec -',
+};
+
+function resolveSummaryCommand(values: Record<string, string | boolean | undefined>): string | undefined {
+  if (typeof values['summary-cmd'] === 'string' && values['summary-cmd'].trim().length > 0) return values['summary-cmd'];
+  if (typeof values['summary-llm'] === 'string') {
+    const preset = SUMMARY_PRESETS[values['summary-llm'].trim().toLowerCase()];
+    if (preset === undefined) fail('未知 --summary-llm: ' + values['summary-llm'] + '（可选 claude / codex）');
+    return preset;
+  }
+  return undefined;
+}
+
 function commonTargetOptions(values: Record<string, string | boolean | undefined>): Record<string, unknown> {
   return {
     home: typeof values.home === 'string' ? values.home : typeof values['config-dir'] === 'string' ? values['config-dir'] : undefined,
@@ -210,6 +227,7 @@ function commonTargetOptions(values: Record<string, string | boolean | undefined
       typeof values['compact-budget-chars'] === 'string' ? Number(values['compact-budget-chars']) : undefined,
     compactKeepRecentSteps:
       typeof values['compact-keep-steps'] === 'string' ? Number(values['compact-keep-steps']) : undefined,
+    summaryCommand: resolveSummaryCommand(values),
   };
 }
 
@@ -776,6 +794,8 @@ async function main(): Promise<void> {
       compact: { type: 'boolean' },
       'compact-budget-chars': { type: 'string' },
       'compact-keep-steps': { type: 'string' },
+      'summary-llm': { type: 'string' },
+      'summary-cmd': { type: 'string' },
       into: { type: 'string' },
       source: { type: 'string' },
       open: { type: 'boolean' },

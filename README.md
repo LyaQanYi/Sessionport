@@ -117,7 +117,9 @@ The desktop migration page exposes the same choice for the `dsh` target (compres
 `--compact` is the lossless-log variant: the full event log is kept and a **native DSH compaction chain**
 (`compaction/start` → `compaction/summary` → checkpoint `surfaceOp: replace` → `compaction/end`) is written,
 so the model only sees the summary plus the most recent steps. The history stays recoverable and can be
-compacted again by DSH later.
+compacted again by DSH later. Summaries are extractive by default; `--summary-llm claude|codex` reuses an
+already-authenticated local CLI to produce a multi-round LLM summary (segments are summarized, then merged,
+until they fit the budget).
 
 ### Reuse the target's official importer
 
