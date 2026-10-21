@@ -6,7 +6,11 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
 
   apps/desktop:
     dependencies:
@@ -156,38 +160,7 @@ importers:
         specifier: workspace:*
         version: link:../../core
 
-  packages/cli:
-    dependencies:
-      '@sessionport/adapter-claude-code':
-        specifier: workspace:*
-        version: link:../adapters/claude-code
-      '@sessionport/adapter-codex':
-        specifier: workspace:*
-        version: link:../adapters/codex
-      '@sessionport/adapter-command-code':
-        specifier: workspace:*
-        version: link:../adapters/command-code
-      '@sessionport/adapter-cursor':
-        specifier: workspace:*
-        version: link:../adapters/cursor
-      '@sessionport/adapter-dsh':
-        specifier: workspace:*
-        version: link:../adapters/dsh
-      '@sessionport/adapter-kimi-code':
-        specifier: workspace:*
-        version: link:../adapters/kimi-code
-      '@sessionport/adapter-opencode':
-        specifier: workspace:*
-        version: link:../adapters/opencode
-      '@sessionport/adapter-qoder':
-        specifier: workspace:*
-        version: link:../adapters/qoder
-      '@sessionport/adapter-workbuddy':
-        specifier: workspace:*
-        version: link:../adapters/workbuddy
-      '@sessionport/core':
-        specifier: workspace:*
-        version: link:../core
+  packages/cli: {}
 
   packages/core: {}
 
