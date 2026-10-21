@@ -73,6 +73,10 @@ test('includeChildren：子代理写成独立会话，header 带 parentSession/d
 
     const back = await readDshSession('session-aaaaaaaa-1111-4111-8111-111111111111', { home });
     assert.equal(back.children.length, 2);
+    assert.deepEqual(
+      back.children.map((child) => child.session.meta.title).sort(),
+      ['子代理 A', '子代理 B'],
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
   }
