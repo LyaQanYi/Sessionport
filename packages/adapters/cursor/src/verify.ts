@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { cursorLogsDir, cursorUserDataDir, resolveCursorPaths } from './paths.ts';
 import { readCursorSession } from './read.ts';
+import { isCursorToolStatus } from './toolformer.ts';
 import {
   BUBBLE_TYPE_AI,
   BUBBLE_TYPE_HUMAN,
@@ -33,8 +34,13 @@ import {
   readDiskKvValue,
   readHeaderRow,
   tableExists,
+  tryParseJson,
 } from './wire.ts';
-import type { CursorComposerData, CursorConversationHeaderEntry } from './wire.ts';
+import type {
+  CursorComposerData,
+  CursorConversationHeaderEntry,
+  CursorToolFormerData,
+} from './wire.ts';
 
 export interface VerifyCheck {
   name: string;
@@ -48,6 +54,7 @@ export interface CursorReadbackSummary {
   userMessages: number;
   assistantMessages: number;
   toolCalls: number;
+  toolResults: number;
   reasoning: number;
   head: string | null;
 }
@@ -63,6 +70,8 @@ export interface VerifyCursorOptions {
     userMessages?: number;
     assistantMessages?: number;
     eventCount?: number;
+    toolCalls?: number;
+    toolResults?: number;
   };
   /** 跳过 readback（只看 DB 结构） */
   skipReadback?: boolean;
@@ -186,6 +195,76 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
     }
     push('bubble-types-match', typeMismatch === 0, 'mismatch=' + String(typeMismatch));
 
+    // 工具气泡：字段存在、params/result 可解码、callId 配对
+    const toolBubbles: Array<{ bubbleId: string; tool: CursorToolFormerData }> = [];
+    for (const [bubbleId, bubble] of bubbleMap) {
+      if (isRecord(bubble.toolFormerData)) {
+        toolBubbles.push({ bubbleId, tool: bubble.toolFormerData as CursorToolFormerData });
+      }
+    }
+    const callIds = new Set<string>();
+    let badToolFields = 0;
+    let badToolJson = 0;
+    let badToolStatus = 0;
+    let duplicateCallIds = 0;
+    let badExtension = 0;
+    for (const { tool } of toolBubbles) {
+      const callId = typeof tool.toolCallId === 'string' ? tool.toolCallId : '';
+      const hasName = typeof tool.name === 'string' && tool.name.trim().length > 0;
+      const hasTool = typeof tool.tool === 'number' && Number.isFinite(tool.tool);
+      if (callId.length === 0 || !hasName || !hasTool) badToolFields += 1;
+      if (callId.length > 0) {
+        if (callIds.has(callId)) duplicateCallIds += 1;
+        callIds.add(callId);
+      }
+      if (!isCursorToolStatus(tool.status)) badToolStatus += 1;
+      for (const value of [tool.params, tool.result]) {
+        if (value === undefined || value === null) continue;
+        if (typeof value !== 'string' || tryParseJson(value) === undefined) badToolJson += 1;
+      }
+      if (tool._sessionport !== undefined) {
+        const extension = tool._sessionport;
+        if (!isRecord(extension) || extension.v !== 1 || typeof extension.name !== 'string') badExtension += 1;
+      }
+    }
+    push(
+      'toolformer-fields',
+      badToolFields === 0,
+      'tools=' + String(toolBubbles.length) + ' bad=' + String(badToolFields),
+    );
+    push('toolformer-params-json', badToolJson === 0, 'bad=' + String(badToolJson));
+    push('toolformer-status', badToolStatus === 0, 'bad=' + String(badToolStatus));
+    push(
+      'toolformer-call-ids',
+      duplicateCallIds === 0,
+      'ids=' + String(callIds.size) + ' duplicate=' + String(duplicateCallIds),
+    );
+    push('toolformer-extension', badExtension === 0, 'bad=' + String(badExtension));
+
+    let groupingMismatch = 0;
+    for (const entry of parsedHeaders) {
+      if (!isRecord(entry.grouping)) continue;
+      const grouping = entry.grouping;
+      if (typeof grouping.toolFormerTool !== 'number') continue;
+      const bubble = bubbleMap.get(entry.bubbleId);
+      const tool = bubble !== undefined && isRecord(bubble.toolFormerData)
+        ? (bubble.toolFormerData as CursorToolFormerData)
+        : undefined;
+      if (tool === undefined) {
+        groupingMismatch += 1;
+        continue;
+      }
+      if (grouping.toolFormerTool !== tool.tool) groupingMismatch += 1;
+      if (
+        typeof grouping.toolCallId === 'string' &&
+        grouping.toolCallId.length > 0 &&
+        grouping.toolCallId !== tool.toolCallId
+      ) {
+        groupingMismatch += 1;
+      }
+    }
+    push('toolformer-grouping', groupingMismatch === 0, 'mismatch=' + String(groupingMismatch));
+
     const prefix = bubbleKeyPrefix(options.sessionId);
     const orphan = readDiskKvEntries(db, prefix).filter(([key]) => {
       const bubbleId = key.slice(prefix.length);
@@ -246,6 +325,20 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
             'assistant=' + String(summary.assistantMessages) + ' expected=' + String(expected.assistantMessages),
           );
         }
+        if (expected?.toolCalls !== undefined) {
+          push(
+            'expected-tool-calls',
+            summary.toolCalls === expected.toolCalls,
+            'toolCalls=' + String(summary.toolCalls) + ' expected=' + String(expected.toolCalls),
+          );
+        }
+        if (expected?.toolResults !== undefined) {
+          push(
+            'expected-tool-results',
+            summary.toolResults === expected.toolResults,
+            'toolResults=' + String(summary.toolResults) + ' expected=' + String(expected.toolResults),
+          );
+        }
       } catch (error) {
         push('readback', false, error instanceof Error ? error.message : String(error));
       }
@@ -300,6 +393,7 @@ function summarizeBundle(bundle: {
     userMessages: 0,
     assistantMessages: 0,
     toolCalls: 0,
+    toolResults: 0,
     reasoning: 0,
     head: bundle.root.head,
   };
@@ -310,6 +404,8 @@ function summarizeBundle(bundle: {
       else if (event.role === 'assistant') summary.assistantMessages += 1;
     } else if (event.kind === 'tool_call') {
       summary.toolCalls += 1;
+    } else if (event.kind === 'tool_result') {
+      summary.toolResults += 1;
     } else if (event.kind === 'reasoning') {
       summary.reasoning += 1;
     }

@@ -71,12 +71,15 @@ import type {
   CursorConversationHeaderEntry,
   CursorHeaderValue,
   CursorModelConfig,
+  CursorToolFormerData,
 } from './wire.ts';
+import { CAPABILITY_TOOL_FORMER, buildCursorToolFormerData } from './toolformer.ts';
 
 export const CURSOR_CAPS: ExportCaps = {
   agent: 'cursor' as unknown as AgentId,
   reasoning: 'plain',
-  toolResults: 'none',
+  // tool_result 内联在同一个气泡的 toolFormerData.result 里（Cursor 原生形态）
+  toolResults: 'inline',
   branching: false,
   subagents: false,
   modelPinned: false,
@@ -139,6 +142,10 @@ interface BubbleSpec {
   atMs: number;
   text?: string;
   thinking?: string;
+  /** 工具气泡：toolFormerData 已经编码好 */
+  tool?: CursorToolFormerData;
+  /** 工具结果的时刻；工具气泡的 completedAtMs 用它 */
+  completedAtMs?: number;
 }
 
 function isoOf(at: string): string {
@@ -395,6 +402,24 @@ export function thinkingGrouping(durationMs: number | undefined): Record<string,
   return grouping;
 }
 
+/**
+ * 工具气泡的 grouping。app 打开会话时会用气泡重算（JEk），这里写的是保守近似值；
+ * 关键是 toolFormerTool / toolFormerStatus / toolCallId 与 toolFormerData 一致。
+ */
+export function toolGrouping(tool: CursorToolFormerData): Record<string, unknown> {
+  const grouping: Record<string, unknown> = {
+    isRenderable: true,
+    capabilityType: CAPABILITY_TOOL_FORMER,
+    hasText: false,
+    hasThinking: false,
+    toolDisplayComputed: true,
+  };
+  if (typeof tool.tool === 'number') grouping.toolFormerTool = tool.tool;
+  if (typeof tool.status === 'string') grouping.toolFormerStatus = tool.status;
+  if (typeof tool.toolCallId === 'string' && tool.toolCallId.length > 0) grouping.toolCallId = tool.toolCallId;
+  return grouping;
+}
+
 function buildBubble(spec: BubbleSpec): CursorBubble {
   // 真实 bubble 都带同一组空数组字段；补齐它们可以避免 Cursor 渲染时对 undefined 调 map。
   const base: CursorBubble = {
@@ -474,6 +499,14 @@ function buildBubble(spec: BubbleSpec): CursorBubble {
     base.agentMode = 1;
     return base;
   }
+  if (spec.tool !== undefined) {
+    base.text = '';
+    base.capabilityType = CAPABILITY_TOOL_FORMER;
+    base.toolFormerData = spec.tool;
+    base.startedAtMs = spec.atMs;
+    base.completedAtMs = spec.completedAtMs ?? spec.atMs;
+    return base;
+  }
   if (spec.thinking !== undefined) {
     base.text = '';
     base.thinking = { text: spec.thinking, signature: '' };
@@ -498,6 +531,12 @@ function buildConversationHeader(spec: BubbleSpec): CursorConversationHeaderEntr
   };
   if (spec.type === BUBBLE_TYPE_HUMAN) {
     entry.grouping = userGrouping(spec.text ?? '');
+    return entry;
+  }
+  if (spec.tool !== undefined) {
+    entry.grouping = toolGrouping(spec.tool);
+    entry.startedAtMs = spec.atMs;
+    entry.completedAtMs = spec.completedAtMs ?? spec.atMs;
     return entry;
   }
   if (spec.thinking !== undefined) {
@@ -544,10 +583,97 @@ export async function writeCursorSession(
     firstUserText(session)?.slice(0, 80) ??
     'Sessionport import';
   const losses = new LossCollector();
-  const counters = { messages: 0, userMessages: 0, assistantMessages: 0, reasoning: 0, images: 0 };
+  const counters = {
+    messages: 0,
+    userMessages: 0,
+    assistantMessages: 0,
+    reasoning: 0,
+    images: 0,
+    toolCalls: 0,
+    toolResults: 0,
+  };
   const specs: BubbleSpec[] = [];
 
-  for (const event of session.events) {
+  // 一个工具调用在 Cursor 里是一个 AI 气泡，tool_result 内联在同一个 toolFormerData.result。
+  // 所以先按 callId 配对，再按事件顺序生成气泡；tool_result 事件本身不再单独成气泡。
+  const resultByCallId = new Map<string, { event: Extract<IrEvent, { kind: 'tool_result' }>; index: number }>();
+  const extraResultIndexes = new Set<number>();
+  const consumedResultIndexes = new Set<number>();
+  session.events.forEach((event, index) => {
+    if (event.kind !== 'tool_result') return;
+    const existing = resultByCallId.get(event.callId);
+    if (existing !== undefined) {
+      extraResultIndexes.add(index);
+      return;
+    }
+    resultByCallId.set(event.callId, { event, index });
+  });
+
+  const toolSpecByEventIndex = new Map<number, BubbleSpec>();
+  for (let index = 0; index < session.events.length; index += 1) {
+    const event = session.events[index];
+    if (event === undefined || event.kind !== 'tool_call') continue;
+    const resultInfo = resultByCallId.get(event.callId);
+    const callId = event.callId.trim().length > 0 ? event.callId : 'tool-' + newUuid();
+    const built = buildCursorToolFormerData(
+      { callId, name: event.name, input: event.input, atMs: msOf(event.at) },
+      resultInfo === undefined
+        ? undefined
+        : {
+            content: resultInfo.event.content,
+            isError: resultInfo.event.isError === true,
+            atMs: msOf(resultInfo.event.at),
+          },
+    );
+    if (!built.ok) {
+      for (const warning of built.warnings) {
+        losses.add(warning.code, warning.message, { severity: warning.severity });
+      }
+      // 结果已经跟着这条调用一起丢弃，不能再算成“孤立结果”
+      if (resultInfo !== undefined) consumedResultIndexes.add(resultInfo.index);
+      continue;
+    }
+    for (const warning of built.warnings) {
+      losses.add(warning.code, warning.message, { severity: warning.severity });
+    }
+    if (resultInfo === undefined) {
+      losses.add('cursor.tool-result-missing', '工具调用没有对应结果，写入 status=cancelled 的气泡', { severity: 'info' });
+    } else {
+      const imageParts = resultInfo.event.content.filter((part) => part.type === 'image').length;
+      if (imageParts > 0) {
+        losses.add('cursor.tool-result-image-dropped', '工具结果里的图片没有本地二进制，只写了占位文本', {
+          count: imageParts,
+          severity: 'warning',
+        });
+      }
+      consumedResultIndexes.add(resultInfo.index);
+      counters.toolResults += 1;
+    }
+    toolSpecByEventIndex.set(index, {
+      bubbleId: newUuid(),
+      type: BUBBLE_TYPE_AI,
+      atIso: isoOf(event.at),
+      atMs: msOf(event.at),
+      text: '',
+      tool: built.data,
+      completedAtMs:
+        resultInfo === undefined ? msOf(event.at) : Math.max(msOf(event.at), msOf(resultInfo.event.at)),
+    });
+    counters.toolCalls += 1;
+  }
+
+  for (const index of extraResultIndexes) {
+    const event = session.events[index];
+    if (event === undefined || event.kind !== 'tool_result') continue;
+    losses.add('cursor.extra-tool-result', '同一个工具调用有多个结果，Cursor 一个气泡只能内联一个，额外结果已丢弃', {
+      severity: 'warning',
+    });
+    consumedResultIndexes.add(index);
+  }
+
+  for (let index = 0; index < session.events.length; index += 1) {
+    const event = session.events[index];
+    if (event === undefined) continue;
     if (event.kind === 'message') {
       const text = event.parts
         .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
@@ -595,13 +721,13 @@ export async function writeCursorSession(
       continue;
     }
     if (event.kind === 'tool_call') {
-      losses.add('cursor.tool-call-dropped', 'Cursor 的 toolFormerData 依赖内部工具枚举，无法安全还原：工具调用已丢弃', {
-        severity: 'warning',
-      });
+      const spec = toolSpecByEventIndex.get(index);
+      if (spec !== undefined) specs.push(spec);
       continue;
     }
     if (event.kind === 'tool_result') {
-      losses.add('cursor.tool-result-dropped', '工具结果没有独立存储结构，已丢弃', { severity: 'warning' });
+      if (consumedResultIndexes.has(index)) continue;
+      losses.add('cursor.orphan-tool-result', '找不到对应 tool_call 的工具结果，已显式丢弃', { severity: 'warning' });
       continue;
     }
     if (event.kind === 'boundary') {
@@ -783,8 +909,8 @@ export async function writeCursorSession(
     written: {
       events: specs.length,
       messages: counters.messages,
-      toolCalls: 0,
-      toolResults: 0,
+      toolCalls: counters.toolCalls,
+      toolResults: counters.toolResults,
       reasoning: counters.reasoning,
     },
     losses: lossList,

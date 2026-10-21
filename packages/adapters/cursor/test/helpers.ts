@@ -36,6 +36,9 @@ export interface FixtureToolSpec {
   result?: unknown;
   status?: string;
   tool?: number;
+  additionalData?: unknown;
+  error?: unknown;
+  toolCallBinary?: string;
 }
 
 export interface FixtureBubbleSpec {
@@ -145,6 +148,9 @@ function buildBubbleJson(spec: FixtureBubbleSpec, index: number): string {
             : JSON.stringify(tool.result),
       status: tool.status ?? 'completed',
       tool: tool.tool ?? 42,
+      additionalData: tool.additionalData,
+      error: tool.error,
+      toolCallBinary: tool.toolCallBinary,
     };
   }
   if (spec.images !== undefined) bubble.images = spec.images;

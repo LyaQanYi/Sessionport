@@ -59,7 +59,7 @@ test('dryRun 只算不写：不产生数据、不产生备份', async () => {
     });
     assert.equal(result.dryRun, true);
     assert.equal(result.composerId, NEW_ID);
-    assert.equal(result.rows.length, 5); // header + composerData + 3 bubbles
+    assert.equal(result.rows.length, 6); // header + composerData + 3 文本气泡 + 1 工具气泡
     assert.equal(result.backupPath, undefined);
     const db = openCursorDb(fixture.dbPath, { readOnly: true });
     try {
@@ -106,20 +106,22 @@ test('写入新 composer：只新增 key，不修改已有会话', async () => {
     assert.equal(result.title, '搬迁测试');
     assert.equal(result.rows.filter((row) => row.kind === 'header').length, 1);
     assert.equal(result.rows.filter((row) => row.kind === 'composerData').length, 1);
-    assert.equal(result.rows.filter((row) => row.kind === 'bubble').length, 3);
+    assert.equal(result.rows.filter((row) => row.kind === 'bubble').length, 4);
     assert.equal(result.caps, CURSOR_CAPS);
     assert.equal(CURSOR_CAPS.agent, 'cursor');
 
     const losses = new Set(result.losses.map((loss) => loss.code));
     for (const code of [
       'cursor.synthetic-user-dropped',
-      'cursor.tool-call-dropped',
-      'cursor.tool-result-dropped',
       'cursor.boundary-dropped',
       'cursor.cross-agent-import',
     ]) {
       assert.ok(losses.has(code), 'missing loss ' + code);
     }
+    assert.ok(!losses.has('cursor.tool-call-dropped'), '工具调用不应再被静默/显式丢弃');
+    assert.ok(!losses.has('cursor.tool-result-dropped'), '工具结果不应再被丢弃');
+    assert.equal(result.written.toolCalls, 1);
+    assert.equal(result.written.toolResults, 1);
 
     assert.ok(result.backupPath !== undefined);
     assert.ok(existsSync(result.backupPath));
@@ -127,7 +129,7 @@ test('写入新 composer：只新增 key，不修改已有会话', async () => {
       planned: Array<{ key: string }>;
       existing: Record<string, unknown>;
     };
-    assert.equal(backup.planned.length, 5);
+    assert.equal(backup.planned.length, 6);
     assert.deepEqual(backup.existing, {});
 
     const after = snapshot(fixture.dbPath);
@@ -137,21 +139,21 @@ test('写入新 composer：只新增 key，不修改已有会话', async () => {
     for (const [composerId, value] of before.headers) {
       assert.equal(after.headers.get(composerId), value, '已存在的 composerHeaders 行被改动: ' + composerId);
     }
-    assert.equal(after.kv.size, before.kv.size + 4);
+    assert.equal(after.kv.size, before.kv.size + 5);
     assert.equal(after.headers.size, before.headers.size + 1);
 
     // 结构 + 读回
     const report = await verifyCursorSession({
       home: fixture.home,
       sessionId: NEW_ID,
-      expected: { bubbles: 3, eventCount: 3, userMessages: 1, assistantMessages: 1 },
+      expected: { bubbles: 4, eventCount: 5, userMessages: 1, assistantMessages: 1, toolCalls: 1, toolResults: 1 },
     });
     assert.deepEqual(
       report.checks.filter((check) => !check.ok),
       [],
     );
     assert.equal(report.ok, true);
-    assert.equal(report.bubbles, 3);
+    assert.equal(report.bubbles, 4);
 
     const bundle = await readCursorSession(NEW_ID, { home: fixture.home, includeChildren: false });
     assert.equal(bundle.root.meta.title, '搬迁测试');
@@ -159,10 +161,13 @@ test('写入新 composer：只新增 key，不修改已有会话', async () => {
     assert.equal(bundle.root.meta.model, 'gpt-5');
     assert.deepEqual(
       bundle.root.events.map((event) => event.kind),
-      ['message', 'reasoning', 'message'],
+      ['message', 'reasoning', 'message', 'tool_call', 'tool_result'],
     );
+    const toolCall = bundle.root.events.find((event) => event.kind === 'tool_call');
+    assert.ok(toolCall !== undefined && toolCall.kind === 'tool_call');
+    assert.deepEqual(toolCall.input, { command: 'ls' });
     const counts = await countCursorTarget({ home: fixture.home, sessionId: NEW_ID });
-    assert.deepEqual(counts, { exists: true, units: 3 });
+    assert.deepEqual(counts, { exists: true, units: 4 });
   } finally {
     fixture.cleanup();
   }
@@ -208,7 +213,7 @@ test('keepSynthetic 可保留源端注入消息', async () => {
       backupDir: join(fixture.home, 'backup'),
       keepSynthetic: true,
     });
-    assert.equal(result.written.events, 4);
+    assert.equal(result.written.events, 5);
     assert.ok(!result.losses.some((loss) => loss.code === 'cursor.synthetic-user-dropped'));
   } finally {
     fixture.cleanup();
@@ -314,13 +319,13 @@ test('默认 recency=写入时刻（列表顶部），preserveUpdatedAt 保留�
       backupDir: join(fixture.home, 'backup'),
       preserveUpdatedAt: true,
     });
-    assert.equal(preserved.header.lastUpdatedAt, BASE_MS + 1000);
+    assert.equal(preserved.header.lastUpdatedAt, BASE_MS + 1500);
     const db2 = openCursorDb(fixture.dbPath, { readOnly: true });
     try {
       const row = db2.prepare('SELECT recency FROM composerHeaders WHERE composerId = ?').get(preservedId) as {
         recency: number;
       };
-      assert.equal(row.recency, BASE_MS + 1000);
+      assert.equal(row.recency, BASE_MS + 1500);
     } finally {
       closeCursorDb(db2);
     }

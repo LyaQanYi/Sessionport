@@ -61,12 +61,28 @@ export interface CursorThinking {
 
 export interface CursorToolFormerData {
   toolCallId?: string;
+  toolIndex?: number;
+  modelCallId?: string;
   name?: string;
   rawArgs?: string;
   params?: string;
   result?: unknown;
   status?: string;
   tool?: number;
+  /** ToolResultError 的 protobuf JSON（clientVisibleErrorMessage/modelVisibleErrorMessage） */
+  error?: unknown;
+  /** 工具特有的附加数据（shell 状态、grep 摘要、edit precomputedDiff 等） */
+  additionalData?: Record<string, unknown>;
+  /**
+   * base64(agent.v1.ToolCall)。真实 Cursor 气泡里都有；本 adapter 目前不生成，
+   * 读取时也忽略（UI 的 params/result 已足够渲染，见 research/cursor-toolformer.md）。
+   */
+  toolCallBinary?: string;
+  /**
+   * sessionport 自己的往返扩展：Cursor 不读取它，但 app 的 JSON 透传会保留。
+   * 用来在 IR → Cursor → IR 时保留原始工具名/参数/结果（params/result 是 Cursor 语义化后的形态）。
+   */
+  _sessionport?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
