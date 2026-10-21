@@ -13,7 +13,8 @@
  * - assistant tool_use   -> tool_call
  * - system compact_boundary -> boundary(compact)；其它 system 行记 notice
  * - custom-title / summary / agent-name 只用于标题，不产生事件
- * - isSidechain 行属于子代理：根会话里跳过并记 notice（独立 sidechain 文件需另行读取）
+ * - isSidechain 行属于子代理：按 agentId / parentUuid 连通关系分组为 bundle.children，
+ *   根会话不再包含这些行；无法归组的行记 warning
  *
  * 容错：坏 JSON 行跳过并计数；未知行/未知 content block 记 notice，不抛错。
  */
@@ -25,6 +26,7 @@ import { IR_VERSION } from '@sessionport/core';
 import type {
   IrBoundaryEvent,
   IrBundle,
+  IrChildSession,
   IrContent,
   IrEvent,
   IrMessageEvent,
@@ -91,6 +93,7 @@ interface ClaudeRow {
   version?: string;
   gitBranch?: string;
   isSidechain?: boolean;
+  agentId?: string;
   isMeta?: boolean;
   isCompactSummary?: boolean;
   userType?: string;
@@ -114,7 +117,6 @@ interface ParsedRows {
 }
 
 interface Counters {
-  sidechainRows: number;
   systemLines: number;
   compactBoundaries: number;
   orphanResults: number;
@@ -136,7 +138,6 @@ export interface ClaudeSessionFile {
 
 function emptyCounters(): Counters {
   return {
-    sidechainRows: 0,
     systemLines: 0,
     compactBoundaries: 0,
     orphanResults: 0,
@@ -240,9 +241,10 @@ function toolResultContent(value: unknown): IrContent[] {
   return out;
 }
 
-/** 首条“真实”用户文本：跳过 meta / 工具结果回灌 / 注入指令 / sidechain */
-function realUserText(row: ClaudeRow): string | undefined {
-  if (row.isSidechain === true || row.isMeta === true || row.isCompactSummary === true) return undefined;
+/** 首条“真实”用户文本：跳过 meta / 工具结果回灌 / 注入指令；sidechain 只在读子会话时纳入 */
+function realUserText(row: ClaudeRow, includeSidechain = false): string | undefined {
+  if (row.isSidechain === true && !includeSidechain) return undefined;
+  if (row.isMeta === true || row.isCompactSummary === true) return undefined;
   if (row.toolUseResult !== undefined) return undefined;
   const content = row.message?.content;
   const texts: string[] = [];
@@ -262,201 +264,80 @@ function realUserText(row: ClaudeRow): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// 输入解析
+// 行 -> 事件 / notice（根会话与 sidechain 子会话共用同一套解析）
 // ---------------------------------------------------------------------------
 
-async function listProjectFiles(configRoot: string): Promise<ClaudeSessionFile[]> {
-  const root = projectsDir(configRoot);
-  const out: ClaudeSessionFile[] = [];
-  let projects: Array<{ name: string; isDirectory(): boolean }>;
-  try {
-    projects = await readdir(root, { withFileTypes: true });
-  } catch {
-    return out;
-  }
-  for (const project of projects) {
-    if (!project.isDirectory()) continue;
-    const dir = join(root, project.name);
-    let entries: Array<{ name: string; isFile(): boolean }>;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
-      out.push({
-        filePath: join(dir, entry.name),
-        sessionId: entry.name.slice(0, -'.jsonl'.length),
-        projectSlug: project.name,
-      });
-    }
-  }
-  return out;
+interface SessionMetaScan {
+  sessionId?: string;
+  cwd?: string;
+  model?: string;
+  version?: string;
+  firstTimestamp?: string;
+  lastTimestamp?: string;
+  customTitle?: string;
+  summaryTitle?: string;
+  agentName?: string;
+  firstUserText?: string;
+  lastPrompt?: string;
 }
 
-async function newestFile(files: Array<{ filePath: string }>): Promise<string | undefined> {
-  let newest: { filePath: string; mtimeMs: number } | undefined;
-  for (const file of files) {
-    const info = await stat(file.filePath).catch(() => undefined);
-    if (info === undefined || !info.isFile()) continue;
-    if (newest === undefined || info.mtimeMs > newest.mtimeMs) newest = { filePath: file.filePath, mtimeMs: info.mtimeMs };
-  }
-  return newest?.filePath;
-}
-
-async function findById(configRoot: string, idRef: string): Promise<string> {
-  const files = await listProjectFiles(configRoot);
-  const exact = files.filter((file) => file.sessionId === idRef);
-  if (exact.length > 0) {
-    // 同一 id 被复制到多个项目目录时取最近活动的那份
-    const latest = await newestFile(exact);
-    if (latest !== undefined) return latest;
-  }
-  const prefix = files.filter((file) => file.sessionId.startsWith(idRef));
-  if (prefix.length === 1) return prefix[0]!.filePath;
-  if (prefix.length > 1) {
-    throw new Error('Claude Code 会话 id 前缀有歧义: ' + idRef + ' -> ' + prefix.map((file) => file.sessionId).join(', '));
-  }
-  throw new Error('找不到 Claude Code 会话: ' + idRef + '（数据目录 ' + projectsDir(configRoot) + '）');
-}
-
-async function resolveSessionPath(input: string, configRoot: string, sessionId?: string): Promise<string> {
-  const ref = input.trim();
-  if (ref.length === 0) throw new Error('readClaudeSession: input 为空');
-  if (ref === 'last') {
-    const latest = await newestFile(await listProjectFiles(configRoot));
-    if (latest === undefined) throw new Error('找不到任何 Claude Code 会话: ' + projectsDir(configRoot));
-    return latest;
-  }
-
-  const absolute = resolve(ref);
-  if (existsSync(absolute)) {
-    const info = await stat(absolute);
-    if (info.isFile()) return absolute;
-    if (info.isDirectory()) {
-      if (existsSync(join(absolute, 'projects'))) {
-        if (sessionId !== undefined) return findById(absolute, sessionId);
-        const latest = await newestFile(await listProjectFiles(absolute));
-        if (latest === undefined) throw new Error('配置目录里没有会话: ' + absolute);
-        return latest;
-      }
-      let entries: Array<{ name: string; isFile(): boolean }>;
-      try {
-        entries = await readdir(absolute, { withFileTypes: true });
-      } catch {
-        throw new Error('无法读取目录: ' + absolute);
-      }
-      const files = entries
-        .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
-        .map((entry) => ({ filePath: join(absolute, entry.name) }));
-      if (files.length === 0) throw new Error('目录里没有 Claude Code 会话 (*.jsonl): ' + absolute);
-      if (sessionId !== undefined) {
-        const hit = files.find((file) => basename(file.filePath, '.jsonl') === sessionId)
-          ?? files.find((file) => basename(file.filePath, '.jsonl').startsWith(sessionId));
-        if (hit === undefined) throw new Error('目录里找不到会话: ' + sessionId);
-        return hit.filePath;
-      }
-      const latest = await newestFile(files);
-      if (latest === undefined) throw new Error('目录里没有可读的会话: ' + absolute);
-      return latest;
-    }
-  }
-
-  if (ref.endsWith('.jsonl')) throw new Error('找不到 Claude Code 会话文件: ' + absolute);
-  return findById(configRoot, ref);
-}
-
-// ---------------------------------------------------------------------------
-// 单会话
-// ---------------------------------------------------------------------------
-
-interface BuildOptions {
-  filePath: string;
-  badLines: number;
-  mtimeIso: string;
-  title?: string;
-}
-
-function buildBundle(parsed: ParsedRows, options: BuildOptions): IrBundle {
-  const { rows } = parsed;
-  const counters = emptyCounters();
-  const notices: IrNotice[] = [];
-  const events: IrEvent[] = [];
-  const projectSlug = basename(dirname(options.filePath));
-
-  let sessionId: string | undefined;
-  let cwd: string | undefined;
-  let model: string | undefined;
-  let version: string | undefined;
-  let firstTimestamp: string | undefined;
-  let lastTimestamp: string | undefined;
-  let customTitle: string | undefined;
-  let summaryTitle: string | undefined;
-  let agentName: string | undefined;
-  let firstUserText: string | undefined;
-  let lastPrompt: string | undefined;
-
-  // 第一遍：元数据 / 标题候选 / 时间范围（sidechain 不参与根会话）
+/** 扫元数据 / 标题候选 / 时间范围；根会话传过滤后的行，子会话传自己的 sidechain 行 */
+function scanSessionMeta(rows: ClaudeRow[], includeSidechain = false): SessionMetaScan {
+  const meta: SessionMetaScan = {};
   for (const row of rows) {
-    if (row.isSidechain === true) continue;
+    if (row.isSidechain === true && !includeSidechain) continue;
     const type = typeof row.type === 'string' ? row.type : '';
-    if (sessionId === undefined) sessionId = textOf(row.sessionId);
-    if (cwd === undefined) cwd = textOf(row.cwd);
-    if (version === undefined) version = textOf(row.version);
+    if (meta.sessionId === undefined) meta.sessionId = textOf(row.sessionId);
+    if (meta.cwd === undefined) meta.cwd = textOf(row.cwd);
+    if (meta.version === undefined) meta.version = textOf(row.version);
     if (type === 'assistant') {
       const candidate = textOf(row.message?.model);
-      if (candidate !== undefined) model = candidate;
+      if (candidate !== undefined) meta.model = candidate;
     }
-    if (type === 'custom-title') customTitle = textOf(row.customTitle) ?? customTitle;
-    if (type === 'summary') summaryTitle = textOf(row.summary) ?? summaryTitle;
-    if (type === 'agent-name') agentName = textOf(row.agentName) ?? agentName;
+    if (type === 'custom-title') meta.customTitle = textOf(row.customTitle) ?? meta.customTitle;
+    if (type === 'summary') meta.summaryTitle = textOf(row.summary) ?? meta.summaryTitle;
+    if (type === 'agent-name') meta.agentName = textOf(row.agentName) ?? meta.agentName;
     if (type === 'user') {
-      const text = realUserText(row);
+      const text = realUserText(row, includeSidechain);
       if (text !== undefined) {
-        if (firstUserText === undefined) firstUserText = text;
-        lastPrompt = text;
+        if (meta.firstUserText === undefined) meta.firstUserText = text;
+        meta.lastPrompt = text;
       }
     }
     const at = normalizeIso(row.timestamp);
     if (at !== undefined) {
-      if (firstTimestamp === undefined) firstTimestamp = at;
-      lastTimestamp = at;
+      if (meta.firstTimestamp === undefined) meta.firstTimestamp = at;
+      meta.lastTimestamp = at;
     }
   }
+  return meta;
+}
 
-  const resolvedSessionId = sessionId ?? basename(options.filePath, '.jsonl');
-  const resolvedCwd = cwd ?? cwdFromSlug(projectSlug);
-  const createdAt = firstTimestamp ?? options.mtimeIso;
-  const updatedAt = lastTimestamp ?? options.mtimeIso;
-  const title =
-    textOf(options.title) ??
-    customTitle ??
-    summaryTitle ??
-    agentName ??
-    (firstUserText !== undefined ? clip(firstUserText, 100) : undefined);
+interface EventSink {
+  events: IrEvent[];
+  counters: Counters;
+  /** 事件 id 前缀：根会话 claude，子会话 claude:c1 */
+  idPrefix: string;
+  fallbackAt: string;
+}
 
+/** 把 Claude 行映射成 IR 事件；调用方负责先按 sidechain / agentId 分好行 */
+function emitRows(rows: ClaudeRow[], sink: EventSink): void {
+  const counters = sink.counters;
   let eventIndex = 0;
   const push = (event: EventInput, at: string): void => {
     eventIndex += 1;
-    events.push({
+    sink.events.push({
       ...(event as IrEvent),
-      id: 'claude:e' + String(eventIndex).padStart(6, '0'),
-      parentId: events.length > 0 ? events[events.length - 1]!.id : null,
+      id: sink.idPrefix + ':e' + String(eventIndex).padStart(6, '0'),
+      parentId: sink.events.length > 0 ? sink.events[sink.events.length - 1]!.id : null,
       at,
     } as IrEvent);
   };
 
-  const fallbackAt = firstTimestamp ?? options.mtimeIso;
-
-  // 第二遍：事件映射
   for (const row of rows) {
-    if (row.isSidechain === true) {
-      counters.sidechainRows += 1;
-      continue;
-    }
     const type = typeof row.type === 'string' ? row.type : '';
-    const at = normalizeIso(row.timestamp) ?? fallbackAt;
+    const at = normalizeIso(row.timestamp) ?? sink.fallbackAt;
 
     if (type === 'user') {
       const content = row.message?.content;
@@ -593,25 +474,22 @@ function buildBundle(parsed: ParsedRows, options: BuildOptions): IrBundle {
 
     bump(counters.unknownLines, type.length > 0 ? type : '<missing>');
   }
+}
 
-  const missingResults = [...counters.calls].filter((id) => !counters.results.has(id)).length;
-
-  if (parsed.badLines > 0) {
+/** 把计数转成 notice；leading 用来插入 sidechain 归组结果等前置 notice */
+function buildNotices(counters: Counters, badLines: number, leading: IrNotice[] = []): IrNotice[] {
+  const notices: IrNotice[] = [];
+  if (badLines > 0) {
     notices.push({
       code: 'claude.bad-json-lines',
       message: '无法解析的 JSONL 行已跳过（可能写到一半或文件损坏）',
-      count: parsed.badLines,
+      count: badLines,
       severity: 'warning',
     });
   }
-  if (counters.sidechainRows > 0) {
-    notices.push({
-      code: 'claude.sidechain-skipped',
-      message: 'isSidechain 行属于子代理，根会话里已跳过；若同目录存在独立 sidechain transcript 需单独读取',
-      count: counters.sidechainRows,
-      severity: 'warning',
-    });
-  }
+  notices.push(...leading);
+
+  const missingResults = [...counters.calls].filter((id) => !counters.results.has(id)).length;
   if (counters.orphanResults > 0) {
     notices.push({
       code: 'claude.orphan-tool-result',
@@ -647,6 +525,381 @@ function buildBundle(parsed: ParsedRows, options: BuildOptions): IrBundle {
   if (counters.imageParts > 0) {
     notices.push({ code: 'claude.image-block', message: '图片 block 以 data URI / 引用保留，跨 agent 导出时可能丢失', count: counters.imageParts, severity: 'info' });
   }
+  return notices;
+}
+
+// ---------------------------------------------------------------------------
+// sidechain 分组
+// ---------------------------------------------------------------------------
+
+interface SidechainGroup {
+  key: string;
+  agentId?: string;
+  rootUuid?: string;
+  rows: ClaudeRow[];
+  firstIndex: number;
+}
+
+interface SidechainGrouping {
+  groups: SidechainGroup[];
+  /** 既没有 agentId、也没有任何 parentUuid 的孤立 sidechain 行 */
+  ungrouped: ClaudeRow[];
+}
+
+/**
+ * 同一父会话里的 sidechain 行 -> 子会话分组。
+ * - 有 agentId 的行按 agentId 归组（同一 agent 的行即使被主会话行穿插也合并）；
+ * - 没有 agentId 的行按 sidechain 行之间的 parentUuid 连通关系归组；
+ * - 两者都没有的孤立行无法归组，交给调用方记 warning。
+ */
+function groupSidechainRows(rows: ClaudeRow[]): SidechainGrouping {
+  const sideRows = rows.filter((row) => row.isSidechain === true);
+  if (sideRows.length === 0) return { groups: [], ungrouped: [] };
+
+  const order = new Map<ClaudeRow, number>();
+  sideRows.forEach((row, index) => order.set(row, index));
+
+  const parents = sideRows.map((_, index) => index);
+  const find = (index: number): number => {
+    let root = index;
+    while (parents[root] !== root) root = parents[root]!;
+    let cursor = index;
+    while (parents[cursor] !== cursor) {
+      const next = parents[cursor]!;
+      parents[cursor] = root;
+      cursor = next;
+    }
+    return root;
+  };
+  const union = (a: number, b: number): void => {
+    const rootA = find(a);
+    const rootB = find(b);
+    if (rootA === rootB) return;
+    // 文件里更早的行为组根，保证分组稳定
+    if (rootA < rootB) parents[rootB] = rootA;
+    else parents[rootA] = rootB;
+  };
+
+  const indexByUuid = new Map<string, number>();
+  for (const [index, row] of sideRows.entries()) {
+    const uuid = textOf(row.uuid);
+    if (uuid !== undefined && !indexByUuid.has(uuid)) indexByUuid.set(uuid, index);
+  }
+  for (const [index, row] of sideRows.entries()) {
+    const parentUuid = textOf(row.parentUuid);
+    if (parentUuid === undefined) continue;
+    const parentIndex = indexByUuid.get(parentUuid);
+    if (parentIndex !== undefined) union(index, parentIndex);
+  }
+
+  const components = new Map<number, number[]>();
+  for (let index = 0; index < sideRows.length; index += 1) {
+    const root = find(index);
+    const members = components.get(root);
+    if (members === undefined) components.set(root, [index]);
+    else members.push(index);
+  }
+
+  const byKey = new Map<string, SidechainGroup>();
+  const ungrouped: ClaudeRow[] = [];
+  const addGroup = (key: string, indexes: number[], identity: { agentId?: string; rootUuid?: string }): void => {
+    const existing = byKey.get(key);
+    const group = existing ?? { key, agentId: identity.agentId, rootUuid: identity.rootUuid, rows: [], firstIndex: indexes[0]! };
+    for (const index of indexes) group.rows.push(sideRows[index]!);
+    group.firstIndex = Math.min(group.firstIndex, indexes[0]!);
+    if (group.agentId === undefined) group.agentId = identity.agentId;
+    if (group.rootUuid === undefined) group.rootUuid = identity.rootUuid;
+    if (existing === undefined) byKey.set(key, group);
+  };
+
+  for (const indexes of components.values()) {
+    const componentRows = indexes.map((index) => sideRows[index]!);
+    const agentIds: string[] = [];
+    for (const row of componentRows) {
+      const agentId = textOf(row.agentId);
+      if (agentId !== undefined && !agentIds.includes(agentId)) agentIds.push(agentId);
+    }
+
+    if (agentIds.length === 0) {
+      const linked = componentRows.some((row) => textOf(row.parentUuid) !== undefined);
+      if (!linked) {
+        ungrouped.push(...componentRows);
+        continue;
+      }
+      const first = componentRows[0]!;
+      const rootUuid = textOf(first.uuid) ?? textOf(first.parentUuid);
+      // 没有 uuid 时用“行号”做分组键，避免两条都只指向同一个主会话 parentUuid 的链被误合并
+      const key = textOf(first.uuid) ?? 'row-' + String(indexes[0]! + 1);
+      addGroup('chain:' + key, indexes, { rootUuid });
+      continue;
+    }
+
+    if (agentIds.length === 1) {
+      addGroup('agent:' + agentIds[0]!, indexes, { agentId: agentIds[0]! });
+      continue;
+    }
+
+    // 异常数据：同一个 parentUuid 连通块里混了多个 agentId。
+    // 各自按 agentId 分组，缺 agentId 的行归到文件里先出现的子代理。
+    for (const agentId of agentIds) {
+      const own = componentRows.filter((row) => textOf(row.agentId) === agentId);
+      addGroup('agent:' + agentId, own.map((row) => order.get(row)!), { agentId });
+    }
+    const unassigned = componentRows.filter((row) => textOf(row.agentId) === undefined);
+    if (unassigned.length > 0) {
+      addGroup('agent:' + agentIds[0]!, unassigned.map((row) => order.get(row)!), { agentId: agentIds[0]! });
+    }
+  }
+
+  const groups = [...byKey.values()];
+  for (const group of groups) group.rows.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+  groups.sort((a, b) => a.firstIndex - b.firstIndex);
+  ungrouped.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+  return { groups, ungrouped };
+}
+
+// ---------------------------------------------------------------------------
+// 输入解析
+// ---------------------------------------------------------------------------
+
+async function listProjectFiles(configRoot: string): Promise<ClaudeSessionFile[]> {
+  const root = projectsDir(configRoot);
+  const out: ClaudeSessionFile[] = [];
+  let projects: Array<{ name: string; isDirectory(): boolean }>;
+  try {
+    projects = await readdir(root, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const project of projects) {
+    if (!project.isDirectory()) continue;
+    const dir = join(root, project.name);
+    let entries: Array<{ name: string; isFile(): boolean }>;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+      out.push({
+        filePath: join(dir, entry.name),
+        sessionId: entry.name.slice(0, -'.jsonl'.length),
+        projectSlug: project.name,
+      });
+    }
+  }
+  return out;
+}
+
+async function newestFile(files: Array<{ filePath: string }>): Promise<string | undefined> {
+  let newest: { filePath: string; mtimeMs: number } | undefined;
+  for (const file of files) {
+    const info = await stat(file.filePath).catch(() => undefined);
+    if (info === undefined || !info.isFile()) continue;
+    if (newest === undefined || info.mtimeMs > newest.mtimeMs) newest = { filePath: file.filePath, mtimeMs: info.mtimeMs };
+  }
+  return newest?.filePath;
+}
+
+async function findById(configRoot: string, idRef: string): Promise<string> {
+  const files = await listProjectFiles(configRoot);
+  const exact = files.filter((file) => file.sessionId === idRef);
+  if (exact.length > 0) {
+    // 同一 id 被复制到多个项目目录时取最近活动的那份
+    const latest = await newestFile(exact);
+    if (latest !== undefined) return latest;
+  }
+  const prefix = files.filter((file) => file.sessionId.startsWith(idRef));
+  if (prefix.length === 1) return prefix[0]!.filePath;
+  if (prefix.length > 1) {
+    throw new Error('Claude Code 会话 id 前缀有歧义: ' + idRef + ' -> ' + prefix.map((file) => file.sessionId).join(', '));
+  }
+  throw new Error('找不到 Claude Code 会话: ' + idRef + '（数据目录 ' + projectsDir(configRoot) + '）');
+}
+
+async function resolveSessionPath(input: string, configRoot: string, sessionId?: string): Promise<string> {
+  const ref = input.trim();
+  if (ref.length === 0) throw new Error('readClaudeSession: input 为空');
+  if (ref === 'last') {
+    const latest = await newestFile(await listProjectFiles(configRoot));
+    if (latest === undefined) throw new Error('找不到任何 Claude Code 会话: ' + projectsDir(configRoot));
+    return latest;
+  }
+
+  const absolute = resolve(ref);
+  if (existsSync(absolute)) {
+    const info = await stat(absolute);
+    if (info.isFile()) return absolute;
+    if (info.isDirectory()) {
+      if (existsSync(join(absolute, 'projects'))) {
+        if (sessionId !== undefined) return findById(absolute, sessionId);
+        const latest = await newestFile(await listProjectFiles(absolute));
+        if (latest === undefined) throw new Error('配置目录里没有会话: ' + absolute);
+        return latest;
+      }
+      let entries: Array<{ name: string; isFile(): boolean }>;
+      try {
+        entries = await readdir(absolute, { withFileTypes: true });
+      } catch {
+        throw new Error('无法读取目录: ' + absolute);
+      }
+      const files = entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
+        .map((entry) => ({ filePath: join(absolute, entry.name) }));
+      if (files.length === 0) throw new Error('目录里没有 Claude Code 会话 (*.jsonl): ' + absolute);
+      if (sessionId !== undefined) {
+        const hit = files.find((file) => basename(file.filePath, '.jsonl') === sessionId)
+          ?? files.find((file) => basename(file.filePath, '.jsonl').startsWith(sessionId));
+        if (hit === undefined) throw new Error('目录里找不到会话: ' + sessionId);
+        return hit.filePath;
+      }
+      const latest = await newestFile(files);
+      if (latest === undefined) throw new Error('目录里没有可读的会话: ' + absolute);
+      return latest;
+    }
+  }
+
+  if (ref.endsWith('.jsonl')) throw new Error('找不到 Claude Code 会话文件: ' + absolute);
+  return findById(configRoot, ref);
+}
+
+// ---------------------------------------------------------------------------
+// 单会话
+// ---------------------------------------------------------------------------
+
+interface BuildOptions {
+  filePath: string;
+  badLines: number;
+  mtimeIso: string;
+  title?: string;
+}
+
+/** 子代理 label：agent-<agentId 前 8 位>，没有 agentId 时用 group root uuid */
+function childLabel(identity: string | undefined, index: number): string {
+  if (identity === undefined) return 'agent-sc' + String(index + 1);
+  const compact = identity.replace(/[^0-9a-z]/giu, '');
+  if (compact.length === 0) return 'agent-sc' + String(index + 1);
+  return 'agent-' + compact.slice(0, 8);
+}
+
+function uniqueChildLabel(identity: string | undefined, index: number, used: Set<string>): string {
+  const base = childLabel(identity, index);
+  let label = base;
+  let suffix = 2;
+  while (used.has(label)) {
+    label = base + '-' + String(suffix);
+    suffix += 1;
+  }
+  used.add(label);
+  return label;
+}
+
+/** 每个 sidechain 分组 -> 一个 IrChildSession；事件链在子会话内部重新从 null 开始 */
+function buildChildSessions(
+  groups: SidechainGroup[],
+  root: IrSession,
+  options: BuildOptions,
+  rootVersion: string | undefined,
+): IrChildSession[] {
+  const usedLabels = new Set<string>();
+  return groups.map((group, index) => {
+    const meta = scanSessionMeta(group.rows, true);
+    const counters = emptyCounters();
+    const events: IrEvent[] = [];
+    const fallbackAt = meta.firstTimestamp ?? root.meta.createdAt ?? options.mtimeIso;
+    emitRows(group.rows, {
+      events,
+      counters,
+      idPrefix: 'claude:c' + String(index + 1),
+      fallbackAt,
+    });
+
+    const identity = group.agentId ?? group.rootUuid;
+    const label = uniqueChildLabel(identity, index, usedLabels);
+    const childNativeId = identity ?? 'sidechain-' + String(group.firstIndex + 1);
+    const version = meta.version ?? rootVersion;
+    const cwd = meta.cwd ?? root.meta.cwd;
+    const model = meta.model ?? root.meta.model;
+    const title =
+      meta.customTitle ??
+      meta.summaryTitle ??
+      meta.agentName ??
+      (meta.firstUserText !== undefined ? clip(meta.firstUserText, 100) : label);
+    const createdAt = meta.firstTimestamp ?? root.meta.createdAt ?? options.mtimeIso;
+    const updatedAt = meta.lastTimestamp ?? root.meta.updatedAt ?? createdAt;
+
+    const session: IrSession = {
+      id: root.id + ':' + (group.agentId !== undefined ? 'agent-' + group.agentId : 'sidechain-' + childNativeId),
+      source: {
+        agent: 'claude-code',
+        nativeSessionId: childNativeId,
+        nativePath: options.filePath,
+        ...(version !== undefined ? { cliVersion: version } : {}),
+      },
+      meta: {
+        ...(cwd !== undefined ? { cwd } : {}),
+        title,
+        createdAt,
+        updatedAt,
+        ...(model !== undefined ? { model } : {}),
+        ...(meta.lastPrompt !== undefined ? { lastPrompt: clip(meta.lastPrompt, 200) } : {}),
+      },
+      events,
+      head: events.length > 0 ? events[events.length - 1]!.id : null,
+      notices: buildNotices(counters, 0),
+    };
+
+    return { session, parentSessionId: root.id, label };
+  });
+}
+
+function buildBundle(parsed: ParsedRows, options: BuildOptions): IrBundle {
+  const { rows } = parsed;
+  const mainRows = rows.filter((row) => row.isSidechain !== true);
+  const sidechain = groupSidechainRows(rows);
+  const counters = emptyCounters();
+  const events: IrEvent[] = [];
+  const projectSlug = basename(dirname(options.filePath));
+  const meta = scanSessionMeta(mainRows);
+
+  const resolvedSessionId = meta.sessionId ?? basename(options.filePath, '.jsonl');
+  const resolvedCwd = meta.cwd ?? cwdFromSlug(projectSlug);
+  const createdAt = meta.firstTimestamp ?? options.mtimeIso;
+  const updatedAt = meta.lastTimestamp ?? options.mtimeIso;
+  const title =
+    textOf(options.title) ??
+    meta.customTitle ??
+    meta.summaryTitle ??
+    meta.agentName ??
+    (meta.firstUserText !== undefined ? clip(meta.firstUserText, 100) : undefined);
+
+  // 主会话只喂非 sidechain 行；事件 id / parentId 链与旧实现完全一致
+  emitRows(mainRows, {
+    events,
+    counters,
+    idPrefix: 'claude',
+    fallbackAt: meta.firstTimestamp ?? options.mtimeIso,
+  });
+
+  const sidechainNotices: IrNotice[] = [];
+  if (sidechain.groups.length > 0) {
+    sidechainNotices.push({
+      code: 'claude.sidechain-children',
+      message: '已作为子会话读取（' + String(sidechain.groups.length) + ' 个子代理）',
+      count: sidechain.groups.length,
+      severity: 'info',
+    });
+  }
+  if (sidechain.ungrouped.length > 0) {
+    sidechainNotices.push({
+      code: 'claude.sidechain-skipped',
+      message: '无法归组的 isSidechain 行已跳过（缺少 agentId 且没有 sidechain parentUuid）',
+      count: sidechain.ungrouped.length,
+      severity: 'warning',
+    });
+  }
+  const notices = buildNotices(counters, parsed.badLines, sidechainNotices);
 
   const session: IrSession = {
     id: 'claude-code:' + resolvedSessionId,
@@ -654,22 +907,23 @@ function buildBundle(parsed: ParsedRows, options: BuildOptions): IrBundle {
       agent: 'claude-code',
       nativeSessionId: resolvedSessionId,
       nativePath: options.filePath,
-      ...(version !== undefined ? { cliVersion: version } : {}),
+      ...(meta.version !== undefined ? { cliVersion: meta.version } : {}),
     },
     meta: {
       ...(resolvedCwd !== undefined ? { cwd: resolvedCwd } : {}),
       ...(title !== undefined ? { title } : {}),
       createdAt,
       updatedAt,
-      ...(model !== undefined ? { model } : {}),
-      ...(lastPrompt !== undefined ? { lastPrompt: clip(lastPrompt, 200) } : {}),
+      ...(meta.model !== undefined ? { model: meta.model } : {}),
+      ...(meta.lastPrompt !== undefined ? { lastPrompt: clip(meta.lastPrompt, 200) } : {}),
     },
     events,
     head: events.length > 0 ? events[events.length - 1]!.id : null,
     notices,
   };
 
-  return { irVersion: IR_VERSION, createdAt: new Date().toISOString(), root: session, children: [] };
+  const children = buildChildSessions(sidechain.groups, session, options, meta.version);
+  return { irVersion: IR_VERSION, createdAt: new Date().toISOString(), root: session, children };
 }
 
 /** 读一个 Claude Code 会话：文件路径 / session id（或唯一前缀）/ 配置目录 / 'last' */
