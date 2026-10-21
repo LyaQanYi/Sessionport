@@ -233,7 +233,7 @@ test('sidechain：按 agentId 分成子会话，主会话事件保持不变', as
     const info = bundle.root.notices.find((notice) => notice.code === 'claude.sidechain-children');
     assert.equal(info?.count, 2);
     assert.equal(info?.severity, 'info');
-    assert.match(info?.message ?? '', /已作为子会话读取（2 个子代理）/);
+    assert.match(info?.message ?? '', /sidechain 镜像行已归组（2 组）/);
     const skipped = bundle.root.notices.find((notice) => notice.code === 'claude.sidechain-skipped');
     assert.equal(skipped?.count, 1);
     assert.equal(skipped?.severity, 'warning');

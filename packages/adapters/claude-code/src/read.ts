@@ -15,6 +15,9 @@
  * - custom-title / summary / agent-name 只用于标题，不产生事件
  * - isSidechain 行属于子代理：按 agentId / parentUuid 连通关系分组为 bundle.children，
  *   根会话不再包含这些行；无法归组的行记 warning
+ * - <sessionId>/subagents 下（含 workflows 子目录）的 agent-<agentId>.jsonl 是子代理权威 transcript（真实 Claude
+ *   会把它们单独落盘，workflows 还会再嵌套一层），优先于主文件里的 sidechain 镜像行；
+ *   agent-*.meta.json 的 description / toolUseId / agentType 用于标题、viaToolCallId 和 profile
  *
  * 容错：坏 JSON 行跳过并计数；未知行/未知 content block 记 notice，不抛错。
  */
@@ -538,6 +541,16 @@ interface SidechainGroup {
   rootUuid?: string;
   rows: ClaudeRow[];
   firstIndex: number;
+  /** 子代理 transcript 的磁盘路径（主文件里的 sidechain 镜像行为空） */
+  filePath?: string;
+  /** 子代理类型，落到 IrMeta.profile */
+  profile?: string;
+  /** 优先于首条用户文本的标题（meta.json 的 description / workflow label） */
+  titleHint?: string;
+  /** 触发子代理的工具调用 id（meta.json 的 toolUseId） */
+  viaToolCallId?: string;
+  /** 子代理 transcript 里的坏行数 */
+  badLines?: number;
 }
 
 interface SidechainGrouping {
@@ -656,6 +669,192 @@ function groupSidechainRows(rows: ClaudeRow[]): SidechainGrouping {
   groups.sort((a, b) => a.firstIndex - b.firstIndex);
   ungrouped.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
   return { groups, ungrouped };
+}
+
+// ---------------------------------------------------------------------------
+// 磁盘上的子代理 transcript
+// ---------------------------------------------------------------------------
+
+/** <sessionId>/subagents 下任意层级（workflows 会再嵌套一层）的 agent-<agentId>.jsonl，真实 Claude 落盘位置 */
+const SUBAGENT_FILE_PATTERN = /^agent-([A-Za-z0-9]+)\.jsonl$/u;
+const SUBAGENT_SCAN_MAX_DEPTH = 4;
+
+interface SubagentSidecar {
+  agentType?: string;
+  description?: string;
+  toolUseId?: string;
+}
+
+interface DiskSubagent {
+  agentId: string;
+  filePath: string;
+  rows: ClaudeRow[];
+  badLines: number;
+  sidecar: SubagentSidecar;
+  /** workflows/<wf>/journal.jsonl 里的 started label（比首条用户文本更适合当标题） */
+  workflowLabel?: string;
+}
+
+async function collectSubagentFiles(dir: string, depth = 0): Promise<string[]> {
+  if (depth > SUBAGENT_SCAN_MAX_DEPTH) return [];
+  let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+  const out: string[] = [];
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await collectSubagentFiles(full, depth + 1)));
+    else if (entry.isFile() && SUBAGENT_FILE_PATTERN.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+async function readSubagentSidecar(filePath: string): Promise<SubagentSidecar> {
+  let raw: string;
+  try {
+    raw = await readFile(filePath.replace(/\.jsonl$/u, '.meta.json'), 'utf8');
+  } catch {
+    return {};
+  }
+  const record = recordOf(JSON.parse(raw) as unknown);
+  if (record === undefined) return {};
+  const sidecar: SubagentSidecar = {};
+  const agentType = textOf(record.agentType);
+  if (agentType !== undefined) sidecar.agentType = agentType;
+  const description = textOf(record.description);
+  if (description !== undefined) sidecar.description = description;
+  const toolUseId = textOf(record.toolUseId);
+  if (toolUseId !== undefined) sidecar.toolUseId = toolUseId;
+  return sidecar;
+}
+
+/** workflow journal：agentId -> started 行的 label */
+async function readWorkflowLabel(filePath: string, agentId: string): Promise<string | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(join(dirname(filePath), 'journal.jsonl'), 'utf8');
+  } catch {
+    return undefined;
+  }
+  for (const line of raw.split('\n')) {
+    if (line.trim().length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const record = recordOf(parsed);
+    if (record === undefined) continue;
+    if (textOf(record.type) !== 'started') continue;
+    if (textOf(record.agentId) !== agentId) continue;
+    const label = textOf(record.label);
+    if (label !== undefined) return label;
+  }
+  return undefined;
+}
+
+/**
+ * 扫 <sessionId>/subagents：Claude 把子代理（含 workflow 子代理）写成独立 transcript。
+ * 老版本 / 部分构建只把 sidechain 镜像写进主文件，那时返回空数组，行为保持原样。
+ */
+async function discoverSubagentTranscripts(filePath: string): Promise<DiskSubagent[]> {
+  const root = join(dirname(filePath), basename(filePath, '.jsonl'), 'subagents');
+  if (!existsSync(root)) return [];
+  const byAgent = new Map<string, DiskSubagent>();
+  for (const subagentPath of await collectSubagentFiles(root)) {
+    let text: string;
+    try {
+      text = await readFile(subagentPath, 'utf8');
+    } catch {
+      continue;
+    }
+    const parsed = parseJsonLines(text);
+    if (parsed.rows.length === 0) continue;
+    const fromName = SUBAGENT_FILE_PATTERN.exec(basename(subagentPath))?.[1];
+    const fromRows = parsed.rows.map((row) => textOf(row.agentId)).find((value) => value !== undefined);
+    const agentId = fromName ?? fromRows;
+    if (agentId === undefined) continue;
+    const existing = byAgent.get(agentId);
+    if (existing !== undefined) {
+      // 同一个 agent 出现多份（重复拷贝 / 重试）时合并，保留先发现的那份路径
+      existing.rows.push(...parsed.rows);
+      existing.badLines += parsed.badLines;
+      continue;
+    }
+    const sidecar = await readSubagentSidecar(subagentPath);
+    const workflowLabel = await readWorkflowLabel(subagentPath, agentId);
+    const transcript: DiskSubagent = { agentId, filePath: subagentPath, rows: parsed.rows, badLines: parsed.badLines, sidecar };
+    if (workflowLabel !== undefined) transcript.workflowLabel = workflowLabel;
+    byAgent.set(agentId, transcript);
+  }
+  return [...byAgent.values()];
+}
+
+interface DiskMergeResult {
+  replaced: number;
+  added: number;
+  extraInlineRows: number;
+}
+
+/**
+ * 磁盘 transcript（权威）与主文件里的 sidechain 镜像行合并：
+ * - 同一个 agentId：以磁盘为准；镜像里磁盘没有的行追加到末尾（极少见，避免丢数据）；
+ * - 只在磁盘上存在：新增子会话，排在内联分组之后。
+ */
+function mergeDiskSubagents(groups: SidechainGroup[], disk: DiskSubagent[]): DiskMergeResult {
+  const byAgent = new Map<string, SidechainGroup>();
+  for (const group of groups) {
+    if (group.agentId !== undefined && !byAgent.has(group.agentId)) byAgent.set(group.agentId, group);
+  }
+  let replaced = 0;
+  let added = 0;
+  let extraInlineRows = 0;
+  let nextIndex = 1_000_000;
+  for (const transcript of disk) {
+    const titleHint = transcript.sidecar.description ?? transcript.workflowLabel;
+    const existing = byAgent.get(transcript.agentId);
+    if (existing === undefined) {
+      const group: SidechainGroup = {
+        key: 'agent:' + transcript.agentId,
+        agentId: transcript.agentId,
+        rows: [...transcript.rows],
+        firstIndex: nextIndex,
+        filePath: transcript.filePath,
+        badLines: transcript.badLines,
+      };
+      if (transcript.sidecar.agentType !== undefined) group.profile = transcript.sidecar.agentType;
+      if (titleHint !== undefined) group.titleHint = titleHint;
+      if (transcript.sidecar.toolUseId !== undefined) group.viaToolCallId = transcript.sidecar.toolUseId;
+      nextIndex += 1;
+      groups.push(group);
+      byAgent.set(transcript.agentId, group);
+      added += 1;
+      continue;
+    }
+    const seen = new Set<string>();
+    for (const row of transcript.rows) {
+      const uuid = textOf(row.uuid);
+      if (uuid !== undefined) seen.add(uuid);
+    }
+    const extra = existing.rows.filter((row) => {
+      const uuid = textOf(row.uuid);
+      return uuid !== undefined && !seen.has(uuid);
+    });
+    existing.rows = [...transcript.rows, ...extra];
+    existing.filePath = transcript.filePath;
+    existing.badLines = (existing.badLines ?? 0) + transcript.badLines;
+    if (transcript.sidecar.agentType !== undefined) existing.profile = transcript.sidecar.agentType;
+    if (titleHint !== undefined) existing.titleHint = titleHint;
+    if (transcript.sidecar.toolUseId !== undefined) existing.viaToolCallId = transcript.sidecar.toolUseId;
+    replaced += 1;
+    extraInlineRows += extra.length;
+  }
+  return { replaced, added, extraInlineRows };
 }
 
 // ---------------------------------------------------------------------------
@@ -825,6 +1024,7 @@ function buildChildSessions(
       meta.customTitle ??
       meta.summaryTitle ??
       meta.agentName ??
+      group.titleHint ??
       (meta.firstUserText !== undefined ? clip(meta.firstUserText, 100) : label);
     const createdAt = meta.firstTimestamp ?? root.meta.createdAt ?? options.mtimeIso;
     const updatedAt = meta.lastTimestamp ?? root.meta.updatedAt ?? createdAt;
@@ -834,7 +1034,7 @@ function buildChildSessions(
       source: {
         agent: 'claude-code',
         nativeSessionId: childNativeId,
-        nativePath: options.filePath,
+        nativePath: group.filePath ?? options.filePath,
         ...(version !== undefined ? { cliVersion: version } : {}),
       },
       meta: {
@@ -843,21 +1043,29 @@ function buildChildSessions(
         createdAt,
         updatedAt,
         ...(model !== undefined ? { model } : {}),
+        ...(group.profile !== undefined ? { profile: group.profile } : {}),
         ...(meta.lastPrompt !== undefined ? { lastPrompt: clip(meta.lastPrompt, 200) } : {}),
       },
       events,
       head: events.length > 0 ? events[events.length - 1]!.id : null,
-      notices: buildNotices(counters, 0),
+      notices: buildNotices(counters, group.badLines ?? 0),
     };
 
-    return { session, parentSessionId: root.id, label };
+    return {
+      session,
+      parentSessionId: root.id,
+      ...(group.viaToolCallId !== undefined ? { viaToolCallId: group.viaToolCallId } : {}),
+      label,
+    };
   });
 }
 
-function buildBundle(parsed: ParsedRows, options: BuildOptions): IrBundle {
+function buildBundle(parsed: ParsedRows, options: BuildOptions, diskSubagents: DiskSubagent[] = []): IrBundle {
   const { rows } = parsed;
   const mainRows = rows.filter((row) => row.isSidechain !== true);
   const sidechain = groupSidechainRows(rows);
+  const inlineGroupCount = sidechain.groups.length;
+  const diskMerge = mergeDiskSubagents(sidechain.groups, diskSubagents);
   const counters = emptyCounters();
   const events: IrEvent[] = [];
   const projectSlug = basename(dirname(options.filePath));
@@ -883,11 +1091,27 @@ function buildBundle(parsed: ParsedRows, options: BuildOptions): IrBundle {
   });
 
   const sidechainNotices: IrNotice[] = [];
-  if (sidechain.groups.length > 0) {
+  if (diskSubagents.length > 0) {
+    sidechainNotices.push({
+      code: 'claude.subagent-transcripts',
+      message: '已从 subagents 目录读取 ' + String(diskSubagents.length) + ' 份子代理 transcript（磁盘为权威）',
+      count: diskSubagents.length,
+      severity: 'info',
+    });
+  }
+  if (diskMerge.extraInlineRows > 0) {
+    sidechainNotices.push({
+      code: 'claude.subagent-mirror-extra-rows',
+      message: '磁盘 transcript 之外还有主文件里的镜像行，已追加到子会话末尾',
+      count: diskMerge.extraInlineRows,
+      severity: 'warning',
+    });
+  }
+  if (inlineGroupCount > 0) {
     sidechainNotices.push({
       code: 'claude.sidechain-children',
-      message: '已作为子会话读取（' + String(sidechain.groups.length) + ' 个子代理）',
-      count: sidechain.groups.length,
+      message: '主文件里的 sidechain 镜像行已归组（' + String(inlineGroupCount) + ' 组）',
+      count: inlineGroupCount,
       severity: 'info',
     });
   }
@@ -933,10 +1157,15 @@ export async function readClaudeSession(input: string, options: ReadClaudeOption
   const info = await stat(filePath).catch(() => undefined);
   const text = await readFile(filePath, 'utf8');
   const parsed = parseJsonLines(text);
-  return buildBundle(parsed, {
-    filePath,
-    badLines: parsed.badLines,
-    mtimeIso: info?.mtime.toISOString() ?? new Date().toISOString(),
-    title: options.title,
-  });
+  const diskSubagents = await discoverSubagentTranscripts(filePath);
+  return buildBundle(
+    parsed,
+    {
+      filePath,
+      badLines: parsed.badLines,
+      mtimeIso: info?.mtime.toISOString() ?? new Date().toISOString(),
+      title: options.title,
+    },
+    diskSubagents,
+  );
 }
