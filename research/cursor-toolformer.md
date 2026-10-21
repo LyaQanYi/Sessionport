@@ -84,8 +84,9 @@ case ct.READ_FILE_V2:
           result: e.result ? JPe.fromJsonString(e.result) : void 0};
 ```
 
-相反方向 `$5n` 返回的对象字段是 `params: h`、`result: g`（protoString 序列化后的字符串），
-落库前再走 `wQd({forStorage:true})`，把 `toolCall` 转成 `toolCallBinary` 并删除 `toolCall`。
+相反方向 `$5n` 返回的对象字段是 `params: h`、`result: g`（protobuf-es 的 message 对象），
+落库前再走 `wQd({forStorage:true})`（以及 `HCt` 的 `toJsonString()`）把 message 序列化成
+protobuf JSON 字符串，把 `toolCall` 转成 `toolCallBinary` 并删除 `toolCall`。
 所以 UI 侧拿到的是解码后的 message 对象，存储侧是 JSON 字符串。
 
 ## 2. aiserver.v1.ClientSideToolV2 枚举（实测 bundle）
@@ -265,7 +266,7 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 ### 未验证（需要人工在 Cursor 里确认）
 
 1. **UI 渲染**：导入会话里的工具卡片是否显示命令/路径/结果。当前只写 `params`/`result`，
-   **没有写 `toolCallBinary``**；如果某个工具卡片依赖 `toolFormerData.toolCall`（而不是
+   **没有写 `toolCallBinary`**；如果某个工具卡片依赖 `toolFormerData.toolCall`（而不是
    params/result），它可能退化成“Ran tool”/空卡片。需要人工打开会话确认。
 2. **app 是否回写/删除 `_sessionport`**：打开会话、发消息、退出 app 后再读库对比。
 3. **edit 的 diff 卡片**：没有 before/after 全文与 `beforeContentId`/`afterContentId`，
