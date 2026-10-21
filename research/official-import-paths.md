@@ -73,6 +73,10 @@ environment history（远端环境历史，不是本地 chat）。结论：**没
 **结论**：官方导入路径在正式版被开发者门槛挡住，暂不作为 sessionport 的方案；继续使用已验证的
 直接写入 `state.vscdb`（`push --to cursor --confirm-real`）。若未来 Cursor 把导入转为用户功能，再切回官方入口。
 
+**补充（2026-10-21，拿到真实样本后）**：导出 JSON 的格式已解析，见
+[cursor-chat-export-format.md](./cursor-chat-export-format.md)。结论不变：导出格式可逆向、但从 IR 生成
+成本高且导入仍 dev-only，因此不推进官方导入。
+
 ## 3. sessionport 如何复用
 
 新增命令（不重复实现官方逻辑，只做「准备 + 引导 + 验证」）：
