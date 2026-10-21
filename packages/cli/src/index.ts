@@ -259,6 +259,14 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
   const to = typeof values.to === 'string' ? values.to : '';
   if (!to) fail('push 需要 --to <agent>（claude-code / command-code / dsh）');
   const bundle = await loadBundle(source);
+  const totalEvents = bundle.root.events.length + bundle.children.reduce((sum, child) => sum + child.session.events.length, 0);
+  if (to === 'dsh' && values.slim !== true && values.compact !== true && totalEvents > 400) {
+    process.stderr.write(
+      '提示：会话较大（' + totalEvents + ' 事件），全量导入可能超出目标模型上下文。' +
+        '建议加 --compact（保留完整日志 + 压缩上下文），高保真可用 --compact --summary-llm claude。\n',
+    );
+  }
+
   if (typeof values['write-ir'] === 'string') {
     writeFileSync(values['write-ir'] as string, JSON.stringify(bundle, null, 2) + '\n', 'utf8');
   }

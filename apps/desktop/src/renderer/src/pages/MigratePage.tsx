@@ -25,6 +25,7 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
   const [register, setRegister] = useState(true);
   const [includeChildren, setIncludeChildren] = useState(false);
   const [dshMode, setDshMode] = useState<'full' | 'slim' | 'compact'>('compact');
+  const [summaryEngine, setSummaryEngine] = useState<'off' | 'claude' | 'codex'>('off');
   const [mode, setMode] = useState<DivergedMode>('auto');
   const [officialResults, setOfficialResults] = useState<Partial<Record<OfficialTarget, OfficialVerifyRow>>>({});
   const officialQuery = useQuery({ queryKey: ['official'], queryFn: api.officialList });
@@ -44,7 +45,13 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
   const targets = writable.length > 0 ? writable : writableAll;
 
   useEffect(() => {
-    if (target === null && targets.length > 0) setTarget(targets[0] ?? null);
+    if (target !== null) return;
+    const preset = window.sessionport?.initialTarget;
+    if (preset !== null && preset !== undefined && targets.includes(preset as AgentId)) {
+      setTarget(preset as AgentId);
+      return;
+    }
+    if (targets.length > 0) setTarget(targets[0] ?? null);
   }, [target, targets]);
 
   const preview = useMutation({
@@ -52,7 +59,15 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
       api.previewMigration(source!.agent, sessionRefOf(source!), target!, {
         register,
         includeChildren,
-        ...(target === 'dsh' ? { slim: dshMode === 'slim', compact: dshMode === 'compact' } : {}),
+        ...(target === 'dsh'
+          ? {
+              slim: dshMode === 'slim',
+              compact: dshMode === 'compact',
+              ...(summaryEngine === 'off'
+                ? {}
+                : { summaryCommand: summaryEngine === 'claude' ? 'claude -p' : 'codex exec -' }),
+            }
+          : {}),
       }),
   });
   const run = useMutation({
@@ -64,7 +79,15 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
         register,
         includeChildren,
         onDiverged: mode,
-        ...(target === 'dsh' ? { slim: dshMode === 'slim', compact: dshMode === 'compact' } : {}),
+        ...(target === 'dsh'
+          ? {
+              slim: dshMode === 'slim',
+              compact: dshMode === 'compact',
+              ...(summaryEngine === 'off'
+                ? {}
+                : { summaryCommand: summaryEngine === 'claude' ? 'claude -p' : 'codex exec -' }),
+            }
+          : {}),
       }),
     onSuccess: (result) => {
       if (!result.refused) preview.mutate();
@@ -185,6 +208,25 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                     className={cn(
                       'h-6 rounded px-2 text-caption transition-colors',
                       dshMode === option.value ? 'bg-card text-fg-1 shadow-sm' : 'text-fg-2 hover:text-fg-1',
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+                <span className="ml-3 text-fg-1">摘要</span>
+                {([
+                  { value: 'off' as const, label: '抽取式', hint: '零成本、不调用模型' },
+                  { value: 'claude' as const, label: 'Claude', hint: '复用已登录的 claude CLI 生成多轮摘要' },
+                  { value: 'codex' as const, label: 'Codex', hint: '复用已登录的 codex CLI 生成多轮摘要' },
+                ]).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setSummaryEngine(option.value)}
+                    title={option.hint}
+                    className={cn(
+                      'h-6 rounded px-2 text-caption transition-colors',
+                      summaryEngine === option.value ? 'bg-card text-fg-1 shadow-sm' : 'text-fg-2 hover:text-fg-1',
                     )}
                   >
                     {option.label}

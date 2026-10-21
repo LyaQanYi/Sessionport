@@ -93,6 +93,8 @@ export interface MigrationOptions {
   compact?: boolean;
   compactBudgetChars?: number;
   compactKeepRecentSteps?: number;
+  /** dsh：外部 CLI 摘要命令（如 claude -p） */
+  summaryCommand?: string;
 }
 
 export interface Capabilities {
@@ -143,6 +145,7 @@ interface SessionportBridge {
   invoke: (channel: string, payload?: unknown) => Promise<unknown>;
   platform: string;
   initialTheme?: string | null;
+  initialTarget?: string | null;
 }
 
 declare global {

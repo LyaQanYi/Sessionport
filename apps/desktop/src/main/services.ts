@@ -95,6 +95,8 @@ export interface MigrationOptions {
   compactBudgetChars?: number;
   /** dsh 目标：压缩导入时强制保留的最近 step 数 */
   compactKeepRecentSteps?: number;
+  /** dsh 目标：用外部 CLI 生成 LLM 摘要（prompt 走 stdin），如 "claude -p" */
+  summaryCommand?: string;
 }
 
 export interface MigrationResult {
@@ -290,6 +292,7 @@ async function writeTarget(
       compact: options.compact === true,
       compactBudgetChars: options.compactBudgetChars,
       compactKeepRecentSteps: options.compactKeepRecentSteps,
+      summaryCommand: options.summaryCommand,
     });
     return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.written.events, unit: 'events' };
   }

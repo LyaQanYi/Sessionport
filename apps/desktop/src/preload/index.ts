@@ -22,6 +22,8 @@ const api = {
   platform: process.platform,
   /** 环境变量 SESSIONPORT_THEME=light|dark|system（截图/测试用） */
   initialTheme: process.env.SESSIONPORT_THEME ?? null,
+  /** 截图/测试用：预设迁移目标 agent */
+  initialTarget: process.env.SESSIONPORT_SMOKE_TARGET ?? null,
 };
 
 contextBridge.exposeInMainWorld('sessionport', api);
