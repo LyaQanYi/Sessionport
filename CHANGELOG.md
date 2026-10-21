@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
+- **Desktop i18n (zh-CN / en-US)**: zero-dependency dictionary (225 UI keys, typed so the English
+  dictionary cannot drift), structured main-process error codes (`AppError` → `code`/`params`),
+  English mappings for all current loss/notice codes, and Settings → Language
+  (follow system / 中文 / English) persisted in localStorage. Also fixed two pre-existing main-process
+  bugs found on the way: `spawn` and `existsSync` were used in `ipc.ts` without imports.
+
 - **Claude Code reader: on-disk subagent transcripts.** Real Claude stores each subagent as
   `<sessionId>/subagents/agent-<agentId>.jsonl` (workflows nested one level deeper, with a
   `journal.jsonl`); these are now read as child sessions and take precedence over the in-file

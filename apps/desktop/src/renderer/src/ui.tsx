@@ -3,6 +3,8 @@ import { extendTailwindMerge } from 'tailwind-merge';
 import { useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react';
 import { Copy, Loader2 } from 'lucide-react';
 
+import { useT } from './i18n/I18nProvider.tsx';
+
 const twMerge = extendTailwindMerge({
   extend: {
     classGroups: {
@@ -262,6 +264,7 @@ export function RowAction(props: { label: string; onClick: () => void; children:
 }
 
 export function CopyButton(props: { text: string; label?: string }): ReactNode {
+  const { t } = useT();
   const [copied, setCopied] = useState(false);
   return (
     <Button
@@ -274,7 +277,7 @@ export function CopyButton(props: { text: string; label?: string }): ReactNode {
       }}
     >
       <Copy className="h-3.5 w-3.5" />
-      {copied ? '已复制' : (props.label ?? '复制')}
+      {copied ? t('common.copied') : (props.label ?? t('common.copy'))}
     </Button>
   );
 }

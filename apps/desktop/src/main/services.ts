@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { describeDecision, findRef, loadRegistry, OFFICIAL_IMPORTS, officialSupport, planSync, saveRegistry, sessionportHome, sourceKeyOf, upsertRef, verifyOfficialImport } from '@sessionport/core';
+import { AppError } from './errors.ts';
 import type { AgentId, ExternalRef, IrBundle, LossEntry, OfficialSupport, OfficialTarget, OfficialVerifyResult, SyncDecision } from '@sessionport/core';
 
 export type ReadableAgent = 'kimi-code' | 'command-code' | 'dsh' | 'codex' | 'opencode';
@@ -106,7 +107,7 @@ export interface MigrationResult {
   losses: LossEntry[];
   imported: boolean;
   sync: SyncInfo;
-  refused?: { reason: string };
+  refused?: { reason: string; code?: string; params?: Record<string, unknown> };
 }
 
 export interface SessionRefInput {
@@ -129,12 +130,16 @@ const READERS: Record<string, (input: SessionRefInput) => Promise<IrBundle>> = {
 };
 
 function requirePath(input: SessionRefInput): string {
-  if (!input.nativePath) throw new Error('这个会话缺少磁盘路径，无法读取');
+  if (!input.nativePath) {
+    throw new AppError('session.missingPath', '这个会话缺少磁盘路径，无法读取');
+  }
   return input.nativePath;
 }
 
 function requireId(input: SessionRefInput): string {
-  if (!input.sessionId) throw new Error('opencode 会话需要 sessionId 才能读取（nativePath 指向共用 db）');
+  if (!input.sessionId) {
+    throw new AppError('session.missingSessionId', 'opencode 会话需要 sessionId 才能读取（nativePath 指向共用 db）');
+  }
   return input.sessionId;
 }
 
@@ -197,7 +202,12 @@ function normalizeSummary(item: unknown): SessionRow {
 
 export async function readSession(agent: AgentId, ref: SessionRefInput, limit = 400): Promise<ReadResult> {
   const reader = READERS[agent];
-  if (!reader) throw new Error(agent + ' 还没有 reader（当前可读：' + readableAgents().join(', ') + '）');
+  if (!reader) {
+    throw new AppError('session.noReader', agent + ' 还没有 reader（当前可读：' + readableAgents().join(', ') + '）', {
+      agent,
+      agents: readableAgents().join(', '),
+    });
+  }
   const bundle = await reader(ref);
   const events = bundle.root.events;
   const rows: SessionEventRow[] = [];
@@ -232,7 +242,12 @@ export async function readSession(agent: AgentId, ref: SessionRefInput, limit = 
 /** 加载源会话（桌面端内部用） */
 export async function loadSource(agent: AgentId, ref: SessionRefInput): Promise<IrBundle> {
   const reader = READERS[agent];
-  if (!reader) throw new Error(agent + ' 没有 reader，无法迁移');
+  if (!reader) {
+    throw new AppError('session.noReaderMigrate', agent + ' 没有 reader，无法迁移', {
+      agent,
+      agents: readableAgents().join(', '),
+    });
+  }
   return reader(ref);
 }
 
@@ -302,7 +317,7 @@ async function writeTarget(
     return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.rows.length + 1, unit: 'rows' };
   }
   const mod = await import('@sessionport/adapter-opencode');
-  const report = await mod.writeOpencodeSession(bundle, { dryRun: options.dryRun === true, includeChildren: options.includeChildren === true, model: options.model, id: options.id });
+  const report = await mod.writeOpencodeSession(bundle, { dryRun: options.dryRun === true, model: options.model, id: options.id });
   return {
     sessionId: report.sessionId,
     paths: report.paths,
@@ -362,7 +377,12 @@ interface PreparedMigration {
 }
 
 async function prepareMigration(agent: AgentId, ref: SessionRefInput, target: AgentId, options: MigrationOptions): Promise<PreparedMigration> {
-  if (!WRITERS[target]) throw new Error(target + ' 还没有 writer（当前可写：' + writableAgents().join(', ') + '）');
+  if (!WRITERS[target]) {
+    throw new AppError('session.noWriter', target + ' 还没有 writer（当前可写：' + writableAgents().join(', ') + '）', {
+      agent: target,
+      agents: writableAgents().join(', '),
+    });
+  }
   const bundle = await loadSource(agent, ref);
   const sourceKey = sourceKeyOf(bundle.root.source, bundle.root.id);
   const registry = loadRegistry(options.stateHome);
@@ -429,7 +449,11 @@ export async function runMigration(
       losses: prepared.losses,
       imported: false,
       sync: prepared.sync,
-      refused: { reason: prepared.sync.description + '。选择 fork（另建会话）或 force（覆盖）后重试。' },
+      refused: {
+        reason: prepared.sync.description + '。选择 fork（另建会话）或 force（覆盖）后重试。',
+        code: 'migrate.diverged',
+        params: { targetExtra: prepared.sync.targetExtra ?? 0 },
+      },
     };
   }
   if (prepared.sync.decision === 'up-to-date') {
@@ -531,7 +555,7 @@ export async function officialVerify(
   options: { cwd?: string; title?: string } = {},
 ): Promise<OfficialVerifyResult> {
   if (!officialSupport(target).supported) {
-    throw new Error(target + ' 没有官方导入路径');
+    throw new AppError('official.unsupported', target + ' 没有官方导入路径', { target });
   }
   return verifyOfficialImport({ target, cwd: options.cwd, title: options.title });
 }

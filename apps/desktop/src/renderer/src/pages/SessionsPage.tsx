@@ -3,10 +3,14 @@ import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ChevronDown, ChevronRight, Copy, Folder, Hash, MessagesSquare, RefreshCw } from 'lucide-react';
 
-import { api, formatTime } from '../api.ts';
+import { api } from '../api.ts';
 import type { SessionRow } from '../api.ts';
 import { AgentGlyph, AGENT_META, agentLabel } from '../agents.tsx';
+import { useT } from '../i18n/I18nProvider.tsx';
+import type { MessageKey, MessageParams } from '../i18n/messages.ts';
 import { Badge, Button, EmptyState, RowAction, SearchField, SegmentedControl, Spinner, Topbar, cn } from '../ui.tsx';
+
+type TFunction = (key: MessageKey, params?: MessageParams) => string;
 
 type GroupMode = 'project' | 'time';
 
@@ -26,14 +30,14 @@ function readCollapsed(): Set<string> {
   }
 }
 
-function projectName(session: SessionRow): string {
+function projectName(session: SessionRow, noProject: string): string {
   const dir = session.cwd ?? session.nativePath;
-  if (!dir) return '无项目';
+  if (!dir) return noProject;
   const parts = dir.split('/').filter(Boolean);
   return parts[parts.length - 1] ?? dir;
 }
 
-function relativeTime(iso?: string): string {
+function relativeTime(iso: string | undefined, t: TFunction, formatTime: (iso?: string) => string): string {
   if (!iso) return '';
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return '';
@@ -41,25 +45,32 @@ function relativeTime(iso?: string): string {
   const minute = 60_000;
   const hour = 60 * minute;
   const day = 24 * hour;
-  if (delta < minute) return '刚刚';
-  if (delta < hour) return Math.floor(delta / minute) + ' 分钟前';
-  if (delta < day) return Math.floor(delta / hour) + ' 小时前';
-  if (delta < 2 * day) return '昨天';
+  if (delta < minute) return t('sessions.time.justNow');
+  if (delta < hour) return t('sessions.time.minutesAgo', { count: Math.floor(delta / minute) });
+  if (delta < day) return t('sessions.time.hoursAgo', { count: Math.floor(delta / hour) });
+  if (delta < 2 * day) return t('sessions.time.yesterday');
   return formatTime(iso);
 }
 
-function timeBucket(iso?: string): string {
-  if (!iso) return '更早';
+function timeBucket(iso: string | undefined, t: TFunction): string {
+  if (!iso) return t('sessions.time.earlier');
   const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return '更早';
+  if (!Number.isFinite(ms)) return t('sessions.time.earlier');
   const now = new Date();
   const date = new Date(ms);
   const sameDay = now.toDateString() === date.toDateString();
-  if (sameDay) return '今天';
+  if (sameDay) return t('sessions.time.today');
   const yesterday = new Date(now.getTime() - 86_400_000);
-  if (yesterday.toDateString() === date.toDateString()) return '昨天';
-  if (now.getTime() - ms < 7 * 86_400_000) return '最近 7 天';
-  return '更早';
+  if (yesterday.toDateString() === date.toDateString()) return t('sessions.time.yesterday');
+  if (now.getTime() - ms < 7 * 86_400_000) return t('sessions.time.recent7');
+  return t('sessions.time.earlier');
+}
+
+function warningText(warning: string, t: TFunction): string {
+  if (warning.startsWith('core.listAllSessions 尚未实现')) return t('sessions.warning.coreMissing');
+  if (warning.startsWith('listAllSessions 调用失败')) return t('sessions.warning.listFailed');
+  if (warning.startsWith('Codex 列表失败')) return t('sessions.warning.codexFailed');
+  return warning;
 }
 
 function highlight(text: string, query: string) {
@@ -87,6 +98,7 @@ export function SessionsPage(props: {
   onAgentFilterChange: (agent: string | null) => void;
   onOpen: (session: SessionRow) => void;
 }) {
+  const { locale, t, tError, formatTime } = useT();
   const [query, setQuery] = useState('');
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
@@ -94,6 +106,7 @@ export function SessionsPage(props: {
   const { data, isLoading, error, refetch, isFetching } = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
 
   const all = data?.sessions ?? [];
+  const warnings = (data?.warnings ?? []).map((warning) => (locale === 'zh-CN' ? warning : warningText(warning, t)));
   const agentCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const row of all) counts.set(row.agent, (counts.get(row.agent) ?? 0) + 1);
@@ -113,7 +126,7 @@ export function SessionsPage(props: {
   const rows = useMemo<Row[]>(() => {
     const groups = new Map<string, { label: string; sessions: SessionRow[]; latest: string }>();
     for (const session of filtered) {
-      const key = groupMode === 'project' ? projectName(session) : timeBucket(session.updatedAt);
+      const key = groupMode === 'project' ? projectName(session, t('sessions.noProject')) : timeBucket(session.updatedAt, t);
       const label = groupMode === 'project' ? key : key;
       const entry = groups.get(key) ?? { label, sessions: [], latest: '' };
       entry.sessions.push(session);
@@ -130,7 +143,7 @@ export function SessionsPage(props: {
       rowGroup(result, key, entry.label, entry.sessions, groupMode, collapsed);
     }
     return result;
-  }, [filtered, groupMode, collapsed]);
+  }, [filtered, groupMode, collapsed, t]);
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -157,12 +170,12 @@ export function SessionsPage(props: {
     <div className="flex h-full flex-col">
       <Topbar
         icon={<MessagesSquare className="h-4 w-4" />}
-        title="会话"
-        subtitle={data ? all.length + ' 个会话 · ' + agentCounts.size + ' 个 agent' : '加载中…'}
+        title={t('sessions.title')}
+        subtitle={data ? t('sessions.subtitle', { sessions: all.length, agents: agentCounts.size }) : t('common.loading')}
         actions={
           <>
-            <SearchField value={query} onChange={setQuery} placeholder="搜索标题 / 路径 / id" className="w-56" />
-            <Button variant="outline" size="icon" onClick={() => void refetch()} title="刷新">
+            <SearchField value={query} onChange={setQuery} placeholder={t('sessions.searchPlaceholder')} className="w-56" />
+            <Button variant="outline" size="icon" onClick={() => void refetch()} title={t('common.refresh')}>
               <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />
             </Button>
           </>
@@ -177,8 +190,8 @@ export function SessionsPage(props: {
             setGroupMode(mode);
           }}
           options={[
-            { value: 'project', label: '按项目' },
-            { value: 'time', label: '按时间' },
+            { value: 'project', label: t('sessions.group.project') },
+            { value: 'time', label: t('sessions.group.time') },
           ]}
         />
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
@@ -190,7 +203,7 @@ export function SessionsPage(props: {
               props.agentFilter === null ? 'bg-selected text-fg-1' : 'text-fg-2 hover:bg-accent',
             )}
           >
-            全部 {all.length}
+            {t('sessions.all', { count: all.length })}
           </button>
           {[...agentCounts.entries()]
             .filter(([agent]) => props.enabledAgents.length === 0 || props.enabledAgents.includes(agent))
@@ -209,17 +222,20 @@ export function SessionsPage(props: {
             </button>
           ))}
         </div>
-        <div className="ml-auto shrink-0 text-caption text-fg-3">{filtered.length} 条</div>
+        <div className="ml-auto shrink-0 text-caption text-fg-3">{t('sessions.count', { count: filtered.length })}</div>
       </div>
 
       {isLoading ? (
         <div className="flex flex-1 items-center justify-center gap-2 text-body text-fg-2">
-          <Spinner /> 正在扫描会话…
+          <Spinner /> {t('sessions.loading')}
         </div>
       ) : error ? (
-        <EmptyState title="加载失败" hint={String(error)} />
+        <EmptyState title={t('sessions.loadErrorTitle')} hint={tError(error)} />
       ) : rows.length === 0 ? (
-        <EmptyState title="没有找到会话" hint={data?.warnings.join('；') || '检查对应 agent 的数据目录是否存在'} />
+        <EmptyState
+          title={t('sessions.emptyTitle')}
+          hint={warnings.length > 0 ? warnings.join(t('common.listSeparator')) : t('sessions.emptyHint')}
+        />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
@@ -255,7 +271,7 @@ export function SessionsPage(props: {
                       type="button"
                       data-session-row="true"
                       disabled={!session.readable}
-                      title={session.readable ? undefined : '该 agent 还没有 reader，只能看到列表元数据'}
+                      title={session.readable ? undefined : t('sessions.readableHint')}
                       onClick={() => props.onOpen(session)}
                       className={cn(
                         'group flex h-[58px] w-full items-center gap-2.5 border-b border-border/60 px-4 text-left transition-colors',
@@ -266,7 +282,7 @@ export function SessionsPage(props: {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="truncate text-body text-fg-1">{highlight(session.title ?? session.sessionId, query)}</span>
-                          {session.readable ? null : <Badge variant="outline">元数据</Badge>}
+                          {session.readable ? null : <Badge variant="outline">{t('sessions.metadata')}</Badge>}
                         </div>
                         <div className="mt-0.5 flex items-center gap-1.5 truncate text-caption text-fg-2">
                           <Folder className="h-3 w-3 shrink-0 text-fg-3" />
@@ -275,15 +291,15 @@ export function SessionsPage(props: {
                       </div>
                       <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
                         {session.resumeHint ? (
-                          <RowAction label={'复制 resume 命令：' + session.resumeHint} onClick={() => copy(session.resumeHint)}>
+                          <RowAction label={t('sessions.copyResume', { command: session.resumeHint })} onClick={() => copy(session.resumeHint)}>
                             <Copy className="h-3.5 w-3.5" />
                           </RowAction>
                         ) : null}
-                        <RowAction label={'复制 session id：' + session.sessionId} onClick={() => copy(session.sessionId)}>
+                        <RowAction label={t('sessions.copySessionId', { id: session.sessionId })} onClick={() => copy(session.sessionId)}>
                           <Hash className="h-3.5 w-3.5" />
                         </RowAction>
                       </div>
-                      <div className="w-20 shrink-0 text-right text-caption text-fg-3">{relativeTime(session.updatedAt)}</div>
+                      <div className="w-20 shrink-0 text-right text-caption text-fg-3">{relativeTime(session.updatedAt, t, formatTime)}</div>
                     </button>
                   </div>
                 );
@@ -291,7 +307,10 @@ export function SessionsPage(props: {
             </div>
           </div>
           <div className="flex h-7 shrink-0 items-center gap-1.5 border-t border-border px-4 text-3xs text-fg-3">
-            共 {filtered.length} 条 · {groupMode === 'project' ? '按项目分组' : '按时间分组'} · 虚拟滚动
+            {t('sessions.footer', {
+              count: filtered.length,
+              grouping: groupMode === 'project' ? t('sessions.grouping.project') : t('sessions.grouping.time'),
+            })}
           </div>
         </div>
       )}

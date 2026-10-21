@@ -4,6 +4,7 @@ import { Blocks, Check, Eye, EyeOff, FolderOpen, MessageSquare, X } from 'lucide
 import { api } from '../api.ts';
 import { AgentGlyph, AGENT_META, agentLabel } from '../agents.tsx';
 import type { AgentPreferences } from '../preferences.ts';
+import { useT } from '../i18n/I18nProvider.tsx';
 import { Badge, Button, EmptyState, Spinner, Topbar, cn } from '../ui.tsx';
 
 /** 有无头 resume 冒烟（结构化校验之外）的 agent */
@@ -31,6 +32,7 @@ function Capability(props: { ok: boolean; label: string }) {
 }
 
 export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs: AgentPreferences }) {
+  const { t } = useT();
   const sessionsQuery = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
   const capsQuery = useQuery({ queryKey: ['capabilities'], queryFn: api.capabilities });
   const pathsQuery = useQuery({ queryKey: ['paths'], queryFn: api.paths });
@@ -38,8 +40,8 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
   const sessions = sessionsQuery.data?.sessions ?? [];
   const counts = new Map<string, number>();
   for (const row of sessions) counts.set(row.agent, (counts.get(row.agent) ?? 0) + 1);
-  const readable = new Set(capsQuery.data?.readable ?? []);
-  const writable = new Set(capsQuery.data?.writable ?? []);
+  const readable = new Set<string>(capsQuery.data?.readable ?? []);
+  const writable = new Set<string>(capsQuery.data?.writable ?? []);
   const homes = pathsQuery.data?.homes ?? {};
 
   const agents = Object.keys(AGENT_META);
@@ -48,11 +50,11 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
     <div className="flex h-full flex-col">
       <Topbar
         icon={<Blocks className="h-4 w-4" />}
-        title="适配器"
-        subtitle="每个 agent 的读写能力与本机数据目录"
+        title={t('agents.title')}
+        subtitle={t('agents.subtitle')}
         actions={
           <Button variant="outline" size="sm" onClick={() => { void pathsQuery.refetch(); void capsQuery.refetch(); }}>
-            重新检测
+            {t('agents.redetect')}
           </Button>
         }
       />
@@ -61,7 +63,7 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
         <div className="mx-auto w-full max-w-5xl px-5 py-6">
           {capsQuery.isLoading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-body text-fg-2">
-              <Spinner /> 检测中…
+              <Spinner /> {t('agents.detecting')}
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -76,45 +78,45 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="truncate text-section text-fg-1">{agentLabel(agent)}</span>
-                          {home?.exists ? <Badge variant="success">已检测</Badge> : <Badge variant="outline">未安装</Badge>}
-                          {props.prefs.enabled.includes(agent) ? null : <Badge variant="secondary">已隐藏</Badge>}
+                          {home?.exists ? <Badge variant="success">{t('agents.detected')}</Badge> : <Badge variant="outline">{t('agents.notInstalled')}</Badge>}
+                          {props.prefs.enabled.includes(agent) ? null : <Badge variant="secondary">{t('agents.hidden')}</Badge>}
                         </div>
                         <div className="mt-0.5 truncate font-mono text-3xs text-fg-3">{agent}</div>
                       </div>
                       <div className="text-right">
                         <div className="text-section text-fg-1">{count}</div>
-                        <div className="text-3xs text-fg-3">会话</div>
+                        <div className="text-3xs text-fg-3">{t('agents.sessions')}</div>
                       </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                      <Capability ok={readable.has(agent)} label="读取" />
-                      <Capability ok={writable.has(agent)} label="写入" />
-                      <Capability ok={RESUME_SMOKE_AGENTS.has(agent)} label="headless resume" />
+                      <Capability ok={readable.has(agent)} label={t('agents.read')} />
+                      <Capability ok={writable.has(agent)} label={t('agents.write')} />
+                      <Capability ok={RESUME_SMOKE_AGENTS.has(agent)} label={t('agents.headlessResume')} />
                     </div>
 
                     <div className="min-w-0 rounded-control border border-border bg-subtle px-2.5 py-1.5">
-                      <div className="truncate font-mono text-3xs text-fg-2" title={home?.path ?? '未配置'}>
-                        {home?.path ?? '未配置数据目录'}
+                      <div className="truncate font-mono text-3xs text-fg-2" title={home?.path ?? t('agents.notConfigured')}>
+                        {home?.path ?? t('agents.noDataDir')}
                       </div>
                     </div>
 
                     <div className="mt-auto flex items-center gap-2">
                       <Button size="sm" variant="outline" disabled={!home?.exists} onClick={() => void api.openPath(homeKey).catch(() => undefined)}>
                         <FolderOpen className="h-3.5 w-3.5" />
-                        打开目录
+                        {t('agents.openDir')}
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
                         onClick={() => props.prefs.toggle(agent)}
-                        title={props.prefs.enabled.includes(agent) ? '从侧栏隐藏' : '在侧栏显示'}
+                        title={props.prefs.enabled.includes(agent) ? t('agents.hideFromSidebar') : t('agents.showInSidebar')}
                       >
                         {props.prefs.enabled.includes(agent) ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                       </Button>
                       <Button size="sm" disabled={count === 0} onClick={() => props.onOpenAgent(agent)} className="ml-auto">
                         <MessageSquare className="h-3.5 w-3.5" />
-                        查看会话
+                        {t('agents.viewSessions')}
                       </Button>
                     </div>
                   </div>
@@ -123,7 +125,7 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
             </div>
           )}
           {!capsQuery.isLoading && sessions.length === 0 ? (
-            <EmptyState title="还没有扫描到会话" hint="检查各 agent 的数据目录，或先在本机使用一段时间对应的 CLI" />
+            <EmptyState title={t('agents.emptyTitle')} hint={t('agents.emptyHint')} />
           ) : null}
         </div>
       </div>
