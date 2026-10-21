@@ -50,7 +50,8 @@ const USAGE = [
   '  --json                 输出机器可读 JSON',
   '  --force                sync: 目标端有新增时仍然覆盖（会丢目标端新内容）',
   '  --confirm-real         写 Cursor 真实库时必须显式确认（先用 --dry-run 看计划）',
-  '  --slim                 dsh 目标精简导入：截断 tool_result/参数、丢弃较早 reasoning，避免上下文超限',
+  '  --slim                 dsh 目标精简导入：截断 tool_result/参数、丢弃较早 reasoning（日志也损）',
+  '  --compact              dsh 目标压缩导入：保留全部事件日志，写 DSH 原生 compaction（摘要+最近 step）',
   '  --into <app>           import 的目标 app：zcode | qoder | cursor（cursor 无官方导入）',
   '  --open                 import 时自动打开目标 app',
   '  --fork                 sync: 目标端有新增时另建一个目标会话，保留旧会话',
@@ -202,6 +203,7 @@ function commonTargetOptions(values: Record<string, string | boolean | undefined
     dryRun: Boolean(values['dry-run']),
     confirmReal: Boolean(values['confirm-real']),
     slim: Boolean(values.slim),
+    compact: Boolean(values.compact),
   };
 }
 
@@ -765,6 +767,7 @@ async function main(): Promise<void> {
       'write-ir': { type: 'string' },
       'confirm-real': { type: 'boolean' },
       slim: { type: 'boolean' },
+      compact: { type: 'boolean' },
       into: { type: 'string' },
       source: { type: 'string' },
       open: { type: 'boolean' },

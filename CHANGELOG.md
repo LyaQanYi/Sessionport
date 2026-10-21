@@ -37,6 +37,9 @@ All notable changes to this project are documented here. Format loosely follows
 - **DSH `--slim` import**: truncates tool output/arguments, keeps only recent steps' tool events and drops
   reasoning for oversized sessions (each cut recorded as a loss), so migrations stay inside the target
   model's context window.
+- **DSH `--compact` import**: keeps the full event log and writes a native DSH compaction chain
+  (`compaction/start` → `summary` → checkpoint with `surfaceOp: replace` → `compaction/end`), so the model
+  sees a summary plus recent steps while the whole history remains in the log and can be compacted again.
 - **Distribution**: unsigned macOS `.app`/`.dmg` via electron-builder
   (`pnpm dist:desktop`), plus a CI packaging job.
 - **Docs**: README, DESIGN decision log, CONTRIBUTING (adapter contract), SECURITY,
