@@ -80,6 +80,14 @@ export interface WriteDshOptions {
   includeChildren?: boolean;
   /** 是否顺带更新 storages/workspace.json（默认 false；官方启动会自动重建） */
   registerWorkspace?: boolean;
+  /** 用 DSH 原生 compaction 链压缩上下文：完整日志保留，模型只看到摘要 + 最近 N 个 step */
+  compact?: boolean;
+  /** compact 时保留最近多少个 step 不压缩（默认按 compactBudgetChars 自适应） */
+  compactKeepRecentSteps?: number;
+  /** compact 时可见上下文（最近 step）的字符预算，默认 200000 */
+  compactBudgetChars?: number;
+  /** 写进 compaction 摘要元数据的模型 id */
+  model?: string;
   /** 精简导入：截断过长的 tool_result / tool_call 参数，丢弃较早 reasoning，避免目标端上下文超限 */
   slim?: boolean;
   /** slim 时保留最近多少个 step 的 reasoning（默认 10） */
@@ -264,11 +272,12 @@ interface EmitContext {
   synthModel: string;
 }
 
-function emit(ctx: EmitContext, type: string, time: number, data: Record<string, unknown>, opts: { surfaceOp?: unknown } = {}): DshEventLine {
+function emit(ctx: EmitContext, type: string, time: number, data: Record<string, unknown>, opts: { surfaceOp?: unknown; sourceEventSeqs?: number[] } = {}): DshEventLine {
   const at = Math.max(time, ctx.lastTime);
   ctx.lastTime = at;
   const row: DshEventLine = { type, seq: ctx.rows.length, time: at, data };
   if (opts.surfaceOp !== undefined) row.surfaceOp = opts.surfaceOp;
+  if (opts.sourceEventSeqs !== undefined) row.sourceEventSeqs = opts.sourceEventSeqs;
   ctx.rows.push(row);
   return row;
 }
@@ -403,6 +412,54 @@ async function writeWorkspaceRegistration(home: string, cwd: string, sessionId: 
 
 const SYNTH_PREFIX = 'sessionport';
 
+const CHECKPOINT_PREAMBLE =
+  'This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint.';
+
+interface SummaryLine {
+  kind: 'user' | 'assistant' | 'tool';
+  text: string;
+}
+
+function clipText(text: string, max: number): string {
+  const compact = text.replace(/\s+/gu, ' ').trim();
+  return compact.length > max ? compact.slice(0, max) + '…' : compact;
+}
+
+/** 抽取式多轮摘要：优先保留用户意图与助手结论，必要时丢弃工具行/重复行 */
+function buildCompactionSummary(steps: Array<{ users: Array<{ parts: Array<{ type: string; text?: string }> }>; assistant?: { parts: Array<{ type: string; text?: string }> }; toolCalls: Array<{ name: string }> }>, budgetChars: number): string {
+  const lines: SummaryLine[] = [];
+  for (const step of steps) {
+    for (const user of step.users) {
+      const text = user.parts.filter((part) => part.type === 'text' && typeof part.text === 'string').map((part) => part.text as string).join(' ');
+      if (text.trim().length > 0) lines.push({ kind: 'user', text: clipText(text, 400) });
+    }
+    if (step.assistant !== undefined) {
+      const text = step.assistant.parts.filter((part) => part.type === 'text' && typeof part.text === 'string').map((part) => part.text as string).join(' ');
+      if (text.trim().length > 0) lines.push({ kind: 'assistant', text: clipText(text, 300) });
+    }
+    const names = [...new Set(step.toolCalls.map((call) => call.name))];
+    if (names.length > 0) lines.push({ kind: 'tool', text: '工具：' + names.join(', ') });
+  }
+  const label = (line: SummaryLine): string => '- ' + (line.kind === 'user' ? '用户：' : line.kind === 'assistant' ? '助手：' : '') + line.text;
+  let current = lines;
+  const rendered = (items: SummaryLine[]): string => ['## 会话压缩摘要（sessionport 导入时生成）', ...items.map(label)].join('\n');
+  // 多轮压缩：先压工具行，再交替删减，直到进入预算
+  let round = 0;
+  while (rendered(current).length > budgetChars && current.length > 1 && round < 12) {
+    round += 1;
+    const tools = current.filter((line) => line.kind === 'tool');
+    if (tools.length > 0 && round % 2 === 1) {
+      current = current.filter((line) => line.kind !== 'tool' || Math.random() < 0.5);
+    } else {
+      current = current.filter((_, index) => index % 2 === 0 || index === current.length - 1);
+    }
+    if (current.length === 0) current = lines.slice(0, 1);
+  }
+  let text = rendered(current);
+  if (text.length > budgetChars) text = text.slice(0, budgetChars) + '\n…（摘要超出预算，已截断）';
+  return text;
+}
+
 /** 写单个会话（root 或 child），返回行、头、路径与统计。 */
 async function writeOneSession(session: IrSession, options: {
   home: string;
@@ -415,6 +472,10 @@ async function writeOneSession(session: IrSession, options: {
   agentPreset?: string;
   losses: LossCollector;
   dryRun: boolean;
+  model?: string;
+  compact?: boolean;
+  compactKeepRecentSteps?: number;
+  compactBudgetChars?: number;
 }): Promise<{ filePath: string; sessionDir: string; header: DshSessionHeaderLine; rows: DshEventLine[]; counts: WriteDshResult['written'] }> {
   const cwd = options.cwd;
   const createdAtMs = msOf(session.meta.createdAt, Date.now());
@@ -653,6 +714,97 @@ async function writeOneSession(session: IrSession, options: {
   if (slimStats.oldToolEvents > 0) {
     options.losses.add('dsh.slim-old-tool-events-dropped', '精简导入：较早步骤的 tool_call/tool_result 事件整体丢弃（只保留最近 ' + slimStepKeep + ' 个 step 的工具交互）', { count: slimStats.oldToolEvents, severity: 'info' });
   }
+  if (options.compact === true) {
+    const budgetChars = options.compactBudgetChars ?? 200000;
+    // 从已生成的行里还原每个 step 的 surface 事件 seq
+    const stepSurfaceSeqs: number[][] = [];
+    const surfaceTypes = new Map<number, string>();
+    let currentStep: number[] | null = null;
+    for (const row of ctx.rows) {
+      if (row.type === 'step/start') {
+        currentStep = [];
+        continue;
+      }
+      if (row.type === 'step/end') {
+        if (currentStep !== null) stepSurfaceSeqs.push(currentStep);
+        currentStep = null;
+        continue;
+      }
+      if (currentStep !== null && (row.type === 'user/message' || row.type === 'assistant/message' || row.type === 'tool/result' || row.type === 'system/message')) {
+        currentStep.push(row.seq);
+        surfaceTypes.set(row.seq, row.type);
+      }
+    }
+    const stepChars = stepSurfaceSeqs.map((seqs) =>
+      seqs.reduce((sum, seq) => sum + (ctx.rows[seq] === undefined ? 0 : JSON.stringify(ctx.rows[seq]!).length), 0),
+    );
+    let keepSteps = options.compactKeepRecentSteps ?? 0;
+    if (options.compactKeepRecentSteps === undefined) {
+      let accumulated = 0;
+      keepSteps = 0;
+      for (let index = stepSurfaceSeqs.length - 1; index >= 0; index -= 1) {
+        const next = stepChars[index] ?? 0;
+        if (keepSteps >= 1 && accumulated + next > budgetChars) break;
+        accumulated += next;
+        keepSteps += 1;
+      }
+      if (keepSteps === 0) keepSteps = 1;
+    }
+    const shadowSteps = stepSurfaceSeqs.length - keepSteps;
+    if (shadowSteps <= 0) {
+      options.losses.add('dsh.compact-skipped', 'step 数量不足（<= ' + keepSteps + '），未生成 compaction', { count: 1, severity: 'info' });
+    } else {
+      const flat = stepSurfaceSeqs.slice(0, shadowSteps).flat();
+      let startIndex = 0;
+      while (startIndex < flat.length && surfaceTypes.get(flat[startIndex]!) === 'system/message') startIndex += 1;
+      const startSeq = flat[startIndex];
+      const endSeq = flat[flat.length - 1];
+      if (startSeq === undefined || endSeq === undefined || startSeq > endSeq) {
+        options.losses.add('dsh.compact-skipped', '找不到可压缩的连续 surface 区间', { count: 1, severity: 'info' });
+      } else {
+        const shadowedSeqs = flat.slice(startIndex);
+        const shadowedRows = ctx.rows.filter((row) => row.seq !== undefined && shadowedSeqs.includes(row.seq));
+        const shadowedChars = shadowedRows.reduce((sum, row) => sum + JSON.stringify(row).length, 0);
+        const shadowedTokenCount = Math.max(1, Math.round(shadowedChars / 3.2));
+        const summaryBudget = Math.max(800, Math.min(4000, Math.floor(shadowedChars / 20)));
+        const summaryText = buildCompactionSummary(steps.slice(0, shadowSteps), summaryBudget);
+        const compactionId = randomUuid();
+        const startEvent = emit(ctx, 'compaction/start', ctx.lastTime, { compactionId, turn: ctx.turn });
+        const summaryEvent = emit(ctx, 'compaction/summary', ctx.lastTime, {
+          compactionId,
+          summary: [{ type: 'text', text: summaryText }],
+          shadowedRange: { start: startSeq, end: endSeq },
+          shadowedSeqs,
+          shadowedTokenCount,
+          provider: SYNTH_PREFIX,
+          model: options.model ?? 'unknown',
+        });
+        emit(
+          ctx,
+          'user/message',
+          ctx.lastTime,
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: CHECKPOINT_PREAMBLE + '\n\n<compacted-summary>' },
+              { type: 'text', text: summaryText },
+              { type: 'text', text: '</compacted-summary>' },
+            ],
+            source: { kind: 'compact-checkpoint', compactionId },
+            id: randomUuid(),
+          },
+          { surfaceOp: { op: 'replace', startSeq, endSeq }, sourceEventSeqs: [startEvent.seq, summaryEvent.seq, ...shadowedSeqs] },
+        );
+        emit(ctx, 'compaction/end', ctx.lastTime, { compactionId, turn: ctx.turn });
+        options.losses.add(
+          'dsh.compacted-checkpoint',
+          '用 DSH 原生 compaction 链压缩上下文：完整事件日志保留，模型上下文=摘要+最近 ' + keepSteps + ' 个 step（预算 ' + budgetChars + ' 字符；阴影 ' + shadowedSeqs.length + ' 个 surface 事件，约 ' + shadowedTokenCount + ' tokens）',
+          { count: 1, severity: 'info' },
+        );
+      }
+    }
+  }
+
   if (slimStats.omittedSteps > 0) {
     options.losses.add('dsh.slim-old-steps-omitted', '精简导入：保留最近 ' + slimStepKeep + ' 个 step 的完整工具结果，更早步骤的结果替换为占位符', { count: slimStats.omittedSteps, severity: 'info' });
   }
@@ -729,6 +881,10 @@ export async function writeDshSession(bundle: IrBundle, options: WriteDshOptions
     id: sessionId,
     title,
     delegationDepth: 0,
+    model: options.model,
+    compact: options.compact === true,
+    compactKeepRecentSteps: options.compactKeepRecentSteps,
+    compactBudgetChars: options.compactBudgetChars,
     slim: options.slim === true,
     keepRecentReasoning: options.keepRecentReasoning,
     maxToolResultChars: options.maxToolResultChars,
@@ -755,6 +911,8 @@ export async function writeDshSession(bundle: IrBundle, options: WriteDshOptions
             parentSession: sessionId,
             delegationDepth: 1,
             origin: 'subagent',
+            model: options.model,
+            compact: false,
             slim: options.slim === true,
             keepRecentReasoning: options.keepRecentReasoning,
             maxToolResultChars: options.maxToolResultChars,
