@@ -13,12 +13,12 @@ import {
 
 test('项目目录 slug 与真实样本一致（规则来自 @sindresorhus/slugify 默认参数）', () => {
   const cases: Array<[string, string]> = [
-    ['/Users/lyaqanyi/Documents/GitHub/NEKO', 'users-lyaqanyi-documents-git-hub-neko'],
-    ['/Users/lyaqanyi/Documents/GitHub/N.E.K.O.Verse', 'users-lyaqanyi-documents-git-hub-n-e-k-o-verse'],
-    ['/Users/lyaqanyi/Documents/Coding/N.E.K.O.HarmonyOS', 'users-lyaqanyi-documents-coding-n-e-k-o-harmony-os'],
-    ['/Users/lyaqanyi/Documents/Coding/0TEST', 'users-lyaqanyi-documents-coding-0-test'],
-    ['/Users/lyaqanyi/Documents/Coding/0neko-mobile', 'users-lyaqanyi-documents-coding-0neko-mobile'],
-    ['/Users/lyaqanyi/Documents/GitHub/vscodefork', 'users-lyaqanyi-documents-git-hub-vscodefork'],
+    ['/Users/example/Documents/GitHub/NEKO', 'users-example-documents-git-hub-neko'],
+    ['/Users/example/Documents/GitHub/N.E.K.O.Verse', 'users-example-documents-git-hub-n-e-k-o-verse'],
+    ['/Users/example/Documents/Coding/N.E.K.O.HarmonyOS', 'users-example-documents-coding-n-e-k-o-harmony-os'],
+    ['/Users/example/Documents/Coding/0TEST', 'users-example-documents-coding-0-test'],
+    ['/Users/example/Documents/Coding/0neko-mobile', 'users-example-documents-coding-0neko-mobile'],
+    ['/Users/example/Documents/GitHub/vscodefork', 'users-example-documents-git-hub-vscodefork'],
     ['/tmp/sessionport-cc-test-project', 'tmp-sessionport-cc-test-project'],
     ['', 'root'],
   ];

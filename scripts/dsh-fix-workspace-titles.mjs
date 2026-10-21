@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 修复 DSH 工作区标题：早前版本把 projectKey 转义串（Users-lyaqanyi-Documents-...）
+// 修复 DSH 工作区标题：早前版本把 projectKey 转义串（Users-example-Documents-...）
 // 当成了标题。这个脚本把所有「标题看起来是路径转义串」的工作区改回目录 basename。
 //
 // 用法:
@@ -30,7 +30,7 @@ for (const record of Object.values(workspaces)) {
   if (!path) continue;
   const expected = basename(path) || 'workspace';
   const title = typeof record.title === 'string' ? record.title : '';
-  // 转义串形如 'Users-lyaqanyi-Documents-Coding-0vscode-neko'：没有斜杠、连字符很多、以转义前缀开头
+  // 转义串形如 'Users-example-Documents-Coding-0vscode-neko'：没有斜杠、连字符很多、以转义前缀开头
   const looksMangled = title.length === 0 || (!title.includes('/') && title.split('-').length > 4 && (title.startsWith('Users-') || title.startsWith('private-') || title.startsWith('var-')));
   if (looksMangled && title !== expected) {
     console.log('fix:', JSON.stringify(title), '->', JSON.stringify(expected), '(' + path + ')');

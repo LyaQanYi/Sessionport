@@ -386,7 +386,7 @@ async function writeWorkspaceRegistration(home: string, cwd: string, sessionId: 
   if (target === undefined) {
     const workspaceId = randomUuid();
     // 标题必须与 DSH 自己建工作区的方式一致：目录 basename（如 sessionport / default-workspace）。
-    // 用 projectKey 当标题会显示成 Users-lyaqanyi-Documents-Coding-xxx 这种转义串。
+    // 用 projectKey 当标题会显示成 Users-example-Documents-Coding-xxx 这种转义串。
     workspaces[workspaceId] = { path: cwd, title: basename(cwd) || 'workspace', sessionIds: [sessionId], createdAt: now, updatedAt: now };
     target = [workspaceId, workspaces[workspaceId]!];
     const ids = Array.isArray(globals.workspaceIds) ? globals.workspaceIds.filter((id): id is string => typeof id === 'string') : [];
@@ -396,7 +396,7 @@ async function writeWorkspaceRegistration(home: string, cwd: string, sessionId: 
     root.global = globals;
   }
   const [workspaceId, record] = target;
-  // 自愈：早前版本把 projectKey 转义串写成了标题（Users-lyaqanyi-...），这里改回目录名
+  // 自愈：早前版本把 projectKey 转义串写成了标题（Users-example-...），这里改回目录名
   const mangledTitle = projectKey(cwd).replace(/^-+|-+$/gu, '');
   if (typeof record.title !== 'string' || record.title.length === 0 || record.title === mangledTitle) {
     record.title = basename(cwd) || 'workspace';

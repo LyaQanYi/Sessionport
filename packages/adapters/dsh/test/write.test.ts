@@ -34,8 +34,8 @@ test('registerWorkspace：新建工作区标题用目录 basename（不是 proje
 });
 
 test('projectKey 与官方规则一致（实测样本 + 特殊字符）', () => {
-  assert.equal(projectKey('/Users/lyaqanyi/Documents/Coding/N.E.K.O.HarmonyOS'), '--Users-lyaqanyi-Documents-Coding-N.E.K.O.HarmonyOS--');
-  assert.equal(projectKey('/Users/lyaqanyi/Documents/GitHub/sessionport'), '--Users-lyaqanyi-Documents-GitHub-sessionport--');
+  assert.equal(projectKey('/Users/example/Documents/Coding/N.E.K.O.HarmonyOS'), '--Users-example-Documents-Coding-N.E.K.O.HarmonyOS--');
+  assert.equal(projectKey('/Users/example/Documents/GitHub/sessionport'), '--Users-example-Documents-GitHub-sessionport--');
   assert.equal(projectKey('/Users/me/A B/C'), '--Users-me-A~0020B-C--');
   assert.equal(projectKey('/tmp/中文/目录'), '--tmp-~4E2D~6587-~76EE~5F55--');
   assert.equal(projectKey('/a//b'), '--a-b--');
