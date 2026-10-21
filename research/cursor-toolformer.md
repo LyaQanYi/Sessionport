@@ -255,6 +255,12 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 - 错误态、缺结果、未知工具、孤立结果、参数不可用都有显式 status/loss。
 - 原生 Cursor 的 grep/list `additionalData` 摘要能读成 `tool_result(json)`。
 - 真实库只读回归：321 events / 115 tool_call / 113 tool_result，verify 全 PASS。
+- **真实库写入回归**（2026-10-21，sessionport 自测）：把一条真实 Claude 会话（225 events、
+  103 个 tool_call）写进真实 `state.vscdb`，composer
+  `7d8c3ddf-64d1-49ca-b0d7-148fd9f012a7`（标题 `[sessionport 测试] 工具卡片（PR #213 review）`）。
+  `verify --agent cursor` **29 项全 PASS**（含 toolformer-fields / params-json / status /
+  call-ids / extension / grouping）；读回 103 tool_call + 103 tool_result。写入前备份在
+  `.tmp/cursor-write-backup-*.json`。**UI 卡片渲染仍待人工确认**（见下）。
 
 ### 推测（[推测]）
 
@@ -267,7 +273,8 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 
 1. **UI 渲染**：导入会话里的工具卡片是否显示命令/路径/结果。当前只写 `params`/`result`，
    **没有写 `toolCallBinary`**；如果某个工具卡片依赖 `toolFormerData.toolCall`（而不是
-   params/result），它可能退化成“Ran tool”/空卡片。需要人工打开会话确认。
+   params/result），它可能退化成“Ran tool”/空卡片。真实库里已经写好测试会话
+   `7d8c3ddf-64d1-49ca-b0d7-148fd9f012a7`，重启 Cursor 后打开即可确认。
 2. **app 是否回写/删除 `_sessionport`**：打开会话、发消息、退出 app 后再读库对比。
 3. **edit 的 diff 卡片**：没有 before/after 全文与 `beforeContentId`/`afterContentId`，
    预期只显示路径与结果，不显示可展开 diff。
