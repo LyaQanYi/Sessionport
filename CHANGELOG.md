@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Claude Code reader: on-disk subagent transcripts.** Real Claude stores each subagent as
+  `<sessionId>/subagents/agent-<agentId>.jsonl` (workflows nested one level deeper, with a
+  `journal.jsonl`); these are now read as child sessions and take precedence over the in-file
+  `isSidechain` mirror rows. `meta.json` supplies the child title (`description`), profile
+  (`agentType`) and `viaToolCallId` (`toolUseId`); workflow labels become titles when there is no
+  description. Verified on real data: a 101-subagent session reads in ~0.3 s.
+  See `research/claude-code-subagents.md`.
+
 ## [0.1.0] — 2026-10-20
 
 ### Added
