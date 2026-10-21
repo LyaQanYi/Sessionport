@@ -1026,7 +1026,8 @@ export async function writeDshSession(bundle: IrBundle, options: WriteDshOptions
             home,
             cwd,
             id: childId,
-            title: child.label ?? child.session.meta.title,
+            // 子代理会话标题优先用源端可读标题（描述 / workflow label），label 只是短 id
+            title: child.session.meta.title ?? child.label,
             parentSession: sessionId,
             delegationDepth: 1,
             origin: 'subagent',
