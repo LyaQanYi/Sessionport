@@ -27,7 +27,7 @@ Requires **Node.js >= 24** (TypeScript sources are executed via Node type stripp
 single bundled JS file).
 
 ```bash
-npm install -g sesp          # short command: sesp (sessionport alias also installed)
+npm install -g sesport          # 命令 sesp（sessionport 全名别名也一起安装）
 sessionport inspect "kimi:./session_.../"
 ```
 
