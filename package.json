@@ -15,9 +15,9 @@
     "build:desktop": "pnpm --dir apps/desktop build",
     "dist:desktop": "pnpm --dir apps/desktop dist",
     "release:prepare": "node scripts/prepare-npm.mjs",
-    "pack:check": "node scripts/build-cli.mjs && node scripts/prepare-npm.mjs && rm -rf .tmp/pack && mkdir -p .tmp/pack && pnpm --filter sesp pack --pack-destination .tmp/pack",
+    "pack:check": "node scripts/build-cli.mjs && node scripts/prepare-npm.mjs && rm -rf .tmp/pack && mkdir -p .tmp/pack && pnpm --filter sesport pack --pack-destination .tmp/pack",
     "build:cli": "node scripts/build-cli.mjs",
-    "publish:cli": "node scripts/build-cli.mjs && node scripts/prepare-npm.mjs && pnpm --filter sesp publish --access public --no-git-checks"
+    "publish:cli": "node scripts/build-cli.mjs && node scripts/prepare-npm.mjs && pnpm --filter sesport publish --access public --no-git-checks"
   },
   "workspaces": [
     "packages/*",

@@ -27,14 +27,16 @@ jobs:
         run: node scripts/build-cli.mjs
       - name: Prepare package files (LICENSE / NOTICE / README)
         run: node scripts/prepare-npm.mjs
-      - name: Publish sesp (skipped when NPM_TOKEN is not configured)
+      - name: Publish sesport (skipped when NPM_TOKEN is not configured)
         if: env.NPM_TOKEN != ''
-        run: pnpm --filter sesp publish --access public --no-git-checks
+        run: pnpm --filter sesport publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   desktop-dmg:
     name: build macOS dmg + GitHub release
+    # workflow_dispatch 只用来补发 npm，避免手动触发时创建一个名为 "main" 的 Release
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
