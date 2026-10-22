@@ -93,6 +93,10 @@ export const zhCN = {
   'reader.boundary': 'boundary · {kind}',
   'reader.shown': '已显示 {shown} / {total} 个事件',
   'reader.loadMore': '加载更多',
+  'reader.subagents': '子代理 · {count}',
+  'reader.subagentsHint': '由主会话派生，点击查看',
+  'reader.childEvents': '{count} 事件',
+  'reader.childBack': '返回主会话',
 
   // 适配器
   'agents.title': '适配器',
@@ -342,6 +346,10 @@ export const enUS: Record<MessageKey, string> = {
   'reader.boundary': 'Boundary · {kind}',
   'reader.shown': 'Showing {shown} / {total} events',
   'reader.loadMore': 'Load more',
+  'reader.subagents': 'Sub-agents · {count}',
+  'reader.subagentsHint': 'Derived from the main session; click to open',
+  'reader.childEvents': '{count} events',
+  'reader.childBack': 'Back to main session',
 
   // Adapters
   'agents.title': 'Adapters',

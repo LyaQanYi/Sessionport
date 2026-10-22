@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowLeft, ArrowLeftRight, Brain, Info, SquareTerminal, Wrench } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowLeftRight, Brain, Info, SquareTerminal, Users, Wrench } from 'lucide-react';
 
 import { api, sessionRefOf } from '../api.ts';
 import type { SessionRow } from '../api.ts';
@@ -13,9 +13,15 @@ const PAGE_SIZE = 300;
 export function ReaderPage(props: { session: SessionRow; onBack: () => void; onMigrate: () => void }) {
   const { t, tError, tNotice, formatTime } = useT();
   const [limit, setLimit] = useState(PAGE_SIZE);
+  const [childId, setChildId] = useState<string | undefined>(undefined);
+  // 切换会话时回到根会话，避免把上一个会话的 childId 带过去
+  useEffect(() => {
+    setChildId(undefined);
+    setLimit(PAGE_SIZE);
+  }, [props.session.agent, props.session.nativePath, props.session.sessionId]);
   const { data, isLoading, error } = useQuery({
-    queryKey: ['session', props.session.agent, props.session.nativePath, props.session.sessionId, limit],
-    queryFn: () => api.readSession(props.session.agent, sessionRefOf(props.session), limit),
+    queryKey: ['session', props.session.agent, props.session.nativePath, props.session.sessionId, limit, childId],
+    queryFn: () => api.readSession(props.session.agent, sessionRefOf(props.session), limit, childId),
   });
 
   return (
@@ -25,6 +31,19 @@ export function ReaderPage(props: { session: SessionRow; onBack: () => void; onM
         subtitle={(data?.cwd ?? props.session.cwd ?? '—') + ' · ' + agentLabel(props.session.agent)}
         actions={
           <>
+            {data?.isChild ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setChildId(undefined);
+                  setLimit(PAGE_SIZE);
+                }}
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                {t('reader.childBack')}
+              </Button>
+            ) : null}
             {props.session.resumeHint ? <CopyButton text={props.session.resumeHint} label={t('reader.copyResume')} /> : null}
             <Button size="sm" onClick={props.onMigrate}>
               <ArrowLeftRight className="h-3.5 w-3.5" />
@@ -71,6 +90,39 @@ export function ReaderPage(props: { session: SessionRow; onBack: () => void; onM
                   })}
                 </ul>
               </details>
+            ) : null}
+
+            {!childId && data && data.children.length > 0 ? (
+              <section className="mb-5 overflow-hidden rounded-lg border border-border bg-card">
+                <header className="flex items-center gap-2 border-b border-border px-3 py-2 text-2xs font-medium">
+                  <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span>{t('reader.subagents', { count: data.children.length })}</span>
+                  <span className="ml-auto text-3xs font-normal text-muted-foreground">{t('reader.subagentsHint')}</span>
+                </header>
+                <ul className="divide-y divide-border">
+                  {data.children.map((child) => (
+                    <li key={child.id}>
+                      <button
+                        type="button"
+                        data-child-row={child.id}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted"
+                        onClick={() => {
+                          setChildId(child.id);
+                          setLimit(PAGE_SIZE);
+                        }}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-xs">
+                          {child.title ?? child.label ?? child.nativeSessionId ?? child.id}
+                        </span>
+                        {child.profile ? <Badge variant="outline">{child.profile}</Badge> : null}
+                        <span className="shrink-0 text-3xs text-muted-foreground">
+                          {t('reader.childEvents', { count: child.events })}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             ) : null}
 
             <div className="space-y-3">

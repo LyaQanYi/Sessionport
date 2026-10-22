@@ -15,6 +15,8 @@ const channelSchemas = {
     nativePath: z.string().optional(),
     sessionId: z.string().optional(),
     limit: z.number().int().positive().max(2000).optional(),
+    /** 读子代理会话时传 IR child session id（不传则读根会话） */
+    childId: z.string().optional(),
   }),
   'migrate:preview': z.object({
     agent: agentSchema,
@@ -65,7 +67,7 @@ export function registerIpc(): void {
   ipcMain.handle('sessions:list', async () => wrap(() => listSessions()));
   ipcMain.handle('sessions:read', async (_event, payload: unknown) => wrap(() => {
     const input = channelSchemas['sessions:read'].parse(payload);
-    return readSession(input.agent, { nativePath: input.nativePath, sessionId: input.sessionId }, input.limit);
+    return readSession(input.agent, { nativePath: input.nativePath, sessionId: input.sessionId }, input.limit, input.childId);
   }));
   ipcMain.handle('migrate:preview', async (_event, payload: unknown) => wrap(() => {
     const input = channelSchemas['migrate:preview'].parse(payload);

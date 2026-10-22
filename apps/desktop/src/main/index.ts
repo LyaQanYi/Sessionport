@@ -45,13 +45,30 @@ function createWindow(): void {
     window.webContents.once('did-finish-load', async () => {
       clearTimeout(timer);
       console.log('[smoke] renderer loaded');
-      // 冒烟时可选：自动点进第一个可读会话 / 切到某个导航页，便于给 UI 截图
+      // 冒烟时可选：切到某个导航页 / 打开第一个或指定标题的会话 / 再点进第一个子代理
       const nav = process.env['SESSIONPORT_SMOKE_NAV'];
       const openFirst = process.env['SESSIONPORT_SMOKE_OPEN_FIRST'] === '1';
-      if (nav || openFirst) {
+      const openMatch = process.env['SESSIONPORT_SMOKE_OPEN_MATCH'];
+      const openChild = process.env['SESSIONPORT_SMOKE_OPEN_CHILD'] === '1';
+      const searchText = process.env['SESSIONPORT_SMOKE_SEARCH'];
+      if (nav || openFirst || openMatch || searchText) {
         try {
+          if (searchText !== undefined && searchText.length > 0) {
+            // 会话列表是虚拟滚动的：先用搜索框把目标会话筛出来
+            await window.webContents.executeJavaScript(
+              `(() => {
+                const input = document.querySelector('header input, input');
+                if (!input) return false;
+                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                setter.call(input, ${JSON.stringify(searchText)});
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                return true;
+              })()`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, 800));
+          }
           // 会话列表是异步加载的：轮询等待目标元素出现（最多 8 秒）
-          const selector = openFirst ? '[data-session-row]:not([disabled])' : '[data-nav="' + (nav ?? '') + '"]';
+          const rowSelector = '[data-session-row]:not([disabled])';
           let clicked = false;
           for (let attempt = 0; attempt < 80 && !clicked; attempt += 1) {
             clicked = (await window.webContents.executeJavaScript(
@@ -62,15 +79,35 @@ function createWindow(): void {
                   if (target) { target.click(); return true; }
                   return false;
                 }
-                const row = document.querySelector(${JSON.stringify(selector)});
+                const rows = Array.from(document.querySelectorAll(${JSON.stringify(rowSelector)}));
+                const wanted = ${JSON.stringify(openMatch ?? '')};
+                const row = wanted.length > 0
+                  ? rows.find((candidate) => (candidate.textContent || '').includes(wanted))
+                  : rows[0];
                 if (row) { row.click(); return true; }
                 return false;
               })()`,
             )) as boolean;
             if (!clicked) await new Promise((resolve) => setTimeout(resolve, 100));
           }
-          if (!clicked) console.error('[smoke] target not found:', nav ?? selector);
+          if (!clicked) console.error('[smoke] target not found:', nav ?? openMatch ?? rowSelector);
           await new Promise((resolve) => setTimeout(resolve, 1800));
+
+          if (clicked && openChild) {
+            let childClicked = false;
+            for (let attempt = 0; attempt < 40 && !childClicked; attempt += 1) {
+              childClicked = (await window.webContents.executeJavaScript(
+                `(() => {
+                  const child = document.querySelector('[data-child-row]');
+                  if (child) { child.click(); return true; }
+                  return false;
+                })()`,
+              )) as boolean;
+              if (!childClicked) await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            if (!childClicked) console.error('[smoke] child row not found');
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+          }
         } catch (error) {
           console.error('[smoke] auto navigation failed:', String(error));
         }

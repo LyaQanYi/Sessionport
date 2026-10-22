@@ -17,6 +17,9 @@ First public release.
 
 ### Added
 
+- **Desktop reader: sub-agent sessions.** Sessions that carry children (Claude Code's on-disk subagent
+  transcripts, DSH's native sub agents, ...) now show a sub-agent list in the reader; clicking one loads its
+  transcript with a "back to main session" action. The IPC read channel gains an optional `childId`.
 - **Docs**: Chinese translations of [README](README.zh-CN.md), [CONTRIBUTING](CONTRIBUTING.zh-CN.md)
   and [SECURITY](SECURITY.zh-CN.md); English stays the default and each page links to the other.
 - **Cursor: tool calls are now written as native `toolFormerData`** (previously dropped). Bubble

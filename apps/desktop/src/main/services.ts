@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 import { describeDecision, findRef, loadRegistry, OFFICIAL_IMPORTS, officialSupport, planSync, saveRegistry, sessionportHome, sourceKeyOf, upsertRef, verifyOfficialImport } from '@sessionport/core';
 import { AppError } from './errors.ts';
-import type { AgentId, ExternalRef, IrBundle, LossEntry, OfficialSupport, OfficialTarget, OfficialVerifyResult, SyncDecision } from '@sessionport/core';
+import type { AgentId, ExternalRef, IrBundle, IrSession, LossEntry, OfficialSupport, OfficialTarget, OfficialVerifyResult, SyncDecision } from '@sessionport/core';
 
 export type ReadableAgent = 'kimi-code' | 'command-code' | 'dsh' | 'codex' | 'opencode';
 
@@ -41,6 +41,18 @@ export interface SessionEventRow {
   synthetic?: boolean;
 }
 
+/** 子代理会话摘要：列表用，不含事件（点开后再按 childId 拉） */
+export interface ChildSessionSummary {
+  /** IR child session id（点击时作为 childId 传回） */
+  id: string;
+  nativeSessionId?: string;
+  label?: string;
+  title?: string;
+  profile?: string;
+  events: number;
+  viaToolCallId?: string;
+}
+
 export interface ReadResult {
   agent: AgentId;
   sessionId: string;
@@ -52,6 +64,12 @@ export interface ReadResult {
   truncated: boolean;
   /** 会话总事件数（用于「加载更多」） */
   totalEvents: number;
+  /** 当前读的是子代理会话时，指向父会话 IR id */
+  parentSessionId?: string;
+  /** 当前 sessionId 是否是子代理（UI 用来显示「返回主会话」） */
+  isChild?: boolean;
+  /** 仅根会话返回：可下钻的子代理会话 */
+  children: ChildSessionSummary[];
 }
 
 /** 可序列化的同步状态（renderer 不 import core 类型） */
@@ -200,7 +218,36 @@ function normalizeSummary(item: unknown): SessionRow {
   };
 }
 
-export async function readSession(agent: AgentId, ref: SessionRefInput, limit = 400): Promise<ReadResult> {
+/** 从 bundle 里选根会话或指定子代理；纯函数，便于单测 */
+export function selectSession(
+  bundle: IrBundle,
+  childId?: string,
+): { session: IrSession; isChild: boolean; children: ChildSessionSummary[] } {
+  if (childId === undefined || childId.length === 0) {
+    return { session: bundle.root, isChild: false, children: summarizeChildren(bundle) };
+  }
+  const found = bundle.children.find(
+    (child) => child.session.id === childId || child.session.source.nativeSessionId === childId,
+  );
+  if (found === undefined) {
+    throw new AppError('session.childNotFound', '找不到这个子代理会话: ' + childId, { childId });
+  }
+  return { session: found.session, isChild: true, children: [] };
+}
+
+function summarizeChildren(bundle: IrBundle): ChildSessionSummary[] {
+  return bundle.children.map((child) => {
+    const summary: ChildSessionSummary = { id: child.session.id, events: child.session.events.length };
+    if (child.session.source.nativeSessionId !== undefined) summary.nativeSessionId = child.session.source.nativeSessionId;
+    if (child.label !== undefined) summary.label = child.label;
+    if (child.session.meta.title !== undefined) summary.title = child.session.meta.title;
+    if (child.session.meta.profile !== undefined) summary.profile = child.session.meta.profile;
+    if (child.viaToolCallId !== undefined) summary.viaToolCallId = child.viaToolCallId;
+    return summary;
+  });
+}
+
+export async function readSession(agent: AgentId, ref: SessionRefInput, limit = 400, childId?: string): Promise<ReadResult> {
   const reader = READERS[agent];
   if (!reader) {
     throw new AppError('session.noReader', agent + ' 还没有 reader（当前可读：' + readableAgents().join(', ') + '）', {
@@ -209,7 +256,8 @@ export async function readSession(agent: AgentId, ref: SessionRefInput, limit = 
     });
   }
   const bundle = await reader(ref);
-  const events = bundle.root.events;
+  const picked = selectSession(bundle, childId);
+  const events = picked.session.events;
   const rows: SessionEventRow[] = [];
   for (const event of events.slice(0, limit)) {
     if (event.kind === 'message') {
@@ -229,13 +277,15 @@ export async function readSession(agent: AgentId, ref: SessionRefInput, limit = 
   }
   return {
     agent,
-    sessionId: bundle.root.source.nativeSessionId ?? bundle.root.id,
-    title: bundle.root.meta.title,
-    cwd: bundle.root.meta.cwd,
+    sessionId: picked.session.source.nativeSessionId ?? picked.session.id,
+    title: picked.session.meta.title,
+    cwd: picked.session.meta.cwd,
     events: rows,
-    notices: bundle.root.notices,
+    notices: picked.session.notices,
     truncated: events.length > rows.length,
     totalEvents: events.length,
+    ...(picked.isChild ? { isChild: true, parentSessionId: bundle.root.id } : {}),
+    children: picked.children,
   };
 }
 

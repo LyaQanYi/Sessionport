@@ -179,7 +179,9 @@ The packaged app is unsigned by default (`mac.identity: null`), so first launch 
 right-click → Open or `xattr -dr com.apple.quarantine`.
 
 Current screens: session browser (all agents), reader (IR events, notices, resume command), migration with
-dry-run loss preview before writing. IPC is a small typed allow-list with zod validation in the main process.
+dry-run loss preview before writing. The reader also lists sub-agent sessions (e.g. Claude Code's on-disk
+subagent transcripts) and lets you drill into each one. IPC is a small typed allow-list with zod validation in
+the main process.
 
 The UI is bilingual (zh-CN / en-US): it follows the system language by default and Settings → Language can
 pin one; the choice is stored locally and applies immediately (loss/notice descriptions are translated by code).
