@@ -28,3 +28,21 @@ export function projectDir(configDir: string, cwd: string): string {
 export function sessionFilePath(configDir: string, cwd: string, sessionId: string): string {
   return join(projectDir(configDir, cwd), sessionId + '.jsonl');
 }
+
+/** 主会话旁边的同名目录：<projectDir>/<sessionId>/ */
+export function sessionDirPath(configDir: string, cwd: string, sessionId: string): string {
+  return join(projectDir(configDir, cwd), sessionId);
+}
+
+/** Claude 原生子代理 transcript 目录：<projectDir>/<sessionId>/subagents/ */
+export function subagentsDirPath(configDir: string, cwd: string, sessionId: string): string {
+  return join(sessionDirPath(configDir, cwd, sessionId), 'subagents');
+}
+
+export function subagentFilePath(configDir: string, cwd: string, sessionId: string, agentId: string): string {
+  return join(subagentsDirPath(configDir, cwd, sessionId), 'agent-' + agentId + '.jsonl');
+}
+
+export function subagentMetaPath(configDir: string, cwd: string, sessionId: string, agentId: string): string {
+  return join(subagentsDirPath(configDir, cwd, sessionId), 'agent-' + agentId + '.meta.json');
+}

@@ -90,8 +90,9 @@ node packages/cli/src/index.ts sync "dsh:<session-dir>" --to command-code --regi
 | Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index 注册 | ✅ `codex exec resume` | 0.163.0 |
 | opencode | ✅ `opencode export` JSON | ✅ `opencode import` | ✅ `opencode run --session` | 1.19.3 |
 
-子代理会话：加 `--include-children`。DSH 保留原生父子树；Claude Code 和 Command Code 没有父子概念，
-子代理会被写成独立会话（内容保留，父子关系记入损失清单）。
+子代理会话：加 `--include-children`。DSH 和 Claude Code 保留原生父子树（Claude Code 写成
+`<sessionId>/subagents/agent-<id>.jsonl` + `meta.json`）；Command Code 没有父子概念，子代理会被写成
+独立会话（内容保留，父子关系记入损失清单）。
 
 ## 保真度是怎么算的
 
