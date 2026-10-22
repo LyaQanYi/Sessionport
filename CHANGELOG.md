@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [0.1.1] — 2026-10-22
+
+First public release.
+
+- npm package is **`sesport`** (`sesp` was rejected by npm as "too similar to existing packages"),
+  with bins `sesport` / `sesp` / `sessionport`. The registry treats the CI publish as a staged
+  release; the final `latest` tag points at `0.1.1`.
+- GitHub repo: <https://github.com/LyaQanYi/Sessionport>; desktop dmg/zip attached to the
+  `v0.1.1` GitHub release.
+
 ## [Unreleased]
 
 ### Added
