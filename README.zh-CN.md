@@ -172,6 +172,7 @@ cd apps/desktop && SESSIONPORT_SMOKE=1 ./node_modules/.bin/electron .
 `xattr -dr com.apple.quarantine`。
 
 当前界面：跨 agent 的会话浏览器、阅读器（IR 事件、notices、resume 命令）、带 dry-run 损失预览的迁移页。
+阅读器还会列出子代理会话（例如 Claude Code 落盘的 subagent transcript），可以逐条点进去查看。
 IPC 是主进程里一份很小的类型化白名单，带 zod 校验。
 
 界面支持中英双语（zh-CN / en-US）：默认跟随系统语言，设置 → 语言可以固定其中一种；

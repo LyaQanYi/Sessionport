@@ -29,6 +29,16 @@ export interface SessionEventRow {
   synthetic?: boolean;
 }
 
+export interface ChildSessionSummary {
+  id: string;
+  nativeSessionId?: string;
+  label?: string;
+  title?: string;
+  profile?: string;
+  events: number;
+  viaToolCallId?: string;
+}
+
 export interface ReadResult {
   agent: AgentId;
   sessionId: string;
@@ -38,6 +48,11 @@ export interface ReadResult {
   notices: Array<{ code: string; message: string; count?: number; severity: string }>;
   truncated: boolean;
   totalEvents: number;
+  /** 当前是子代理会话时，父会话 IR id */
+  parentSessionId?: string;
+  isChild?: boolean;
+  /** 根会话才有：可下钻的子代理摘要 */
+  children: ChildSessionSummary[];
 }
 
 export interface LossEntry {
@@ -188,7 +203,8 @@ export function sessionRefOf(row: SessionRow): SessionRef {
 
 export const api = {
   listSessions: () => invoke<ListResult>('sessions:list'),
-  readSession: (agent: AgentId, ref: SessionRef, limit?: number) => invoke<ReadResult>('sessions:read', { agent, ...ref, limit }),
+  readSession: (agent: AgentId, ref: SessionRef, limit?: number, childId?: string) =>
+    invoke<ReadResult>('sessions:read', { agent, ...ref, limit, childId }),
   previewMigration: (agent: AgentId, ref: SessionRef, target: AgentId, options: MigrationOptions = {}) =>
     invoke<MigrationPreview>('migrate:preview', { agent, ...ref, target, ...options }),
   runMigration: (payload: { agent: AgentId; ref: SessionRef; target: AgentId } & MigrationOptions) =>
