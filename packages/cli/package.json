@@ -1,8 +1,9 @@
 {
   "name": "sesport",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "bin": {
+    "sesport": "./dist/index.js",
     "sesp": "./dist/index.js",
     "sessionport": "./dist/index.js"
   },

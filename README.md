@@ -27,8 +27,8 @@ Requires **Node.js >= 24** (TypeScript sources are executed via Node type stripp
 single bundled JS file).
 
 ```bash
-npm install -g sesport          # 命令 sesp（sessionport 全名别名也一起安装）
-sessionport inspect "kimi:./session_.../"
+npm install -g sesport          # commands: sesport / sesp / sessionport
+sesport inspect "kimi:./session_.../"
 ```
 
 The desktop app is distributed separately as an unsigned macOS `.dmg`/zip (see the releases page or
