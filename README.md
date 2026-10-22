@@ -1,6 +1,7 @@
 # sessionport
 
 [![CI](https://github.com/LyaQanYi/Sessionport/actions/workflows/ci.yml/badge.svg)](https://github.com/LyaQanYi/Sessionport/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/sesport.svg)](https://www.npmjs.com/package/sesport)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Move a live AI coding-agent session from one CLI to another — and keep going.**
