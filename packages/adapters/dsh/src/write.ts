@@ -441,6 +441,11 @@ function runSummaryCommand(command: string, input: string, timeoutMs = 180000): 
       if (code === 0) resolve(stdout);
       else reject(new Error('summarizer exited ' + String(code) + ': ' + stderr.slice(-400)));
     });
+    // 摘要命令可能不读 stdin 就退出（如 printf / true）；此时写入会触发 EPIPE，
+    // 未捕获会让整个进程崩掉（CI 上表现为 test 文件级失败），这里显式忽略。
+    child.stdin.on('error', () => {
+      // ignored: 命令不消费 stdin 是合法情况，结果以退出码 / stdout 为准
+    });
     child.stdin.write(input);
     child.stdin.end();
   });

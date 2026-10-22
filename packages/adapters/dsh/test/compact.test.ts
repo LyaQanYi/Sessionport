@@ -55,6 +55,24 @@ test('compact：summaryCommand 可注入 LLM 摘要（用假命令验证 plumbin
   }
 });
 
+test('compact：摘要命令不消费 stdin（EPIPE）不会崩，回退抽取式摘要', async () => {
+  const home = await makeTempDir('compact-epipe-');
+  try {
+    const bundle = buildBigBundle('/tmp/sessionport-compact-epipe/project');
+    const report = await writeDshSession(bundle, {
+      home,
+      id: 'session-55555555-5555-4555-8555-555555555555',
+      compact: true,
+      compactKeepRecentSteps: 2,
+      summaryCommand: 'true',
+    });
+    assert.ok(report.losses.some((loss) => loss.code === 'dsh.summary-llm-failed'));
+    assert.ok(report.rows.some((row) => row.type === 'compaction/summary'));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('compact：保留全部事件，写入合法 compaction 链（start/summary/checkpoint/end）', async () => {
   const home = await makeTempDir('compact-');
   try {
