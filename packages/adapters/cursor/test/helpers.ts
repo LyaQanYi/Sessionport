@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { IR_VERSION } from '@sessionport/core';
-import type { IrBundle, IrEvent, IrMeta } from '@sessionport/core';
+import type { IrBundle, IrEvent, IrEventInput, IrMeta } from '@sessionport/core';
 
 import { workspaceIdentifierFor } from '../src/paths.ts';
 import type { CursorWorkspaceIdentifier } from '../src/paths.ts';
@@ -335,7 +335,7 @@ function seedComposer(
 // ---------------------------------------------------------------------------
 
 export function makeIrBundle(
-  events: Array<Omit<IrEvent, 'id' | 'parentId'>>,
+  events: IrEventInput[],
   meta: IrMeta = {},
   children: IrBundle['children'] = [],
 ): IrBundle {
@@ -361,24 +361,24 @@ export function makeIrBundle(
   };
 }
 
-export function userMessage(text: string, at = new Date(BASE_MS).toISOString()) {
-  return { kind: 'message', role: 'user', parts: [{ type: 'text', text }], at } as const;
+export function userMessage(text: string, at = new Date(BASE_MS).toISOString()): IrEventInput {
+  return { kind: 'message', role: 'user', parts: [{ type: 'text', text }], at };
 }
 
-export function assistantMessage(text: string, at = new Date(BASE_MS + 1000).toISOString()) {
-  return { kind: 'message', role: 'assistant', parts: [{ type: 'text', text }], at } as const;
+export function assistantMessage(text: string, at = new Date(BASE_MS + 1000).toISOString()): IrEventInput {
+  return { kind: 'message', role: 'assistant', parts: [{ type: 'text', text }], at };
 }
 
-export function reasoningEvent(text: string, at = new Date(BASE_MS + 500).toISOString()) {
-  return { kind: 'reasoning', reasoning: { kind: 'plain', text }, at } as const;
+export function reasoningEvent(text: string, at = new Date(BASE_MS + 500).toISOString()): IrEventInput {
+  return { kind: 'reasoning', reasoning: { kind: 'plain', text }, at };
 }
 
-export function toolCallEvent(callId: string, name: string, input: unknown, at = new Date(BASE_MS + 1500).toISOString()) {
-  return { kind: 'tool_call', callId, name, input, at } as const;
+export function toolCallEvent(callId: string, name: string, input: unknown, at = new Date(BASE_MS + 1500).toISOString()): IrEventInput {
+  return { kind: 'tool_call', callId, name, input, at };
 }
 
-export function toolResultEvent(callId: string, text: string, at = new Date(BASE_MS + 2000).toISOString()) {
-  return { kind: 'tool_result', callId, content: [{ type: 'text', text }], at } as const;
+export function toolResultEvent(callId: string, text: string, at = new Date(BASE_MS + 2000).toISOString()): IrEventInput {
+  return { kind: 'tool_result', callId, content: [{ type: 'text', text }], at };
 }
 
 export { BASE_MS, BUBBLE_TYPE_AI, BUBBLE_TYPE_HUMAN };

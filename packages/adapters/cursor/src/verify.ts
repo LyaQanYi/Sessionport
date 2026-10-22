@@ -549,7 +549,7 @@ export interface CursorAppSmokeResult {
 
 function runCommand(command: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; error?: string }> {
   return new Promise((resolvePromise) => {
-    execFile(command, args, { timeout: timeoutMs, stdio: 'ignore' }, (error) => {
+    execFile(command, args, { timeout: timeoutMs }, (error) => {
       if (error === null || error === undefined) resolvePromise({ ok: true });
       else resolvePromise({ ok: false, error: error.message });
     });

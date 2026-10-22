@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
-import type { IrBundle, IrEvent } from '@sessionport/core';
+import type { IrBundle, IrEvent, IrEventDraft } from '@sessionport/core';
 import {
   readCommandCodeSession,
   resumeSmokeCommandCode,
@@ -16,7 +16,7 @@ import {
 const TEST_CWD = '/tmp/sessionport-cc-test-project';
 const TEST_ID = '11111111-1111-4111-8111-111111111111';
 
-function chain(events: Array<Omit<IrEvent, 'parentId'>>): IrEvent[] {
+function chain(events: Array<IrEventDraft>): IrEvent[] {
   return events.map((event, index) => ({
     ...event,
     parentId: index === 0 ? null : (events[index - 1] as { id: string }).id,

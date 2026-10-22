@@ -589,6 +589,11 @@ async function writeOneSession(session: IrSession, options: {
   compactKeepRecentSteps?: number;
   compactBudgetChars?: number;
   summaryCommand?: string;
+  slim?: boolean;
+  keepRecentReasoning?: number;
+  keepRecentSteps?: number;
+  maxToolResultChars?: number;
+  maxToolCallChars?: number;
 }): Promise<{ filePath: string; sessionDir: string; header: DshSessionHeaderLine; rows: DshEventLine[]; counts: WriteDshResult['written'] }> {
   const cwd = options.cwd;
   const createdAtMs = msOf(session.meta.createdAt, Date.now());

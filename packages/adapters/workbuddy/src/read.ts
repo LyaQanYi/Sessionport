@@ -2,11 +2,11 @@ import { basename } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
 import type {
-  IrBoundaryEvent,
   IrBundle,
   IrChildSession,
   IrContent,
   IrEvent,
+  IrEventInput,
   IrMessageEvent,
   IrNotice,
   IrReasoningEvent,
@@ -66,13 +66,6 @@ export interface WorkBuddyConvertStats {
   toolCalls: number;
   toolResults: number;
 }
-
-type EventInput =
-  | Omit<IrMessageEvent, 'id' | 'parentId'>
-  | Omit<IrReasoningEvent, 'id' | 'parentId'>
-  | Omit<IrToolCallEvent, 'id' | 'parentId'>
-  | Omit<IrToolResultEvent, 'id' | 'parentId'>
-  | Omit<IrBoundaryEvent, 'id' | 'parentId'>;
 
 interface Counters {
   syntheticUser: number;
@@ -184,7 +177,7 @@ export function workBuddyLinesToSession(lines: WbLine[], options: ConvertWorkBud
   }
   const fallbackAt = firstTimestamp ?? options.db?.createdAt ?? new Date(0).toISOString();
 
-  const push = (event: EventInput, at: string): void => {
+  const push = (event: IrEventInput, at: string): void => {
     index += 1;
     events.push({
       ...(event as IrEvent),

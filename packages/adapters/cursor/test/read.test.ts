@@ -119,17 +119,21 @@ test('readCursorSession 把 composer/bubble 映射成 IR', async () => {
       'tool_result',
     ]);
 
-    const first = bundle.root.events[0];
+    const first = bundle.root.events[0]!;
     assert.equal(first.kind, 'message');
-    assert.equal(first.role, 'user');
-    assert.equal(first.parts[0]?.type, 'text');
+    if (first.kind === 'message') {
+      assert.equal(first.role, 'user');
+      assert.equal(first.parts[0]?.type, 'text');
+    }
 
-    const reasoning = bundle.root.events[1];
+    const reasoning = bundle.root.events[1]!;
     assert.equal(reasoning.kind, 'reasoning');
-    assert.equal(reasoning.reasoning.kind, 'plain');
-    if (reasoning.reasoning.kind === 'plain') assert.equal(reasoning.reasoning.text, '先定位密钥。');
+    if (reasoning.kind === 'reasoning') {
+      assert.equal(reasoning.reasoning.kind, 'plain');
+      if (reasoning.reasoning.kind === 'plain') assert.equal(reasoning.reasoning.text, '先定位密钥。');
+    }
 
-    const toolCall = bundle.root.events[3];
+    const toolCall = bundle.root.events[3]!;
     assert.equal(toolCall.kind, 'tool_call');
     if (toolCall.kind === 'tool_call') {
       assert.equal(toolCall.name, 'glob_file_search');
@@ -137,18 +141,18 @@ test('readCursorSession 把 composer/bubble 映射成 IR', async () => {
       assert.deepEqual(toolCall.input, { globPattern: '**/id_ed25519*' });
     }
 
-    const toolResult = bundle.root.events[4];
+    const toolResult = bundle.root.events[4]!;
     assert.equal(toolResult.kind, 'tool_result');
     if (toolResult.kind === 'tool_result') {
       assert.equal(toolResult.callId, 'call-1');
       assert.equal(toolResult.content[0]?.type, 'json');
     }
 
-    const synthetic = bundle.root.events[7];
+    const synthetic = bundle.root.events[7]!;
     assert.equal(synthetic.kind, 'message');
     if (synthetic.kind === 'message') assert.equal(synthetic.synthetic, true);
 
-    const imageMessage = bundle.root.events[8];
+    const imageMessage = bundle.root.events[8]!;
     assert.equal(imageMessage.kind, 'message');
     if (imageMessage.kind === 'message') {
       const image = imageMessage.parts.find((part) => part.type === 'image');

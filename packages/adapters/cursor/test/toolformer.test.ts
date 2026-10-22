@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { join } from 'node:path';
 
-import type { IrEvent } from '@sessionport/core';
+import type { IrEvent, IrEventInput } from '@sessionport/core';
 
 import { CAPABILITY_TOOL_FORMER, buildCursorToolFormerData, resolveCursorTool } from '../src/index.ts';
 import { readCursorSession, verifyCursorSession, writeCursorSession } from '../src/index.ts';
@@ -277,7 +277,7 @@ test('工具结果错误态：status=error、ToolResultError、读回 isError', 
           content: [{ type: 'text', text: 'command failed' }],
           isError: true,
           at: at(1100),
-        } as unknown as Omit<IrEvent, 'id' | 'parentId'>,
+        } as unknown as IrEventInput,
         toolCallEvent('err-2', 'Grep', { pattern: 'foo' }, at(1200)),
         {
           kind: 'tool_result',
@@ -285,7 +285,7 @@ test('工具结果错误态：status=error、ToolResultError、读回 isError', 
           content: [{ type: 'text', text: 'ripgrep: invalid pattern' }],
           isError: true,
           at: at(1300),
-        } as unknown as Omit<IrEvent, 'id' | 'parentId'>,
+        } as unknown as IrEventInput,
       ],
       { cwd: fixture.cwd, title: '错误态' },
     );
@@ -417,7 +417,7 @@ test('JSON 结果也按源 IR 精确往返（_sessionport.content）', async () 
           callId: 'json-1',
           content: [{ type: 'json', value: { exit_code: 0, stdout: 'ok' } }],
           at: at(1100),
-        } as unknown as Omit<IrEvent, 'id' | 'parentId'>,
+        } as unknown as IrEventInput,
       ],
       { cwd: fixture.cwd, title: 'JSON 结果' },
     );

@@ -104,6 +104,23 @@ export type IrEvent =
   | IrToolResultEvent
   | IrBoundaryEvent;
 
+/**
+ * 采集侧的事件输入：不含 id / parentId，由会话链构建器补齐。
+ *
+ * 必须是按 kind 判别的联合。直接对 IrEvent 做 Omit 会坍缩成所有成员公共的
+ * 属性（只剩 kind / at / _native），导致 role / callId / reasoning 等
+ * 按 kind 区分的字段在字面量里被判为未知属性。
+ */
+export type IrEventInput =
+  | Omit<IrMessageEvent, 'id' | 'parentId'>
+  | Omit<IrReasoningEvent, 'id' | 'parentId'>
+  | Omit<IrToolCallEvent, 'id' | 'parentId'>
+  | Omit<IrToolResultEvent, 'id' | 'parentId'>
+  | Omit<IrBoundaryEvent, 'id' | 'parentId'>;
+
+/** 显式带 id、parentId 待补齐的事件；测试里构造事件链用 */
+export type IrEventDraft = IrEventInput & { id: string };
+
 export type IrPart =
   | { type: 'text'; text: string }
   | { type: 'image'; ref: string };

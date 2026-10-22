@@ -2,12 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { IR_VERSION } from '@sessionport/core';
-import type { IrBundle, IrEvent } from '@sessionport/core';
+import type { IrBundle, IrEvent, IrEventDraft } from '@sessionport/core';
 import { verifyOpencodeExport, writeOpencodeSession } from '../src/index.ts';
 
 const TEST_CWD = '/tmp/sessionport-opencode-test';
 
-function chain(events: Array<Omit<IrEvent, 'parentId'>>): IrEvent[] {
+function chain(events: Array<IrEventDraft>): IrEvent[] {
   return events.map((event, index) => ({ ...event, parentId: index === 0 ? null : (events[index - 1] as { id: string }).id })) as IrEvent[];
 }
 
@@ -35,7 +35,7 @@ test('IR -> opencode 导出 JSON：消息/parts/工具配对结构正确', async
     { kind: 'tool_call', id: 'e4', at: '2026-01-01T00:00:03Z', callId: 'call_1', name: 'bash', input: { command: 'ls' } },
     { kind: 'tool_result', id: 'e5', at: '2026-01-01T00:00:04Z', callId: 'call_1', content: [{ type: 'text', text: 'README.md' }] },
     { kind: 'message', id: 'e6', at: '2026-01-01T00:00:05Z', role: 'assistant', parts: [{ type: 'text', text: '完成' }] },
-  ] as Array<Omit<IrEvent, 'parentId'>>);
+  ] as Array<IrEventDraft>);
 
   const report = await writeOpencodeSession(makeBundle(events), { cwd: TEST_CWD, dryRun: true, apply: false, id: 'ses_000000000000000000000001' });
   const data = report.exportData;
@@ -60,7 +60,7 @@ test('缺失工具结果时保留 running 状态并记损失', async () => {
   const events = chain([
     { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: '跑一下' }] },
     { kind: 'tool_call', id: 'e2', at: '2026-01-01T00:00:01Z', callId: 'call_missing', name: 'bash', input: {} },
-  ] as Array<Omit<IrEvent, 'parentId'>>);
+  ] as Array<IrEventDraft>);
   const report = await writeOpencodeSession(makeBundle(events), { cwd: TEST_CWD, dryRun: true, apply: false, id: 'ses_000000000000000000000002' });
   const tool = report.exportData.messages![1]!.parts![0]!;
   assert.equal(tool.state!.status, 'running');
@@ -71,7 +71,7 @@ test('synthetic 消息默认丢弃', async () => {
   const events = chain([
     { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: 'Current runtime context' }], synthetic: true },
     { kind: 'message', id: 'e2', at: '2026-01-01T00:00:01Z', role: 'user', parts: [{ type: 'text', text: '真实消息' }] },
-  ] as Array<Omit<IrEvent, 'parentId'>>);
+  ] as Array<IrEventDraft>);
   const report = await writeOpencodeSession(makeBundle(events), { cwd: TEST_CWD, dryRun: true, apply: false, id: 'ses_000000000000000000000003' });
   assert.equal(report.exportData.messages!.length, 1);
   assert.ok(report.losses.some((loss) => loss.code === 'opencode.injected-message-dropped'));

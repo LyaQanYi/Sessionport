@@ -8,9 +8,15 @@ importers:
 
   .:
     devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.19.2
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
 
   apps/desktop:
     dependencies:

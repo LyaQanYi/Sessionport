@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
-import type { IrBundle, IrEvent } from '@sessionport/core';
+import type { IrBundle, IrEvent, IrEventDraft } from '@sessionport/core';
 import { readDshSession, readZstdHeaderLine, writeDshSession } from '../src/index.ts';
 
 const TEST_CWD = '/tmp/sessionport-dsh-children';
 
-function chain(events: Array<Omit<IrEvent, 'parentId'>>): IrEvent[] {
+function chain(events: Array<IrEventDraft>): IrEvent[] {
   return events.map((event, index) => ({
     ...event,
     parentId: index === 0 ? null : (events[index - 1] as { id: string }).id,
@@ -22,7 +22,7 @@ function session(id: string, text: string) {
   const events = chain([
     { kind: 'message', id: id + '-e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text }] },
     { kind: 'message', id: id + '-e2', at: '2026-01-01T00:00:01Z', role: 'assistant', parts: [{ type: 'text', text: 'ok' }] },
-  ] as Array<Omit<IrEvent, 'parentId'>>);
+  ] as Array<IrEventDraft>);
   return {
     id,
     source: { agent: 'kimi-code' as const, nativeSessionId: id },

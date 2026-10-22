@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { opencodeCliBinary } from './wire.ts';
+import { opencodeCliBinary, parseOpencodeExport } from './wire.ts';
 import { exportOpencodeSession } from './read.ts';
 import type { OpencodeExport } from './wire.ts';
 
