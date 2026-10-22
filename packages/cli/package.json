@@ -1,8 +1,9 @@
 {
-  "name": "@sessionport/cli",
+  "name": "sesp",
   "version": "0.1.0",
   "type": "module",
   "bin": {
+    "sesp": "./dist/index.js",
     "sessionport": "./dist/index.js"
   },
   "exports": {
@@ -28,12 +29,12 @@
   "description": "sessionport CLI: move AI coding-agent sessions between CLIs via a lossless IR",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sessionport/sessionport.git",
+    "url": "https://github.com/LyaQanYi/Sessionport.git",
     "directory": "packages/cli"
   },
-  "homepage": "https://github.com/sessionport/sessionport#readme",
+  "homepage": "https://github.com/LyaQanYi/Sessionport#readme",
   "bugs": {
-    "url": "https://github.com/sessionport/sessionport/issues"
+    "url": "https://github.com/LyaQanYi/Sessionport/issues"
   },
   "keywords": [
     "ai",

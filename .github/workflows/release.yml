@@ -25,8 +25,8 @@ jobs:
         run: node scripts/build-cli.mjs
       - name: Prepare package files (LICENSE / NOTICE / README)
         run: node scripts/prepare-npm.mjs
-      - name: Publish @sessionport/cli
-        run: pnpm --filter @sessionport/cli publish --access public --no-git-checks
+      - name: Publish sesp
+        run: pnpm --filter sesp publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
