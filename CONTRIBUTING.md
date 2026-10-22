@@ -1,5 +1,7 @@
 # Contributing to sessionport
 
+**English** | [简体中文](CONTRIBUTING.zh-CN.md)
+
 Thanks for helping. sessionport exists because session formats are private and change constantly — the
 project is designed so that **adding an adapter is a bounded, reviewable job**, and so that no adapter can
 silently lose data.

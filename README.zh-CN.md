@@ -231,8 +231,8 @@ SESSIONPORT_OPENCODE_RESUME=1 SESSIONPORT_OPENCODE_MODEL=opencode-go/glm-5.2 pnp
 
 ## 贡献与安全
 
-新增适配器必须附带基准 fixtures，并注明验证时使用的 CLI 版本——见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
-漏洞请按 [SECURITY.md](./SECURITY.md) 报告。
+新增适配器必须附带基准 fixtures，并注明验证时使用的 CLI 版本——见 [CONTRIBUTING.zh-CN.md](./CONTRIBUTING.zh-CN.md)（[English](./CONTRIBUTING.md)）。
+漏洞请按 [SECURITY.zh-CN.md](./SECURITY.zh-CN.md)（[English](./SECURITY.md)）报告。
 
 会话日志包含 prompt、代码，有时还有密钥：sessionport 是本地优先、零遥测的。
 

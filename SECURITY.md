@@ -1,5 +1,7 @@
 # Security policy
 
+**English** | [简体中文](SECURITY.zh-CN.md)
+
 sessionport works on files that contain **prompts, source code, tool output and sometimes secrets**.
 It is local-first: adapters never make network calls and there is no telemetry. The only network traffic
 comes from the target CLIs when *you* ask them to resume a session.
