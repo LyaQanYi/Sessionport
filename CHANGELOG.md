@@ -13,10 +13,18 @@ First public release.
 - GitHub repo: <https://github.com/LyaQanYi/Sessionport>; desktop dmg/zip attached to the
   `v0.1.1` GitHub release.
 
-## [Unreleased]
+## [0.1.2] — 2026-10-22
+
+npm: `sesport@0.1.2` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the
+`v0.1.2` GitHub release; the app version is now aligned with the release version.
 
 ### Added
 
+- **`pnpm typecheck` works and runs in CI.** `typescript` / `@types/node` are declared at the workspace
+  root, and core exports a discriminated `IrEventInput` union so adapters no longer rely on
+  `Omit<IrEvent, ...>` (which collapsed every event kind to its common fields). The fix surfaced and
+  fixed two real bugs: opencode `verify` used a missing import, and the DSH header-frame check printed
+  `NaN bytes`.
 - **Desktop reader: sub-agent sessions.** Sessions that carry children (Claude Code's on-disk subagent
   transcripts, DSH's native sub agents, ...) now show a sub-agent list in the reader; clicking one loads its
   transcript with a "back to main session" action. The IPC read channel gains an optional `childId`.
