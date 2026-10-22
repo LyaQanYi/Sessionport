@@ -12,6 +12,8 @@ jobs:
   publish-npm:
     name: publish CLI to npm
     runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -25,7 +27,8 @@ jobs:
         run: node scripts/build-cli.mjs
       - name: Prepare package files (LICENSE / NOTICE / README)
         run: node scripts/prepare-npm.mjs
-      - name: Publish sesp
+      - name: Publish sesp (skipped when NPM_TOKEN is not configured)
+        if: env.NPM_TOKEN != ''
         run: pnpm --filter sesp publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
