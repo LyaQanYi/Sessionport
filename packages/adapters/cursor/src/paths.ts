@@ -215,6 +215,7 @@ export interface CursorWorkspaceIdentifier {
     path: string;
     scheme: 'file';
   };
+  [key: string]: unknown;
 }
 
 export interface CursorPaths {

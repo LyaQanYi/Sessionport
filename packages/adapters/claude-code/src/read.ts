@@ -27,17 +27,15 @@ import { basename, dirname, join, resolve } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
 import type {
-  IrBoundaryEvent,
   IrBundle,
   IrChildSession,
   IrContent,
   IrEvent,
+  IrEventInput,
   IrMessageEvent,
   IrNotice,
   IrPart,
-  IrReasoningEvent,
   IrSession,
-  IrToolCallEvent,
   IrToolResultEvent,
 } from '@sessionport/core';
 
@@ -78,13 +76,6 @@ const IGNORED_ROW_TYPES = new Set<string>([
   'result',
   'ai-title',
 ]);
-
-type EventInput =
-  | Omit<IrMessageEvent, 'id' | 'parentId'>
-  | Omit<IrReasoningEvent, 'id' | 'parentId'>
-  | Omit<IrToolCallEvent, 'id' | 'parentId'>
-  | Omit<IrToolResultEvent, 'id' | 'parentId'>
-  | Omit<IrBoundaryEvent, 'id' | 'parentId'>;
 
 interface ClaudeRow {
   type?: string;
@@ -328,7 +319,7 @@ interface EventSink {
 function emitRows(rows: ClaudeRow[], sink: EventSink): void {
   const counters = sink.counters;
   let eventIndex = 0;
-  const push = (event: EventInput, at: string): void => {
+  const push = (event: IrEventInput, at: string): void => {
     eventIndex += 1;
     sink.events.push({
       ...(event as IrEvent),

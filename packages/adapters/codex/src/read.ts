@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 
 import { IR_VERSION } from '@sessionport/core';
-import type { IrBundle, IrEvent, IrMessageEvent, IrNotice, IrPart, IrSession } from '@sessionport/core';
+import type { IrBundle, IrEvent, IrEventInput, IrMessageEvent, IrNotice, IrPart, IrSession } from '@sessionport/core';
 
 import type { CodexContentBlock, CodexIndexEntry, CodexLine, CodexSessionMeta } from './wire.ts';
 import { codexHome, listRolloutFiles, readRollout, readSessionIndex, sessionIdFromRolloutPath } from './wire.ts';
@@ -110,7 +110,7 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
   let createdAt: string | undefined;
   let historyMode: string | undefined;
 
-  const push = (event: Omit<IrEvent, 'id' | 'parentId'>): void => {
+  const push = (event: IrEventInput): void => {
     index += 1;
     const id = 'codex:e' + String(index).padStart(6, '0');
     events.push({ ...(event as IrEvent), id, parentId: events.length > 0 ? events[events.length - 1]!.id : null });
@@ -152,7 +152,7 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
           const text = textFromBlocks(payload.content, new Set(['input_text', 'text']));
           if (text.length > 0) {
             const synthetic = INJECTED_USER_PREFIXES.some((prefix) => text.startsWith(prefix));
-            const event: IrMessageEvent = { kind: 'message', at, role: 'user', parts: [{ type: 'text', text }] };
+            const event: IrEventInput = { kind: 'message', at, role: 'user', parts: [{ type: 'text', text }] };
             if (synthetic) event.synthetic = true;
             push(event);
           }

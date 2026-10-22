@@ -75,7 +75,7 @@ export interface OpencodeMessageInfo {
   id?: string;
   sessionID?: string;
   role?: 'user' | 'assistant' | string;
-  parentID?: string;
+  parentID?: string | null;
   agent?: string;
   model?: OpencodeModel;
   modelID?: string;

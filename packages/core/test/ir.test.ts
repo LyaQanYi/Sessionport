@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { IR_VERSION, bundleEventCount, contentToText, eventKindCounts, validateIrBundle } from '../src/index.ts';
-import type { IrBundle, IrEvent } from '../src/index.ts';
+import type { IrBundle, IrEvent, IrEventDraft } from '../src/index.ts';
 
 function bundleWith(events: IrEvent[]): IrBundle {
   return {
@@ -20,7 +20,7 @@ function bundleWith(events: IrEvent[]): IrBundle {
   };
 }
 
-function chain(events: Omit<IrEvent, 'parentId'>[]): IrEvent[] {
+function chain(events: IrEventDraft[]): IrEvent[] {
   return events.map((e, i) => ({ ...e, parentId: i === 0 ? null : events[i - 1]!.id })) as IrEvent[];
 }
 
@@ -33,7 +33,7 @@ test('链断裂会被校验出来', () => {
   const events = chain([
     { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: 'hi' }] },
     { kind: 'message', id: 'e2', at: '2026-01-01T00:00:01Z', role: 'assistant', parts: [{ type: 'text', text: 'hey' }] },
-  ] as Omit<IrEvent, 'parentId'>[]);
+  ] as IrEventDraft[]);
   const bundle = bundleWith(events);
   assert.deepEqual(validateIrBundle(bundle), []);
   events[1]!.parentId = 'nope';
@@ -45,7 +45,7 @@ test('链断裂会被校验出来', () => {
 test('head 与链尾不一致会被校验出来', () => {
   const events = chain([
     { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: 'hi' }] },
-  ] as Omit<IrEvent, 'parentId'>[]);
+  ] as IrEventDraft[]);
   const bundle = bundleWith(events);
   bundle.root.head = 'e1';
   assert.deepEqual(validateIrBundle(bundle), []);
@@ -59,7 +59,7 @@ test('事件统计与内容抽取', () => {
     { kind: 'tool_call', id: 'e2', at: '2026-01-01T00:00:01Z', callId: 'c1', name: 'Bash', input: {} },
     { kind: 'tool_result', id: 'e3', at: '2026-01-01T00:00:02Z', callId: 'c1', content: [{ type: 'text', text: 'out' }] },
     { kind: 'reasoning', id: 'e4', at: '2026-01-01T00:00:03Z', reasoning: { kind: 'plain', text: 'think' } },
-  ] as Omit<IrEvent, 'parentId'>[]);
+  ] as IrEventDraft[]);
   const bundle = bundleWith(events);
   assert.equal(bundleEventCount(bundle), 4);
   assert.deepEqual(eventKindCounts(bundle.root), { message: 1, tool_call: 1, tool_result: 1, reasoning: 1 });

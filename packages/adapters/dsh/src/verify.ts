@@ -111,12 +111,13 @@ function expandAssistantStream(stream: unknown[]): TimedChunk[] {
     if (!isSafeInt(index, true)) throw new Error('compact stream record has invalid index');
     if (!isSafeInt(candidate.time0)) throw new Error('compact stream record has invalid time0');
     if (!Array.isArray(candidate.dt)) throw new Error('compact stream record has invalid dt');
+    const dt = candidate.dt as number[];
     let time = candidate.time0 as number;
     if (type === 'text-chunks' || type === 'reasoning-chunks') {
       const texts = candidate.texts;
       if (!Array.isArray(texts) || texts.some((text) => typeof text !== 'string')) throw new Error('compact text record has invalid texts');
       texts.forEach((text, position) => {
-        if (position > 0) time += candidate.dt[position - 1] as number;
+        if (position > 0) time += dt[position - 1]!;
         out.push({ time, chunk: { type: type === 'text-chunks' ? 'text-delta' : 'reasoning-delta', index, text } });
       });
       continue;
@@ -127,7 +128,7 @@ function expandAssistantStream(stream: unknown[]): TimedChunk[] {
         throw new Error('compact tool-call record is invalid');
       }
       args.forEach((argumentsDelta, position) => {
-        if (position > 0) time += candidate.dt[position - 1] as number;
+        if (position > 0) time += dt[position - 1]!;
         const chunk: Record<string, unknown> = { type: 'tool-call-delta', index, id: candidate.id, argumentsDelta };
         if (typeof candidate.name === 'string') chunk.name = candidate.name;
         out.push({ time, chunk });
@@ -322,7 +323,7 @@ export async function verifyDshSession(options: VerifyDshOptions): Promise<Verif
     const buffer = await readFile(resolved.filePath);
     const text = zstdDecompressSync(buffer.subarray(first.start, first.end)).toString('utf8');
     const newline = text.indexOf('\n');
-    checks.push({ name: 'header-first-frame-single-line', ok: newline === text.length - 1, detail: 'first frame ' + first.end - first.start + ' bytes' });
+    checks.push({ name: 'header-first-frame-single-line', ok: newline === text.length - 1, detail: 'first frame ' + (first.end - first.start) + ' bytes' });
   } catch (error) {
     checks.push({ name: 'header-first-frame-single-line', ok: false, detail: String(error) });
   }

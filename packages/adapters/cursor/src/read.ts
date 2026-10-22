@@ -18,6 +18,7 @@ import type {
   IrChildSession,
   IrContent,
   IrEvent,
+  IrEventInput,
   IrMessageEvent,
   IrNotice,
   IrPart,
@@ -475,7 +476,7 @@ function loadComposerSession(
 
   const fallbackAt = msToIso(data.createdAt ?? row.createdAt) ?? new Date(0).toISOString();
   const events: IrEvent[] = [];
-  const push = (event: Omit<IrEvent, 'id' | 'parentId'>): void => {
+  const push = (event: IrEventInput): void => {
     const id = 'cursor:e' + String(events.length + 1).padStart(6, '0');
     const parentId = events.length === 0 ? null : (events[events.length - 1] as IrEvent).id;
     events.push({ ...(event as IrEvent), id, parentId });
@@ -505,7 +506,7 @@ function loadComposerSession(
         counters.emptyBubbles += 1;
         continue;
       }
-      const event: IrMessageEvent = { kind: 'message', at, role: 'user', parts };
+      const event: IrEventInput = { kind: 'message', at, role: 'user', parts };
       if (bubble.isSimulatedMsg === true) {
         event.synthetic = true;
         counters.synthetic += 1;
@@ -855,7 +856,7 @@ function loadWithoutHeader(
   counters.missingBubbles += missing.length;
   counters.badBubbles += bad.length;
   const events: IrEvent[] = [];
-  const push = (event: Omit<IrEvent, 'id' | 'parentId'>): void => {
+  const push = (event: IrEventInput): void => {
     const id = 'cursor:e' + String(events.length + 1).padStart(6, '0');
     const parentId = events.length === 0 ? null : (events[events.length - 1] as IrEvent).id;
     events.push({ ...(event as IrEvent), id, parentId });

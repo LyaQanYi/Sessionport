@@ -5,13 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { IR_VERSION, validateIrBundle } from '@sessionport/core';
-import type { IrBundle, IrEvent } from '@sessionport/core';
+import type { IrBundle, IrEvent, IrEventDraft } from '@sessionport/core';
 import { readClaudeSession, writeClaudeSession } from '../src/index.ts';
 
 const TEST_CWD = '/tmp/sessionport-claude-read';
 const SESSION_ID = 'aaaaaaaa-1111-4111-8111-111111111111';
 
-function chain(events: Array<Omit<IrEvent, 'parentId'>>): IrEvent[] {
+function chain(events: Array<IrEventDraft>): IrEvent[] {
   return events.map((event, index) => ({ ...event, parentId: index === 0 ? null : (events[index - 1] as { id: string }).id })) as IrEvent[];
 }
 
@@ -52,7 +52,7 @@ test('round-trip: writeClaudeSession 写出的 IR 能被 readClaudeSession 读�
       { kind: 'tool_call', id: 'e3', at: '2026-01-01T00:00:02Z', callId: 'tool_1', name: 'Bash', input: { command: 'ls' } },
       { kind: 'tool_result', id: 'e4', at: '2026-01-01T00:00:03Z', callId: 'tool_1', content: [{ type: 'text', text: 'a\nb' }], isError: true },
       { kind: 'message', id: 'e5', at: '2026-01-01T00:00:04Z', role: 'assistant', parts: [{ type: 'text', text: '完成' }] },
-    ] as Array<Omit<IrEvent, 'parentId'>>);
+    ] as Array<IrEventDraft>);
 
     const report = await writeClaudeSession(makeBundle(events), {
       configDir: dir,

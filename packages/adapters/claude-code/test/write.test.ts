@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
-import type { IrBundle, IrEvent } from '@sessionport/core';
+import type { IrBundle, IrEvent, IrEventDraft } from '@sessionport/core';
 import { writeClaudeSession } from '../src/write.ts';
 import { verifyClaudeSession } from '../src/verify.ts';
 
-function chain(events: Omit<IrEvent, 'parentId'>[]): IrEvent[] {
+function chain(events: IrEventDraft[]): IrEvent[] {
   return events.map((e, i) => ({ ...e, parentId: i === 0 ? null : events[i - 1]!.id })) as IrEvent[];
 }
 
@@ -39,7 +39,7 @@ test('把 IR 写成 Claude 行并结构化自检通过', async () => {
       { kind: 'tool_call', id: 'e4', at: '2026-01-01T00:00:03Z', callId: 'tool_1', name: 'Bash', input: { command: 'ls' } },
       { kind: 'tool_result', id: 'e5', at: '2026-01-01T00:00:04Z', callId: 'tool_1', content: [{ type: 'text', text: 'a\nb' }] },
       { kind: 'message', id: 'e6', at: '2026-01-01T00:00:05Z', role: 'assistant', parts: [{ type: 'text', text: '完成' }] },
-    ] as Omit<IrEvent, 'parentId'>[]);
+    ] as IrEventDraft[]);
     const bundle = makeBundle(events);
     const report = await writeClaudeSession(bundle, {
       configDir: dir,
@@ -69,7 +69,7 @@ test('缺失的 tool_result 会被合成占位，保证可加载', async () => {
     const events = chain([
       { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: '跑一下' }] },
       { kind: 'tool_call', id: 'e2', at: '2026-01-01T00:00:01Z', callId: 'tool_missing', name: 'Bash', input: {} },
-    ] as Omit<IrEvent, 'parentId'>[]);
+    ] as IrEventDraft[]);
     const report = await writeClaudeSession(makeBundle(events), {
       configDir: dir,
       sessionId: '22222222-2222-4222-8222-222222222222',
@@ -89,7 +89,7 @@ test('--keep-thinking 时 reasoning 降级为 text 块', async () => {
     const events = chain([
       { kind: 'reasoning', id: 'e1', at: '2026-01-01T00:00:00Z', reasoning: { kind: 'plain', text: '思考内容' } },
       { kind: 'message', id: 'e2', at: '2026-01-01T00:00:01Z', role: 'assistant', parts: [{ type: 'text', text: '答案' }] },
-    ] as Omit<IrEvent, 'parentId'>[]);
+    ] as IrEventDraft[]);
     const report = await writeClaudeSession(makeBundle(events), {
       configDir: dir,
       sessionId: '33333333-3333-4333-8333-333333333333',

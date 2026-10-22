@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
-import type { IrBundle, IrEvent } from '@sessionport/core';
+import type { IrBundle, IrEvent, IrEventDraft } from '@sessionport/core';
 import { readCodexSession, verifyCodexSession, writeCodexSession, inferCodexHome } from '../src/index.ts';
 
 const TEST_CWD = '/tmp/sessionport-codex-test';
 
-function chain(events: Array<Omit<IrEvent, 'parentId'>>): IrEvent[] {
+function chain(events: Array<IrEventDraft>): IrEvent[] {
   return events.map((event, index) => ({ ...event, parentId: index === 0 ? null : (events[index - 1] as { id: string }).id })) as IrEvent[];
 }
 
@@ -41,7 +41,7 @@ test('写入 rollout：session_meta + response_item，结构自检通过且能�
       { kind: 'tool_call', id: 'e4', at: '2026-01-01T00:00:03Z', callId: 'call_1', name: 'exec_command', input: { cmd: 'ls' } },
       { kind: 'tool_result', id: 'e5', at: '2026-01-01T00:00:04Z', callId: 'call_1', content: [{ type: 'text', text: 'a\nb' }] },
       { kind: 'message', id: 'e6', at: '2026-01-01T00:00:05Z', role: 'assistant', parts: [{ type: 'text', text: '完成' }] },
-    ] as Array<Omit<IrEvent, 'parentId'>>);
+    ] as Array<IrEventDraft>);
     const report = await writeCodexSession(makeBundle(events), {
       home,
       cwd: TEST_CWD,
@@ -70,7 +70,7 @@ test('缺失工具结果时合成占位输出，保持 rollout 自洽', async ()
     const events = chain([
       { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: '跑一下' }] },
       { kind: 'tool_call', id: 'e2', at: '2026-01-01T00:00:01Z', callId: 'call_missing', name: 'exec_command', input: {} },
-    ] as Array<Omit<IrEvent, 'parentId'>>);
+    ] as Array<IrEventDraft>);
     const report = await writeCodexSession(makeBundle(events), {
       home,
       cwd: TEST_CWD,
@@ -89,7 +89,7 @@ test('dryRun 不落盘', async () => {
   try {
     const events = chain([
       { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: 'hi' }] },
-    ] as Array<Omit<IrEvent, 'parentId'>>);
+    ] as Array<IrEventDraft>);
     const report = await writeCodexSession(makeBundle(events), { home, cwd: TEST_CWD, dryRun: true });
     const { existsSync } = await import('node:fs');
     assert.equal(existsSync(report.filePath), false);
@@ -103,7 +103,7 @@ test('非法 session id 直接报错（Codex 会静默新建会话）', async ()
     await assert.rejects(
       () => writeCodexSession(makeBundle(chain([
         { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: 'hi' }] },
-      ] as Array<Omit<IrEvent, 'parentId'>>)), { home, cwd: TEST_CWD, id: 'not-a-uuid' }),
+      ] as Array<IrEventDraft>)), { home, cwd: TEST_CWD, id: 'not-a-uuid' }),
       /必须是 UUID/,
     );
   } finally {
@@ -117,7 +117,7 @@ test('paginated 模式：每行带递增 ordinal', async () => {
     const events = chain([
       { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: '你好' }] },
       { kind: 'message', id: 'e2', at: '2026-01-01T00:00:01Z', role: 'assistant', parts: [{ type: 'text', text: '收到' }] },
-    ] as Array<Omit<IrEvent, 'parentId'>>);
+    ] as Array<IrEventDraft>);
     const report = await writeCodexSession(makeBundle(events), {
       home,
       cwd: TEST_CWD,

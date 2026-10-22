@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
-import type { IrBundle, IrEvent, IrMessageEvent, IrNotice, IrSession } from '@sessionport/core';
+import type { IrBundle, IrEvent, IrEventInput, IrMessageEvent, IrNotice, IrSession } from '@sessionport/core';
 
 import type { OpencodeExport, OpencodePart } from './wire.ts';
 import { opencodeCliBinary, parseOpencodeExport, readOpencodeExportFile } from './wire.ts';
@@ -52,7 +52,7 @@ export async function exportOpencodeSession(sessionId: string, options: ReadOpen
           stdio: ['ignore', fd, 'pipe'],
         });
         let stderr = '';
-        child.stderr.on('data', (chunk: Buffer) => {
+        child.stderr?.on('data', (chunk: Buffer) => {
           stderr += chunk.toString();
         });
         child.on('close', (code) => {
@@ -86,7 +86,7 @@ export function exportToBundle(raw: OpencodeExport, _options: ReadOpencodeOption
   let lastUserText: string | undefined;
 
   const createdAt = msToIso(info.time?.created) ?? new Date(0).toISOString();
-  const push = (event: Omit<IrEvent, 'id' | 'parentId'>, at: string): void => {
+  const push = (event: IrEventInput, at: string): void => {
     index += 1;
     events.push({ ...(event as IrEvent), id: 'oc:e' + String(index).padStart(6, '0'), parentId: events.length > 0 ? events[events.length - 1]!.id : null, at } as IrEvent);
   };
@@ -102,7 +102,7 @@ export function exportToBundle(raw: OpencodeExport, _options: ReadOpencodeOption
       if (texts.length === 0) continue;
       const text = texts.join('\n');
       if (lastUserText === undefined) lastUserText = text;
-      const event: IrMessageEvent = { kind: 'message', at, role: 'user', parts: [{ type: 'text', text }] };
+      const event: IrEventInput = { kind: 'message', at, role: 'user', parts: [{ type: 'text', text }] };
       push(event, at);
       continue;
     }

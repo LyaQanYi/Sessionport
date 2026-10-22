@@ -79,7 +79,7 @@ test('真实 DSH 会话文件是多帧且可完整解出（无样本时 skip）'
   assert.ok(decoded.frames.length > 1, 'real session must be multi-frame');
   assert.ok(decoded.lines.length > 10);
   assert.equal(decoded.tornStart, undefined);
-  const header = JSON.parse(decoded.lines[0]) as { type?: string; version?: number };
+  const header = JSON.parse(decoded.lines[0]!) as { type?: string; version?: number };
   assert.equal(header.type, 'session');
   assert.equal(header.version, 4);
 });

@@ -239,7 +239,8 @@ export function commandCodeCliPath(explicit?: string): string | undefined {
 }
 
 export interface ResumeSmokeOptions {
-  filePath: string;
+  /** transcript 路径；缺省时冒烟返回失败而不是抛错（CLI 未传 --file 的情况） */
+  filePath?: string;
   prompt?: string;
   /** 期望出现在最终回答里的标记，默认 RESUME_OK */
   expect?: string;

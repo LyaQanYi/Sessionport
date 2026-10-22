@@ -3,7 +3,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 
 import { IR_VERSION, bundleEventCount } from '@sessionport/core';
-import type { IrBundle, IrContent, IrEvent, IrMessageEvent, IrNotice, IrPart, IrSession, SourceFingerprint } from '@sessionport/core';
+import type { IrBundle, IrContent, IrEvent, IrEventInput, IrMessageEvent, IrNotice, IrPart, IrSession, SourceFingerprint } from '@sessionport/core';
 
 import {
   commandCodeHome,
@@ -215,14 +215,14 @@ function pushIfKeep(context: MappingContext, event: IrEvent, native: unknown): I
 }
 
 /** 把一条 message entry 映射成 0..n 个 IR 事件（id/parentId 由调用方补） */
-function mapMessageEntry(entry: CcEntry, context: MappingContext): Array<Omit<IrEvent, 'id' | 'parentId'>> {
+function mapMessageEntry(entry: CcEntry, context: MappingContext): Array<IrEventInput> {
   if (entry.type !== 'message') return [];
   const message = entry.message;
   const role = message.role === 'assistant' ? 'assistant' : 'user';
   const synthetic = message.meta?.isMeta === true;
   const source = typeof message.meta?.source === 'string' ? message.meta.source : undefined;
   if (source) context.sourceCounts.set(source, (context.sourceCounts.get(source) ?? 0) + 1);
-  const out: Array<Omit<IrEvent, 'id' | 'parentId'>> = [];
+  const out: Array<IrEventInput> = [];
   let pendingParts: IrPart[] = [];
   const at = normalizeIso(entry.timestamp) ?? new Date(0).toISOString();
   const flushParts = (): void => {
@@ -234,7 +234,7 @@ function mapMessageEntry(entry: CcEntry, context: MappingContext): Array<Omit<Ir
       parts: pendingParts,
     };
     if (synthetic) event.synthetic = true;
-    out.push(pushIfKeep(context, event as IrEvent, { entryId: entry.id, blocks: pendingParts }) as Omit<IrEvent, 'id' | 'parentId'>);
+    out.push(pushIfKeep(context, event as IrEvent, { entryId: entry.id, blocks: pendingParts }) as IrEventInput);
     pendingParts = [];
   };
   const content = Array.isArray(message.content) ? message.content : [];
@@ -258,7 +258,7 @@ function mapMessageEntry(entry: CcEntry, context: MappingContext): Array<Omit<Ir
       if (thinking.length === 0) continue;
       const signature = typeof (block as { signature?: unknown }).signature === 'string' ? (block as { signature: string }).signature : '';
       const reasoning = signature.length > 0 ? { kind: 'plain' as const, text: thinking, signature } : { kind: 'plain' as const, text: thinking };
-      out.push(pushIfKeep(context, { kind: 'reasoning', at, reasoning } as IrEvent, block) as Omit<IrEvent, 'id' | 'parentId'>);
+      out.push(pushIfKeep(context, { kind: 'reasoning', at, reasoning } as IrEvent, block) as IrEventInput);
       continue;
     }
     if (type === 'tool_use') {
@@ -277,7 +277,7 @@ function mapMessageEntry(entry: CcEntry, context: MappingContext): Array<Omit<Ir
         callId: id,
         name,
         input: (block as { input?: unknown }).input ?? null,
-      } as IrEvent, block) as Omit<IrEvent, 'id' | 'parentId'>);
+      } as IrEvent, block) as IrEventInput);
       continue;
     }
     if (type === 'tool_result') {
@@ -288,14 +288,14 @@ function mapMessageEntry(entry: CcEntry, context: MappingContext): Array<Omit<Ir
         continue;
       }
       context.toolResultIds.add(callId);
-      const event: Omit<IrEvent, 'id' | 'parentId'> = {
+      const event: IrEventInput = {
         kind: 'tool_result',
         at,
         callId,
         content: mapToolResultContent((block as { content?: CcBlock[] | string }).content, context.skippedBlocks),
       };
       if ((block as { is_error?: unknown }).is_error === true) (event as { isError?: boolean }).isError = true;
-      out.push(pushIfKeep(context, event as IrEvent, block) as Omit<IrEvent, 'id' | 'parentId'>);
+      out.push(pushIfKeep(context, event as IrEvent, block) as IrEventInput);
       continue;
     }
     context.skippedBlocks.set('block:' + String(type), (context.skippedBlocks.get('block:' + String(type)) ?? 0) + 1);
@@ -355,7 +355,7 @@ export async function readCommandCodeSessionDetailed(
   let lastAt: string | undefined;
   let firstUserText: string | undefined;
 
-  const appendEvent = (event: Omit<IrEvent, 'id' | 'parentId'>): void => {
+  const appendEvent = (event: IrEventInput): void => {
     index += 1;
     const withIds = event as IrEvent;
     withIds.id = 'cc:e' + String(index).padStart(6, '0');
@@ -391,12 +391,12 @@ export async function readCommandCodeSessionDetailed(
       const detail = 'tokensBefore=' + String(entry.tokensBefore ?? '?')
         + ' firstKeptEntryId=' + String(entry.firstKeptEntryId ?? '?')
         + (entry.fromMod === true ? ' fromMod=true' : '');
-      appendEvent(pushIfKeep(context, { kind: 'boundary', at: normalizeIso(entry.timestamp) ?? new Date(0).toISOString(), boundary: 'compact', detail } as IrEvent, entry) as Omit<IrEvent, 'id' | 'parentId'>);
+      appendEvent(pushIfKeep(context, { kind: 'boundary', at: normalizeIso(entry.timestamp) ?? new Date(0).toISOString(), boundary: 'compact', detail } as IrEvent, entry) as IrEventInput);
       continue;
     }
     if (entry.type === 'branch_summary') {
       bumpEntry(context, entry.type);
-      appendEvent(pushIfKeep(context, { kind: 'boundary', at: normalizeIso(entry.timestamp) ?? new Date(0).toISOString(), boundary: 'fork', detail: 'branch_summary' } as IrEvent, entry) as Omit<IrEvent, 'id' | 'parentId'>);
+      appendEvent(pushIfKeep(context, { kind: 'boundary', at: normalizeIso(entry.timestamp) ?? new Date(0).toISOString(), boundary: 'fork', detail: 'branch_summary' } as IrEvent, entry) as IrEventInput);
       continue;
     }
     if (entry.type === 'custom_message') {
@@ -410,7 +410,7 @@ export async function readCommandCodeSessionDetailed(
           parts,
           synthetic: true,
         };
-        appendEvent(pushIfKeep(context, event as IrEvent, entry) as Omit<IrEvent, 'id' | 'parentId'>);
+        appendEvent(pushIfKeep(context, event as IrEvent, entry) as IrEventInput);
       }
       continue;
     }

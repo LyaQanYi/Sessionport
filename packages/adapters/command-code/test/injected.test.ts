@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
-import type { IrBundle, IrEvent } from '@sessionport/core';
+import type { IrBundle, IrEvent, IrEventDraft } from '@sessionport/core';
 import { verifyCommandCodeSession, writeCommandCodeSession } from '../src/index.ts';
 
 const TEST_CWD = '/tmp/sessionport-cc-injected-project';
 
-function chain(events: Array<Omit<IrEvent, 'parentId'>>): IrEvent[] {
+function chain(events: Array<IrEventDraft>): IrEvent[] {
   return events.map((event, index) => ({
     ...event,
     parentId: index === 0 ? null : (events[index - 1] as { id: string }).id,
@@ -23,7 +23,7 @@ function makeBundle(): IrBundle {
     { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: '真实用户消息' }] },
     { kind: 'message', id: 'e2', at: '2026-01-01T00:00:01Z', role: 'user', parts: [{ type: 'text', text: 'Current runtime context. 运行时注入' }], synthetic: true },
     { kind: 'message', id: 'e3', at: '2026-01-01T00:00:02Z', role: 'assistant', parts: [{ type: 'text', text: '回复' }] },
-  ] as Array<Omit<IrEvent, 'parentId'>>);
+  ] as Array<IrEventDraft>);
   return {
     irVersion: IR_VERSION,
     createdAt: new Date(0).toISOString(),
