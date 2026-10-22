@@ -3,6 +3,27 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Fixed
+
+- `push --to claude-code --include-children` now forwards the flag (it was silently dropped, so
+  children were never written), and `sync --to claude-code --home <dir>` maps to the adapter's
+  `configDir` instead of ignoring the override and writing to `~/.claude`.
+
+### Added
+
+- **Claude Code writer: native subagent write-back.** With `--include-children`, `writeClaudeSession`
+  now writes each IR child as `<projectDir>/<sessionId>/subagents/agent-<agentId>.jsonl` plus
+  `agent-<agentId>.meta.json` (`agentType` / `description` / `requestShape: foreground` /
+  `requestNonInteractive: true` / `spawnDepth: 1` / `toolUseId`), instead of standalone top-level
+  sessions. Every row carries `isSidechain: true` + `agentId`, the main `sessionId`, and a
+  self-contained `parentUuid` chain. `readClaudeSession` restores the same children
+  (title / profile / viaToolCallId); `verifyClaudeSession` checks the new files (including
+  `expectedChildren` meta correspondence), and `CLAUDE_CAPS.subagents` is now `true`. The
+  `claude.subagent-separate-session` loss is gone; unverified UI/resume behavior is reported as an
+  info loss instead.
+
 ## [0.1.1] — 2026-10-22
 
 First public release.

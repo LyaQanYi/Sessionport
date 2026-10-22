@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { LossCollector, assistantMessageId, contentToText, randomUuid } from '@sessionport/core';
-import type { ExportCaps, IrBundle, IrSession, LossEntry, WriteReport } from '@sessionport/core';
+import type { ExportCaps, IrBundle, IrChildSession, IrSession, LossEntry, WriteReport } from '@sessionport/core';
 
-import { claudeConfigDir, sessionFilePath } from './paths.ts';
+import { claudeConfigDir, sessionFilePath, subagentFilePath, subagentMetaPath, subagentsDirPath } from './paths.ts';
 import { buildAssistantRow, buildUserRow, textBlock, toolResultBlock, toolUseBlock } from './rows.ts';
 import type { ClaudeRow, RowContext } from './rows.ts';
 
@@ -13,20 +14,16 @@ export const CLAUDE_CAPS: ExportCaps = {
   reasoning: 'none',
   toolResults: 'separate',
   branching: false,
-  subagents: false,
+  subagents: true,
   modelPinned: false,
 };
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** meta.json 里 agentType 的默认值（与真实 Claude 的 general-purpose 一致） */
+export const CLAUDE_DEFAULT_SUBAGENT_TYPE = 'general-purpose';
 
-function normalizeChildSessionId(raw: string | undefined, used: Set<string>): string {
-  let candidate = raw ?? '';
-  if (candidate.startsWith('session-')) candidate = candidate.slice('session-'.length);
-  if (candidate.startsWith('session_')) candidate = candidate.slice('session_'.length);
-  if (!UUID_RE.test(candidate) || used.has(candidate)) candidate = randomUuid();
-  used.add(candidate);
-  return candidate;
-}
+/** 真实 Claude 的 agentId 只含字母数字（样本 17 位十六进制）；文件名规则同样要求 */
+const AGENT_ID_RE = /^[A-Za-z0-9]+$/u;
+const AGENT_ID_MAX_LENGTH = 64;
 
 export interface WriteClaudeOptions {
   /** 目标配置目录，默认 CLAUDE_CONFIG_DIR 或 ~/.claude */
@@ -44,14 +41,34 @@ export interface WriteClaudeOptions {
   keepThinking?: boolean;
   /** 只生成不落盘 */
   dryRun?: boolean;
-  /** 是否导出子代理会话（默认否，Claude 的 sidechain 语义尚未实现） */
+  /** 是否把 bundle.children 写成 Claude 原生 subagents transcript（默认否） */
   includeChildren?: boolean;
+}
+
+/** 子代理 meta.json 内容（字段对齐真实 Claude Code 2.1.303） */
+export interface ClaudeSubagentMeta {
+  agentType: string;
+  description?: string;
+  requestShape: 'foreground';
+  requestNonInteractive: true;
+  spawnDepth: 1;
+  toolUseId?: string;
+}
+
+export interface WriteClaudeChild {
+  /** agent-<agentId>.jsonl 里的 agentId */
+  agentId: string;
+  label?: string;
+  /** 同时写入 agent-<agentId>.meta.json 的内容 */
+  meta: ClaudeSubagentMeta;
+  filePath: string;
+  metaPath: string;
 }
 
 export interface WriteClaudeResult extends WriteReport {
   rows: ClaudeRow[];
-  /** 子代理会话（includeChildren=true 时各写一个独立会话文件） */
-  children: Array<{ sessionId: string; label?: string; filePath: string }>;
+  /** 原生子代理 transcript（includeChildren=true 时） */
+  children: WriteClaudeChild[];
   filePath: string;
   sessionId: string;
   cwd: string;
@@ -66,18 +83,70 @@ interface Chunk {
   toolResultIds: string[];
 }
 
-interface Converted {
-  rows: ClaudeRow[];
-  losses: LossCollector;
+interface BuiltChunks {
+  chunks: Chunk[];
   counts: { messages: number; toolCalls: number; toolResults: number; reasoning: number };
+}
+
+interface ChildPlan {
+  agentId: string;
+  label?: string;
+  meta: ClaudeSubagentMeta;
+  rows: ClaudeRow[];
+  filePath: string;
+  metaPath: string;
 }
 
 function chunkHas(chunk: Chunk, kind: 'tool_use' | 'tool_result'): boolean {
   return chunk.blocks.some((b) => (b as { type?: string }).type === kind);
 }
 
-function buildChunks(session: IrSession, opts: WriteClaudeOptions): { chunks: Chunk[]; losses: LossCollector; counts: Converted['counts'] } {
-  const losses = new LossCollector();
+function nonEmptyText(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * 子代理 agentId：优先沿用源端 agentId（Claude -> Claude 往返时保持稳定），
+ * 其它源端 id（UUID、含非法字符）用 child id 的 sha256 前缀生成稳定值，
+ * 重复时加盐，保证同一 bundle 内的文件名不冲突。
+ */
+function normalizeAgentId(child: IrChildSession, used: Set<string>): string {
+  const native = nonEmptyText(child.session.source.nativeSessionId);
+  if (native !== undefined && native.length <= AGENT_ID_MAX_LENGTH && AGENT_ID_RE.test(native) && !used.has(native)) {
+    used.add(native);
+    return native;
+  }
+  for (let salt = 0; ; salt += 1) {
+    const seed = child.session.id + '\u0000' + (native ?? '') + '\u0000' + String(salt);
+    const candidate = createHash('sha256').update(seed).digest('hex').slice(0, 17);
+    if (!used.has(candidate)) {
+      used.add(candidate);
+      return candidate;
+    }
+  }
+}
+
+function buildSubagentMeta(child: IrChildSession): ClaudeSubagentMeta {
+  const meta: ClaudeSubagentMeta = {
+    agentType: nonEmptyText(child.session.meta.profile) ?? CLAUDE_DEFAULT_SUBAGENT_TYPE,
+    requestShape: 'foreground',
+    requestNonInteractive: true,
+    spawnDepth: 1,
+  };
+  const description = nonEmptyText(child.session.meta.title) ?? nonEmptyText(child.label);
+  if (description !== undefined) meta.description = description;
+  const toolUseId = nonEmptyText(child.viaToolCallId);
+  if (toolUseId !== undefined) meta.toolUseId = toolUseId;
+  return meta;
+}
+
+function serializeRows(rows: ClaudeRow[]): string {
+  return rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
+}
+
+function buildChunks(session: IrSession, opts: WriteClaudeOptions, losses: LossCollector): BuiltChunks {
   const counts = { messages: 0, toolCalls: 0, toolResults: 0, reasoning: 0 };
   const chunks: Chunk[] = [];
   let assistant: Chunk | null = null;
@@ -169,7 +238,7 @@ function buildChunks(session: IrSession, opts: WriteClaudeOptions): { chunks: Ch
     }
   }
   flushAll();
-  return { chunks, losses, counts };
+  return { chunks, counts };
 }
 
 /** 修补 tool_use ↔ tool_result 配对，保证 Claude 加载时不报「缺 tool_result」 */
@@ -219,7 +288,7 @@ function repairToolPairs(chunks: Chunk[], losses: LossCollector): Chunk[] {
   return out;
 }
 
-function materialize(session: IrSession, chunks: Chunk[], ctx: RowContext, model: string): ClaudeRow[] {
+function materialize(chunks: Chunk[], ctx: RowContext, model: string): ClaudeRow[] {
   const rows: ClaudeRow[] = [];
   let parentUuid: string | null = null;
   for (const chunk of chunks) {
@@ -249,12 +318,12 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
   const gitBranch = options.gitBranch ?? '';
   const model = options.model ?? session.meta.model ?? 'claude-sonnet-5';
 
+  const losses = new LossCollector();
   const ctx: RowContext = { cwd, sessionId, version, gitBranch };
-  const built = buildChunks(session, options);
-  const chunks = repairToolPairs(built.chunks, built.losses);
-  const rows = materialize(session, chunks, ctx, model);
+  const built = buildChunks(session, options, losses);
+  const chunks = repairToolPairs(built.chunks, losses);
+  const rows = materialize(chunks, ctx, model);
 
-  const losses = built.losses;
   if (session.source.agent !== 'claude-code') {
     losses.add('claude.cross-agent-import', '会话来自 ' + session.source.agent + '，模型/工具语义按 Claude 结构近似还原', {
       severity: 'info',
@@ -265,7 +334,7 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
   }
   if (bundle.children.length > 0 && !options.includeChildren) {
     const childEvents = bundle.children.reduce((n, c) => n + c.session.events.length, 0);
-    losses.add('claude.subagent-dropped', '子代理会话未导出（Claude 的 sidechain 行内语义尚未实现）', {
+    losses.add('claude.subagent-dropped', '子代理会话未导出（includeChildren=false，未写入 Claude 原生 subagents transcript）', {
       count: bundle.children.length,
       severity: 'warning',
     });
@@ -275,48 +344,72 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
     losses.add('claude.source-undo', '源端 undo 回滚的内容已在 IR 阶段裁掉，目标端看到的是回滚后的上下文', { severity: 'info' });
   }
 
-  // 子代理：Claude 的 sidechain 语义尚未实现，先导出成独立会话（内容不丢，父子关系丢失）
-  const childResults: Array<{ sessionId: string; label?: string; filePath: string }> = [];
+  // 先把子代理全部转换出来，再落盘：避免转换失败时留下半套文件
+  const childPlans: ChildPlan[] = [];
   if (options.includeChildren === true && bundle.children.length > 0) {
-    const usedIds = new Set<string>([sessionId]);
+    const usedAgentIds = new Set<string>();
     for (const child of bundle.children) {
-      const childId = normalizeChildSessionId(child.session.source.nativeSessionId, usedIds);
-      const label = child.label ?? child.session.meta.title;
-      const childBundle: IrBundle = {
-        irVersion: bundle.irVersion,
-        createdAt: bundle.createdAt,
-        root: child.session,
-        children: [],
-      };
-      const childReport = await writeClaudeSession(childBundle, {
-        ...options,
-        sessionId: childId,
-        includeChildren: false,
+      const agentId = normalizeAgentId(child, usedAgentIds);
+      const childCwd = nonEmptyText(child.session.meta.cwd) ?? cwd;
+      const childCtx: RowContext = { cwd: childCwd, sessionId, version, gitBranch };
+      const childModel = options.model ?? nonEmptyText(child.session.meta.model) ?? model;
+      const childBuilt = buildChunks(child.session, options, losses);
+      const childChunks = repairToolPairs(childBuilt.chunks, losses);
+      const childRows = materialize(childChunks, childCtx, childModel);
+      if (childRows.length === 0) {
+        losses.add('claude.subagent-empty-skipped', '空的子代理会话没有可写入的事件，已跳过（否则会留下 Claude 无法加载的空 transcript）', {
+          count: 1,
+          severity: 'info',
+        });
+        continue;
+      }
+      for (const row of childRows) {
+        row.isSidechain = true;
+        row.agentId = agentId;
+      }
+      const label = nonEmptyText(child.label);
+      childPlans.push({
+        agentId,
+        ...(label !== undefined ? { label } : {}),
+        meta: buildSubagentMeta(child),
+        rows: childRows,
+        filePath: subagentFilePath(configDir, cwd, sessionId, agentId),
+        metaPath: subagentMetaPath(configDir, cwd, sessionId, agentId),
       });
-      childResults.push({ sessionId: childReport.sessionId, label, filePath: childReport.filePath });
     }
-    if (childResults.length > 0) {
-      losses.add('claude.subagent-separate-session', '子代理会话已导出为独立会话；Claude 的 sidechain 行内结构尚未实现，父子关系丢失', {
-        count: childResults.length,
-        severity: 'info',
-      });
+    if (childPlans.length > 0) {
+      losses.add(
+        'claude.subagent-native-writeback',
+        '子代理已写成 Claude 原生 subagents transcript（<sessionId>/subagents/agent-<agentId>.jsonl + .meta.json）。未验证：Claude Code app/CLI 是否在 UI 中展示这些子代理、真实 resume 时父子关系是否完整；IR 只建模一层子代理，子代理自己的子代理不会写回',
+        { count: childPlans.length, severity: 'info' },
+      );
     }
   }
 
   const filePath = sessionFilePath(configDir, cwd, sessionId);
   if (!options.dryRun) {
     await mkdir(dirname(filePath), { recursive: true });
-    const body = rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
-    await writeFile(filePath, body, 'utf8');
+    await writeFile(filePath, serializeRows(rows), 'utf8');
+    for (const plan of childPlans) {
+      await mkdir(subagentsDirPath(configDir, cwd, sessionId), { recursive: true });
+      await writeFile(plan.filePath, serializeRows(plan.rows), 'utf8');
+      await writeFile(plan.metaPath, JSON.stringify(plan.meta) + '\n', 'utf8');
+    }
   }
 
   const lossList: LossEntry[] = losses.sorted();
   return {
     target: 'claude-code',
     sessionId,
-    paths: [filePath],
+    paths: [filePath, ...childPlans.map((plan) => plan.filePath)],
     rows,
-    children: childResults,
+    children: childPlans.map((plan) => ({
+      agentId: plan.agentId,
+      ...(plan.label !== undefined ? { label: plan.label } : {}),
+      meta: plan.meta,
+      filePath: plan.filePath,
+      metaPath: plan.metaPath,
+    })),
     filePath,
     cwd,
     written: {
@@ -345,6 +438,9 @@ export function printWriteReport(report: WriteClaudeResult): string {
       ' tool_results=' + report.written.toolResults +
       ' reasoning=' + report.written.reasoning,
   );
+  for (const child of report.children) {
+    lines.push('subagent    ' + child.agentId + '  ' + (child.meta.description ?? '') + '  ' + child.filePath);
+  }
   lines.push('losses      ' + (report.losses.length === 0 ? 'none' : ''));
   for (const loss of report.losses) {
     lines.push('  [' + loss.severity + '] ' + loss.code + ' x' + loss.count + ' — ' + loss.message);

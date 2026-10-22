@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { basename, join } from 'node:path';
 
-import { claudeConfigDir, sessionFilePath } from './paths.ts';
+import { claudeConfigDir, sessionFilePath, subagentsDirPath } from './paths.ts';
 
 export interface VerifyCheck {
   name: string;
@@ -10,12 +11,39 @@ export interface VerifyCheck {
   detail?: string;
 }
 
+/** 期望存在的子代理（通常来自 writeClaudeSession 返回的 children） */
+export interface VerifySubagentExpectation {
+  agentId: string;
+  agentType?: string;
+  description?: string;
+  toolUseId?: string;
+}
+
+export interface VerifySubagentReport {
+  agentId: string;
+  filePath: string;
+  metaPath: string;
+  rows: number;
+  conversationRows: number;
+  ok: boolean;
+}
+
 export interface VerifyReport {
   ok: boolean;
   filePath: string;
   rows: number;
   conversationRows: number;
+  /** 本次发现并校验的子代理 transcript（没有 subagents 目录时为空） */
+  subagents: VerifySubagentReport[];
   checks: VerifyCheck[];
+}
+
+export interface VerifyClaudeOptions {
+  configDir?: string;
+  cwd: string;
+  sessionId: string;
+  /** 传入后额外检查每个 child 都有文件，且 meta.json 字段与 child 对应 */
+  expectedChildren?: VerifySubagentExpectation[];
 }
 
 interface AnyRow {
@@ -24,6 +52,8 @@ interface AnyRow {
   parentUuid?: string | null;
   sessionId?: string;
   timestamp?: unknown;
+  isSidechain?: boolean;
+  agentId?: string;
   message?: { role?: string; content?: unknown };
 }
 
@@ -57,21 +87,207 @@ const METADATA_ROW_TYPES = new Set([
 /** Claude 会清洗/原样转发 content block；adapter 只应产出这三种 */
 const ALLOWED_BLOCK_TYPES = new Set(['text', 'tool_use', 'tool_result', 'thinking', 'redacted_thinking']);
 
+/** <sessionId>/subagents 下任意层级（workflows 会再嵌套一层）的 agent-<agentId>.jsonl */
+const SUBAGENT_FILE_PATTERN = /^agent-([A-Za-z0-9]+)\.jsonl$/u;
+const SUBAGENT_SCAN_MAX_DEPTH = 4;
+
 function blocksOf(row: AnyRow): Array<{ type?: string; id?: string; tool_use_id?: string }> {
   const content = row.message?.content;
   if (Array.isArray(content)) return content as Array<{ type?: string }>;
   return [];
 }
 
+function parentChainBroken(rows: AnyRow[]): number {
+  const seen = new Set<string>();
+  let broken = 0;
+  for (const row of rows) {
+    if (row.type === 'user' || row.type === 'assistant') {
+      if (row.parentUuid === null || row.parentUuid === undefined) {
+        if (seen.size > 0) broken += 1;
+      } else if (!seen.has(row.parentUuid)) {
+        broken += 1;
+      }
+    }
+    if (row.uuid) seen.add(row.uuid);
+  }
+  return broken;
+}
+
+function missingToolResults(rows: AnyRow[]): number {
+  let missing = 0;
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]!;
+    if (row.type !== 'assistant') continue;
+    const toolUses = blocksOf(row).filter((b) => b.type === 'tool_use').map((b) => b.id);
+    if (toolUses.length === 0) continue;
+    const next = rows.slice(i + 1).find((r) => r.type === 'user');
+    const resultIds = new Set(blocksOf(next ?? {}).filter((b) => b.type === 'tool_result').map((b) => b.tool_use_id));
+    for (const id of toolUses) if (id && !resultIds.has(id)) missing += 1;
+  }
+  return missing;
+}
+
+async function collectSubagentFiles(dir: string, depth = 0): Promise<string[]> {
+  if (depth > SUBAGENT_SCAN_MAX_DEPTH) return [];
+  let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+  const out: string[] = [];
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await collectSubagentFiles(full, depth + 1)));
+    else if (entry.isFile() && SUBAGENT_FILE_PATTERN.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+/**
+ * 子代理文件检查：JSONL 可解析、每行 isSidechain/agentId、parentUuid 链自洽、
+ * sessionId 与主会话一致、tool_use 有结果、meta.json 存在且字段合法。
+ * 传入 expectedChildren 时再核对 meta.json 与 IR child 的对应关系。
+ */
+async function verifySubagents(options: VerifyClaudeOptions, checks: VerifyCheck[]): Promise<VerifySubagentReport[]> {
+  const configDir = claudeConfigDir(options.configDir);
+  const dir = subagentsDirPath(configDir, options.cwd, options.sessionId);
+  const files = existsSync(dir) ? await collectSubagentFiles(dir) : [];
+  const reports: VerifySubagentReport[] = [];
+  const metaByAgent = new Map<string, Record<string, unknown> | undefined>();
+
+  if (files.length > 0) {
+    checks.push({ name: 'subagent-files', ok: true, detail: files.length + ' 份 agent transcript' });
+  }
+
+  for (const filePath of files) {
+    const agentId = SUBAGENT_FILE_PATTERN.exec(basename(filePath))?.[1];
+    if (agentId === undefined) continue;
+    const start = checks.length;
+    const metaPath = filePath.replace(/\.jsonl$/u, '.meta.json');
+
+    const raw = await readFile(filePath, 'utf8');
+    const lines = raw.split('\n').filter((l) => l.trim().length > 0);
+    const rows: AnyRow[] = [];
+    let badLines = 0;
+    for (const line of lines) {
+      try {
+        const value = JSON.parse(line) as unknown;
+        if (value !== null && typeof value === 'object' && !Array.isArray(value)) rows.push(value as AnyRow);
+        else badLines += 1;
+      } catch {
+        badLines += 1;
+      }
+    }
+    checks.push({ name: 'subagent-' + agentId + '-jsonl-parses', ok: badLines === 0, detail: '解析失败 ' + badLines + ' 行' });
+
+    const conversation = rows.filter((r) => r.type === 'user' || r.type === 'assistant');
+    checks.push({
+      name: 'subagent-' + agentId + '-has-conversation-rows',
+      ok: conversation.length > 0,
+      detail: conversation.length + ' 条对话行',
+    });
+
+    const sidechainBad = conversation.filter((row) => row.isSidechain !== true || row.agentId !== agentId).length;
+    checks.push({
+      name: 'subagent-' + agentId + '-sidechain-agent-id',
+      ok: sidechainBad === 0,
+      detail: sidechainBad === 0 ? 'ok' : sidechainBad + ' 行缺 isSidechain/agentId 或 agentId 不匹配',
+    });
+
+    const brokenChain = parentChainBroken(rows);
+    checks.push({ name: 'subagent-' + agentId + '-parent-chain', ok: brokenChain === 0, detail: brokenChain + ' 处断链' });
+
+    const sessionIds = new Set(conversation.map((r) => r.sessionId).filter((v): v is string => typeof v === 'string'));
+    checks.push({
+      name: 'subagent-' + agentId + '-session-id',
+      ok: sessionIds.size <= 1 && (sessionIds.size === 0 || sessionIds.has(options.sessionId)),
+      detail: sessionIds.size === 0 ? '行内未写 sessionId（可省）' : [...sessionIds].join(','),
+    });
+
+    const missing = missingToolResults(rows);
+    checks.push({ name: 'subagent-' + agentId + '-tool-pairing', ok: missing === 0, detail: missing + ' 个 tool_use 缺结果' });
+
+    let meta: Record<string, unknown> | undefined;
+    let metaError = '';
+    if (!existsSync(metaPath)) {
+      metaError = 'meta.json 不存在';
+    } else {
+      try {
+        const parsed = JSON.parse(await readFile(metaPath, 'utf8')) as unknown;
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) metaError = 'meta.json 不是对象';
+        else meta = parsed as Record<string, unknown>;
+      } catch {
+        metaError = 'meta.json 解析失败';
+      }
+    }
+    const agentTypeOk = typeof meta?.agentType === 'string' && meta.agentType.trim().length > 0;
+    const descriptionOk =
+      meta?.description === undefined || (typeof meta.description === 'string' && meta.description.trim().length > 0);
+    const toolUseOk = meta?.toolUseId === undefined || (typeof meta.toolUseId === 'string' && meta.toolUseId.trim().length > 0);
+    checks.push({
+      name: 'subagent-' + agentId + '-meta',
+      ok: meta !== undefined && agentTypeOk && descriptionOk && toolUseOk,
+      detail: meta === undefined ? metaError : !agentTypeOk ? 'agentType 缺失' : !descriptionOk ? 'description 为空' : !toolUseOk ? 'toolUseId 为空' : 'ok',
+    });
+    metaByAgent.set(agentId, meta);
+
+    reports.push({
+      agentId,
+      filePath,
+      metaPath,
+      rows: rows.length,
+      conversationRows: conversation.length,
+      ok: checks.slice(start).every((check) => check.ok),
+    });
+  }
+
+  const expected = options.expectedChildren ?? [];
+  if (expected.length > 0) {
+    const byAgent = new Map(reports.map((report) => [report.agentId, report]));
+    const missing = expected.filter((item) => !byAgent.has(item.agentId)).map((item) => item.agentId);
+    const expectedIds = new Set(expected.map((item) => item.agentId));
+    const extra = reports.filter((report) => !expectedIds.has(report.agentId)).map((report) => report.agentId);
+    const parts: string[] = [];
+    if (missing.length > 0) parts.push('缺少 ' + missing.join(','));
+    if (extra.length > 0) parts.push('多出 ' + extra.join(','));
+    checks.push({
+      name: 'subagent-files-match-children',
+      ok: missing.length === 0 && extra.length === 0,
+      detail: parts.length === 0 ? 'ok' : parts.join('；'),
+    });
+
+    const mismatches: string[] = [];
+    for (const item of expected) {
+      const meta = metaByAgent.get(item.agentId);
+      if (meta === undefined) {
+        mismatches.push(item.agentId + ':meta');
+        continue;
+      }
+      if (item.agentType !== undefined && meta.agentType !== item.agentType) mismatches.push(item.agentId + ':agentType');
+      if (item.description !== undefined && meta.description !== item.description) mismatches.push(item.agentId + ':description');
+      if (item.toolUseId !== undefined && meta.toolUseId !== item.toolUseId) mismatches.push(item.agentId + ':toolUseId');
+    }
+    checks.push({
+      name: 'subagent-meta-matches-children',
+      ok: mismatches.length === 0,
+      detail: mismatches.length === 0 ? 'ok' : mismatches.join(','),
+    });
+  }
+
+  return reports;
+}
+
 /** 结构自检：不依赖目标 CLI，先保证文件本身是自洽的 */
-export async function verifyClaudeSession(options: { configDir?: string; cwd: string; sessionId: string }): Promise<VerifyReport> {
+export async function verifyClaudeSession(options: VerifyClaudeOptions): Promise<VerifyReport> {
   const configDir = claudeConfigDir(options.configDir);
   const filePath = sessionFilePath(configDir, options.cwd, options.sessionId);
   const checks: VerifyCheck[] = [];
 
   const exists = existsSync(filePath);
   checks.push({ name: 'file-exists', ok: exists, detail: filePath });
-  if (!exists) return { ok: false, filePath, rows: 0, conversationRows: 0, checks };
+  if (!exists) return { ok: false, filePath, rows: 0, conversationRows: 0, subagents: [], checks };
 
   const raw = await readFile(filePath, 'utf8');
   const lines = raw.split('\n').filter((l) => l.trim().length > 0);
@@ -100,18 +316,7 @@ export async function verifyClaudeSession(options: { configDir?: string; cwd: st
   });
 
   // parentUuid 必须指向文件里更早出现的一条记录（Claude 追加的元数据行也会入链）
-  const seen = new Set<string>();
-  let brokenChain = 0;
-  for (const row of rows) {
-    if (row.type === 'user' || row.type === 'assistant') {
-      if (row.parentUuid === null || row.parentUuid === undefined) {
-        if (seen.size > 0) brokenChain += 1;
-      } else if (!seen.has(row.parentUuid)) {
-        brokenChain += 1;
-      }
-    }
-    if (row.uuid) seen.add(row.uuid);
-  }
+  const brokenChain = parentChainBroken(rows);
   checks.push({ name: 'parent-chain', ok: brokenChain === 0, detail: brokenChain + ' 处断链' });
 
   const uuids = conversation.map((r) => r.uuid).filter((u): u is string => typeof u === 'string');
@@ -148,19 +353,12 @@ export async function verifyClaudeSession(options: { configDir?: string; cwd: st
   });
 
   // tool_use ↔ tool_result 配对
-  let missingResults = 0;
-  for (let i = 0; i < rows.length; i += 1) {
-    const row = rows[i]!;
-    if (row.type !== 'assistant') continue;
-    const toolUses = blocksOf(row).filter((b) => b.type === 'tool_use').map((b) => b.id);
-    if (toolUses.length === 0) continue;
-    const next = rows.slice(i + 1).find((r) => r.type === 'user');
-    const resultIds = new Set(blocksOf(next ?? {}).filter((b) => b.type === 'tool_result').map((b) => b.tool_use_id));
-    for (const id of toolUses) if (id && !resultIds.has(id)) missingResults += 1;
-  }
+  const missingResults = missingToolResults(rows);
   checks.push({ name: 'tool-pairing', ok: missingResults === 0, detail: missingResults + ' 个 tool_use 缺结果' });
 
-  return { ok: checks.every((c) => c.ok), filePath, rows: rows.length, conversationRows: conversation.length, checks };
+  const subagents = await verifySubagents(options, checks);
+
+  return { ok: checks.every((c) => c.ok), filePath, rows: rows.length, conversationRows: conversation.length, subagents, checks };
 }
 
 export interface ResumeSmokeResult {

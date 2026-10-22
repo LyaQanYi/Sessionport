@@ -13,6 +13,8 @@ export interface ClaudeUserRow {
   version: string;
   gitBranch: string;
   isSidechain: boolean;
+  /** 子代理 transcript 行的所属 agent（主会话行不写） */
+  agentId?: string;
   userType: 'external';
   isMeta?: boolean;
   message: { role: 'user'; content: unknown[] };
@@ -28,6 +30,8 @@ export interface ClaudeAssistantRow {
   version: string;
   gitBranch: string;
   isSidechain: boolean;
+  /** 子代理 transcript 行的所属 agent（主会话行不写） */
+  agentId?: string;
   userType: 'external';
   message: {
     id: string;

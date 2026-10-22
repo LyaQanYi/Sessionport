@@ -91,9 +91,9 @@ State lives in `~/.sessionport/registry.json` (`--state <dir>` to override).
 | Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index registration | ✅ `codex exec resume` | 0.163.0 |
 | opencode | ✅ `opencode export` JSON | ✅ `opencode import` | ✅ `opencode run --session` | 1.19.3 |
 
-Sub-agent sessions: pass `--include-children`. DSH keeps the native parent/child tree; Claude Code and
-Command Code have no parent concept, so children are written as independent sessions (content preserved,
-relationship reported as lost).
+Sub-agent sessions: pass `--include-children`. DSH and Claude Code keep the native parent/child tree
+(Claude Code writes `<sessionId>/subagents/agent-<id>.jsonl` + `meta.json`); Command Code has no parent
+concept, so children are written as independent sessions (content preserved, relationship reported as lost).
 
 ## How fidelity works
 

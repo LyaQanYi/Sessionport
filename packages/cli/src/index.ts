@@ -288,6 +288,7 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
       model: opts.model as string | undefined,
       version: typeof values.version === 'string' ? values.version : undefined,
       keepThinking: Boolean(values['keep-thinking']),
+      includeChildren: opts.includeChildren === true,
       dryRun: Boolean(values['dry-run']),
     });
   } else if (to === 'command-code') {
@@ -347,8 +348,11 @@ async function writeTarget(
   const forcedPath = typeof opts.targetPath === 'string' ? opts.targetPath : undefined;
   if (target === 'claude-code') {
     const mod = await import('@sessionport/adapter-claude-code');
+    // commonTargetOptions 用的是 home；claude adapter 只认 configDir（否则 --home 会被忽略，写到真实 ~/.claude）
+    const configDir = typeof opts.home === 'string' ? opts.home : undefined;
     const report = await mod.writeClaudeSession(bundle, {
       ...(opts as object),
+      ...(configDir !== undefined ? { configDir } : {}),
       sessionId: id,
       dryRun,
     });
