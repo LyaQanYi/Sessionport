@@ -19,12 +19,12 @@
   "description": "Qoder adapter (read/write/verify)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sessionport/sessionport.git",
+    "url": "https://github.com/LyaQanYi/Sessionport.git",
     "directory": "packages/adapters/qoder"
   },
-  "homepage": "https://github.com/sessionport/sessionport#readme",
+  "homepage": "https://github.com/LyaQanYi/Sessionport#readme",
   "bugs": {
-    "url": "https://github.com/sessionport/sessionport/issues"
+    "url": "https://github.com/LyaQanYi/Sessionport/issues"
   },
   "keywords": [
     "ai",

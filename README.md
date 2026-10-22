@@ -1,6 +1,6 @@
 # sessionport
 
-[![CI](https://github.com/sessionport/sessionport/actions/workflows/ci.yml/badge.svg)](https://github.com/sessionport/sessionport/actions/workflows/ci.yml)
+[![CI](https://github.com/LyaQanYi/Sessionport/actions/workflows/ci.yml/badge.svg)](https://github.com/LyaQanYi/Sessionport/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Move a live AI coding-agent session from one CLI to another — and keep going.**
@@ -27,7 +27,7 @@ Requires **Node.js >= 24** (TypeScript sources are executed via Node type stripp
 single bundled JS file).
 
 ```bash
-npm install -g @sessionport/cli     # or: npx @sessionport/cli inspect ...
+npm install -g sesp          # short command: sesp (sessionport alias also installed)
 sessionport inspect "kimi:./session_.../"
 ```
 
@@ -40,7 +40,7 @@ Requires Node >= 22.18 (TypeScript runs directly via built-in type stripping; no
 
 ```bash
 # from a checkout (development / hacking on adapters):
-git clone https://github.com/sessionport/sessionport && cd sessionport
+git clone https://github.com/LyaQanYi/Sessionport && cd sessionport
 pnpm install
 
 # 1. What is in this session?

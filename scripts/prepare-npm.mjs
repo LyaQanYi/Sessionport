@@ -28,7 +28,7 @@ for (const dir of packageDirs) {
     '',
     pkg.description ?? '',
     '',
-    'This package is part of [sessionport](' + (pkg.homepage ?? 'https://github.com/sessionport/sessionport') + ') — a local-first CLI that moves live AI coding-agent sessions between CLIs via a lossless IR.',
+    'This package is part of [sessionport](' + (pkg.homepage ?? 'https://github.com/LyaQanYi/Sessionport') + ') — a local-first CLI that moves live AI coding-agent sessions between CLIs via a lossless IR.',
     '',
     '- Node.js >= 24 (TypeScript sources are executed directly via Node type stripping).',
     '- License: Apache-2.0 (see LICENSE / NOTICE).',

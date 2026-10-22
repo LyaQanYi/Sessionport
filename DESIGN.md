@@ -20,8 +20,8 @@ sessionport 是一个本地优先的开源 CLI，把 AI 编程 agent 之间的�
 | 首批 adapter | claude-code、codex、opencode、kimi-code |
 | LICENSE | Apache-2.0（含专利授权条款） |
 | 命名 | **sessionport** |
-| npm 发布名 | `sessionport-cli` 或 `@sessionport/cli`（发布时二选一，bin 均为 `sessionport`） |
-| GitHub 仓库 | `<owner>/sessionport`（2026-10-19 查无同名项目） |
+| npm 发布名 | **`sesp`**（2026-10-22 确认：npm `sessionport` 已被同赛道项目 azizmass/sessionport 占用；bin 同时提供 `sesp` 与 `sessionport`） |
+| GitHub 仓库 | `LyaQanYi/Sessionport`（2026-10-21 创建；同名项目较多，因此 npm 用 `sesp`） |
 | 技术栈 | TypeScript（Node ≥ 24，直接执行 TS；sqlite 用内置 node:sqlite，暂不引入 better-sqlite3） |
 | 模型绑定 | **不迁移**：跨 agent 导入后目标端使用自身默认模型（2026-10-19 确认，属于可接受的损失，不是待修 bug） |
 | 同步登记表 v0 | JSON（`~/.sessionport/registry.json`）：sourceKey + targetId + syncedHead + targetUnits；sqlite hub registry 留到多目标/增量事件阶段 |
@@ -229,5 +229,5 @@ sessionport scan                             # 会话内容 secret 扫描
 - [ ] M0-spike 结论（Codex 必填字段集）
 - [ ] kimi push 策略：事件合成 vs 直接写 state（倾向：最小事件集 + state.json，M3 前定案）
 - [ ] opencode adapter 支持的 `session.version` 范围
-- [ ] 命令别名与最终 bin 名（`sessionport` 较长，是否加短别名）
-- [ ] npm 发布名二选一：`sessionport-cli`（安装路径短）vs `@sessionport/cli`（monorepo 一致性好）
+- [x] 命令别名与最终 bin 名：`sesp`（短）+ `sessionport`（全名）
+- [x] npm 发布名：`sesp`（`sessionport` 已被占用，2026-10-22 确认）
