@@ -17,6 +17,8 @@ First public release.
 
 ### Added
 
+- **Docs**: Chinese translations of [README](README.zh-CN.md), [CONTRIBUTING](CONTRIBUTING.zh-CN.md)
+  and [SECURITY](SECURITY.zh-CN.md); English stays the default and each page links to the other.
 - **Cursor: tool calls are now written as native `toolFormerData`** (previously dropped). Bubble
   values in `state.vscdb` are JSON, not protobuf — only `toolCallBinary` is protobuf, while
   `params`/`result` are protobuf-JSON strings. Shell/read/edit/write/grep/glob/list/delete/todo map
