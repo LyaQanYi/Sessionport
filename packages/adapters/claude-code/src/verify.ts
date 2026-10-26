@@ -54,6 +54,7 @@ interface AnyRow {
   timestamp?: unknown;
   isSidechain?: boolean;
   agentId?: string;
+  toolUseResult?: unknown;
   message?: { role?: string; content?: unknown };
 }
 
@@ -150,7 +151,11 @@ async function collectSubagentFiles(dir: string, depth = 0): Promise<string[]> {
  * sessionId 与主会话一致、tool_use 有结果、meta.json 存在且字段合法。
  * 传入 expectedChildren 时再核对 meta.json 与 IR child 的对应关系。
  */
-async function verifySubagents(options: VerifyClaudeOptions, checks: VerifyCheck[]): Promise<VerifySubagentReport[]> {
+async function verifySubagents(
+  options: VerifyClaudeOptions,
+  checks: VerifyCheck[],
+  mainRows: AnyRow[],
+): Promise<VerifySubagentReport[]> {
   const configDir = claudeConfigDir(options.configDir);
   const dir = subagentsDirPath(configDir, options.cwd, options.sessionId);
   const files = existsSync(dir) ? await collectSubagentFiles(dir) : [];
@@ -232,6 +237,31 @@ async function verifySubagents(options: VerifyClaudeOptions, checks: VerifyCheck
       detail: meta === undefined ? metaError : !agentTypeOk ? 'agentType 缺失' : !descriptionOk ? 'description 为空' : !toolUseOk ? 'toolUseId 为空' : 'ok',
     });
     metaByAgent.set(agentId, meta);
+
+    // 主 transcript 的 tool_result 行必须带 toolUseResult.agentId（Claude 用它关联子代理）；
+    // 若主会话里本来就没有对应 tool_use（例如跨 agent 导入丢了父调用），关联无从谈起，不算错误。
+    const toolUseId = typeof meta?.toolUseId === 'string' ? meta.toolUseId : undefined;
+    const hasParentToolUse =
+      toolUseId !== undefined &&
+      mainRows.some((row) => blocksOf(row).some((block) => block.type === 'tool_use' && block.id === toolUseId));
+    const linkedRow = mainRows.find((row) => {
+      const result = row.toolUseResult;
+      return result !== null && typeof result === 'object' && (result as { agentId?: unknown }).agentId === agentId;
+    });
+    const blockMatches =
+      !hasParentToolUse ||
+      (linkedRow !== undefined && blocksOf(linkedRow).some((block) => block.type === 'tool_result' && block.tool_use_id === toolUseId));
+    checks.push({
+      name: 'subagent-' + agentId + '-tool-use-result',
+      ok: !hasParentToolUse || (linkedRow !== undefined && blockMatches),
+      detail: !hasParentToolUse
+        ? '主会话没有对应 tool_use（无父调用可关联，跳过）'
+        : linkedRow === undefined
+          ? '主 transcript 里没有 toolUseResult.agentId=' + agentId + ' 的 tool_result（CLI 不会展开子代理）'
+          : !blockMatches
+            ? 'tool_result.tool_use_id 与 meta.toolUseId 不一致: ' + String(toolUseId)
+            : 'ok',
+    });
 
     reports.push({
       agentId,
@@ -356,7 +386,7 @@ export async function verifyClaudeSession(options: VerifyClaudeOptions): Promise
   const missingResults = missingToolResults(rows);
   checks.push({ name: 'tool-pairing', ok: missingResults === 0, detail: missingResults + ' 个 tool_use 缺结果' });
 
-  const subagents = await verifySubagents(options, checks);
+  const subagents = await verifySubagents(options, checks, rows);
 
   return { ok: checks.every((c) => c.ok), filePath, rows: rows.length, conversationRows: conversation.length, subagents, checks };
 }
