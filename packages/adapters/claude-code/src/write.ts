@@ -142,6 +142,70 @@ function buildSubagentMeta(child: IrChildSession): ClaudeSubagentMeta {
   return meta;
 }
 
+/** 从 IR parts / tool_result content 里取纯文本（用于 toolUseResult.prompt/content） */
+function textFromParts(parts: unknown): string {
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .map((part) => {
+      if (part !== null && typeof part === 'object' && (part as { type?: unknown }).type === 'text') {
+        const text = (part as { text?: unknown }).text;
+        return typeof text === 'string' ? text : '';
+      }
+      return '';
+    })
+    .filter((text) => text.length > 0)
+    .join('\n');
+}
+
+/** 子代理会话的第一条真实用户消息（Claude 的 toolUseResult.prompt 用它） */
+function firstUserText(session: IrSession): string {
+  for (const event of session.events) {
+    if (event.kind !== 'message' || event.role !== 'user' || event.synthetic === true) continue;
+    const text = textFromParts(event.parts);
+    if (text.length > 0) return text;
+  }
+  return '';
+}
+
+/**
+ * 给与子代理对应的 tool_result 行补 Claude 的 toolUseResult。
+ * 真实样本里 Claude 用 { status:'completed', agentId, agentType, prompt, content, ... }
+ * 关联 <sessionId>/subagents/agent-<agentId>.jsonl；缺这个字段时 CLI 只显示一行
+ * "explore(...)"，不会展开子代理转录。
+ */
+function attachSubagentToolUseResults(
+  rows: ClaudeRow[],
+  links: Array<{ toolUseId: string; agentId: string; agentType: string; description?: string; prompt: string; toolCalls: number }>,
+  model: string,
+): void {
+  if (links.length === 0) return;
+  const byToolUseId = new Map(links.map((link) => [link.toolUseId, link]));
+  for (const row of rows) {
+    if (row.type !== 'user') continue;
+    for (const block of row.message.content) {
+      if (block === null || typeof block !== 'object') continue;
+      const record = block as Record<string, unknown>;
+      if (record.type !== 'tool_result') continue;
+      const toolUseId = typeof record.tool_use_id === 'string' ? record.tool_use_id : undefined;
+      if (toolUseId === undefined) continue;
+      const link = byToolUseId.get(toolUseId);
+      if (link === undefined) continue;
+      const text = typeof record.content === 'string' ? record.content : textFromParts(record.content);
+      row.toolUseResult = {
+        status: 'completed',
+        prompt: link.prompt,
+        agentId: link.agentId,
+        agentType: link.agentType,
+        ...(link.description !== undefined ? { description: link.description } : {}),
+        ...(text.length > 0 ? { content: [{ type: 'text', text }] } : {}),
+        resolvedModel: model,
+        totalToolUseCount: link.toolCalls,
+        canContinueAgent: true,
+      };
+    }
+  }
+}
+
 function serializeRows(rows: ClaudeRow[]): string {
   return rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
 }
@@ -346,6 +410,14 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
 
   // 先把子代理全部转换出来，再落盘：避免转换失败时留下半套文件
   const childPlans: ChildPlan[] = [];
+  const childLinks: Array<{
+    toolUseId: string;
+    agentId: string;
+    agentType: string;
+    description?: string;
+    prompt: string;
+    toolCalls: number;
+  }> = [];
   if (options.includeChildren === true && bundle.children.length > 0) {
     const usedAgentIds = new Set<string>();
     for (const child of bundle.children) {
@@ -368,14 +440,26 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
         row.agentId = agentId;
       }
       const label = nonEmptyText(child.label);
+      const meta = buildSubagentMeta(child);
       childPlans.push({
         agentId,
         ...(label !== undefined ? { label } : {}),
-        meta: buildSubagentMeta(child),
+        meta,
         rows: childRows,
         filePath: subagentFilePath(configDir, cwd, sessionId, agentId),
         metaPath: subagentMetaPath(configDir, cwd, sessionId, agentId),
       });
+      const toolUseId = nonEmptyText(child.viaToolCallId);
+      if (toolUseId !== undefined) {
+        childLinks.push({
+          toolUseId,
+          agentId,
+          agentType: meta.agentType,
+          ...(meta.description !== undefined ? { description: meta.description } : {}),
+          prompt: firstUserText(child.session),
+          toolCalls: child.session.events.filter((event) => event.kind === 'tool_call').length,
+        });
+      }
     }
     if (childPlans.length > 0) {
       losses.add(
@@ -385,6 +469,9 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
       );
     }
   }
+
+  // Claude 靠 toolUseResult.agentId 把 tool_result 行和 subagents/agent-*.jsonl 关联起来
+  attachSubagentToolUseResults(rows, childLinks, model);
 
   const filePath = sessionFilePath(configDir, cwd, sessionId);
   if (!options.dryRun) {

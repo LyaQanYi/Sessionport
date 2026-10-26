@@ -158,6 +158,23 @@ test('includeChildren：子代理写成原生 subagents transcript，读回 titl
     assert.ok(mainRows.every((row) => row.isSidechain === false));
     assert.ok(mainRows.every((row) => row.agentId === undefined));
 
+    // 主会话里有 Task 调用的子代理，其 tool_result 行必须带 Claude 的 toolUseResult（CLI 靠它关联 sidecar）
+    const rowForChildOne = mainRows.find((candidate) => {
+      const message = candidate.message as { content?: Array<{ type?: string; tool_use_id?: string }> } | undefined;
+      return Array.isArray(message?.content)
+        && message.content.some((block) => block.type === 'tool_result' && block.tool_use_id === bundle.children[0]!.viaToolCallId);
+    });
+    assert.ok(rowForChildOne, '缺少子代理一对应的 tool_result 行');
+    const linkedResult = rowForChildOne.toolUseResult as Record<string, unknown>;
+    assert.equal(linkedResult.status, 'completed');
+    assert.equal(linkedResult.agentId, report.children[0]!.agentId);
+    assert.equal(linkedResult.agentType, report.children[0]!.meta.agentType);
+    assert.equal(typeof linkedResult.prompt, 'string');
+    assert.ok((linkedResult.prompt as string).length > 0);
+    assert.ok(Array.isArray(linkedResult.content));
+    // 子代理二在主会话里没有对应 Task 调用：不应伪造关联
+    assert.equal(mainRows.filter((row) => row.toolUseResult !== undefined).length, 1);
+
     const expectedDir = join(dirname(report.filePath), SESSION_ID, 'subagents');
     for (const [index, source] of bundle.children.entries()) {
       const written = report.children[index]!;
@@ -271,6 +288,7 @@ test('verify：原生 subagents 结构 PASS，破坏子代理文件后 FAIL', as
       assert.ok(verify.checks.some((check) => check.name === 'subagent-' + child.agentId + '-sidechain-agent-id' && check.ok));
       assert.ok(verify.checks.some((check) => check.name === 'subagent-' + child.agentId + '-parent-chain' && check.ok));
       assert.ok(verify.checks.some((check) => check.name === 'subagent-' + child.agentId + '-meta' && check.ok));
+      assert.ok(verify.checks.some((check) => check.name === 'subagent-' + child.agentId + '-tool-use-result' && check.ok));
     }
     assert.ok(verify.checks.some((check) => check.name === 'subagent-files-match-children' && check.ok));
     assert.ok(verify.checks.some((check) => check.name === 'subagent-meta-matches-children' && check.ok));

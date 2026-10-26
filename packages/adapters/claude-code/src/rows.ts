@@ -17,6 +17,8 @@ export interface ClaudeUserRow {
   agentId?: string;
   userType: 'external';
   isMeta?: boolean;
+  /** tool_result 行的结构化结果（Claude 用它关联子代理 transcript 等） */
+  toolUseResult?: Record<string, unknown>;
   message: { role: 'user'; content: unknown[] };
 }
 
