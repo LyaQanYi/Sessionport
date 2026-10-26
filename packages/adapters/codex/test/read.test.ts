@@ -9,17 +9,23 @@ const SESSIONS = existsSync(HOME) ? await listCodexSessions() : [];
 const hasReal = SESSIONS.length > 0;
 
 test('读取真实 Codex 会话：response_item 映射与双轨去重', { skip: hasReal ? false : '本机没有 Codex rollout 样本' }, async (t) => {
-  // 最新的 rollout 可能只有极少事件（刚创建/被截断）：挑一个事件量足够的样本
+  // 最新的 rollout 可能只有极少事件（刚创建/被截断）或纯对话没有工具调用：挑一个满足样本
   let bundle: Awaited<ReturnType<typeof readCodexSession>> | undefined;
-  for (const candidate of SESSIONS.slice(0, 8)) {
-    const parsed = await readCodexSession(candidate.id, { home: HOME });
-    if (parsed.root.events.length > 10) {
+  for (const candidate of SESSIONS.slice(0, 12)) {
+    let parsed: Awaited<ReturnType<typeof readCodexSession>>;
+    try {
+      parsed = await readCodexSession(candidate.id, { home: HOME });
+    } catch {
+      continue;
+    }
+    const toolCalls = parsed.root.events.filter((event) => event.kind === 'tool_call').length;
+    if (parsed.root.events.length > 10 && toolCalls > 0) {
       bundle = parsed;
       break;
     }
   }
   if (bundle === undefined) {
-    t.skip('本机 Codex 样本事件量不足（<=10），跳过映射断言');
+    t.skip('本机没有同时满足「事件数 > 10 且含工具调用」的 Codex 样本');
     return;
   }
   assert.equal(bundle.root.source.agent, 'codex');
