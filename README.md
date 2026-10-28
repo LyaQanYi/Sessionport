@@ -180,8 +180,9 @@ right-click → Open or `xattr -dr com.apple.quarantine`.
 
 Current screens: session browser (all agents), reader (IR events, notices, resume command), migration with
 dry-run loss preview before writing. The reader also lists sub-agent sessions (e.g. Claude Code's on-disk
-subagent transcripts) and lets you drill into each one. IPC is a small typed allow-list with zod validation in
-the main process.
+subagent transcripts) and lets you drill into each one. Press **⌘K** (Ctrl+K) anywhere for a command palette:
+search sessions across every harness, jump to a page, refresh the list or switch the theme.
+IPC is a small typed allow-list with zod validation in the main process.
 
 The UI is bilingual (zh-CN / en-US): it follows the system language by default and Settings → Language can
 pin one; the choice is stored locally and applies immediately (loss/notice descriptions are translated by code).
@@ -196,6 +197,10 @@ with a one-click "open app" and a "verify import" button that reads the target a
 | Reader | Migration |
 |---|---|
 | ![reader](docs/desktop-reader.png) | ![migration](docs/desktop-migrate.png) |
+
+| Command palette (⌘K) |
+|---|
+| ![command palette](docs/desktop-palette.png) |
 
 _Sessions group by project or time; the sidebar lists only the harnesses you enabled (auto-detected
 from installed data directories, toggle them in Settings), and Settings stays pinned at the bottom.

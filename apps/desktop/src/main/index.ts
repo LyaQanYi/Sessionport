@@ -113,6 +113,33 @@ function createWindow(): void {
         }
       }
 
+      // 冒烟时可选：打开 ⌘K 命令面板（截图/人工检查用）
+      if (process.env['SESSIONPORT_SMOKE_PALETTE'] === '1') {
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 600));
+          await window.webContents.executeJavaScript(
+            `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }))`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 900));
+          const paletteQuery = process.env['SESSIONPORT_SMOKE_PALETTE_QUERY'];
+          if (paletteQuery !== undefined && paletteQuery.length > 0) {
+            await window.webContents.executeJavaScript(
+              `(() => {
+                const input = document.querySelector('[role="combobox"]');
+                if (!input) return false;
+                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                setter.call(input, ${JSON.stringify(paletteQuery)});
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                return true;
+              })()`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, 600));
+          }
+        } catch (error) {
+          console.error('[smoke] palette open failed:', String(error));
+        }
+      }
+
       const shot = process.env['SESSIONPORT_SMOKE_SHOT'];
       if (shot) {
         // 给 React 一点时间挂载并完成首屏数据加载，再截图

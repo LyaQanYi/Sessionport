@@ -174,6 +174,7 @@ cd apps/desktop && SESSIONPORT_SMOKE=1 ./node_modules/.bin/electron .
 
 当前界面：跨 agent 的会话浏览器、阅读器（IR 事件、notices、resume 命令）、带 dry-run 损失预览的迁移页。
 阅读器还会列出子代理会话（例如 Claude Code 落盘的 subagent transcript），可以逐条点进去查看。
+任何页面按 **⌘K**（Ctrl+K）打开命令面板：跨 harness 搜索会话、跳转页面、刷新列表、切换主题。
 IPC 是主进程里一份很小的类型化白名单，带 zod 校验。
 
 界面支持中英双语（zh-CN / en-US）：默认跟随系统语言，设置 → 语言可以固定其中一种；
@@ -189,6 +190,10 @@ IPC 是主进程里一份很小的类型化白名单，带 zod 校验。
 | 阅读器 | 迁移 |
 |---|---|
 | ![阅读器](docs/desktop-reader.png) | ![迁移](docs/desktop-migrate.png) |
+
+| 命令面板（⌘K） |
+|---|
+| ![命令面板](docs/desktop-palette.png) |
 
 _会话可以按项目或时间分组；侧栏只列出你启用的 harness（首次启动自动检测已安装的数据目录，
 可在设置里开关），设置固定在底部。浅色/深色主题跟随系统。UI 设计语言参考：
