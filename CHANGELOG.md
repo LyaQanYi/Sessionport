@@ -7,6 +7,15 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
+- **Cursor writer: edit cards now render diffs in the desktop app.** Edit bubbles write
+  `toolFormerData.toolCallBinary` (base64 of the `agent.v1.ToolCall` edit branch:
+  `edit_tool_call.args.path` + `result.success{path, lines_added, lines_removed, diff_string}`) next to
+  `additionalData.precomputedDiff`. Cursor only decodes the tool call from that binary when it loads a
+  composer; without it the bubble degrades to a plain "Edited <file>" summary and the diff is never
+  shown. `verifyCursorSession` gained `toolformer-edit-binary`; unit tests cover the encoder/decoder and
+  the existing diff round-trip now asserts the binary payload. Verified visually: the real composer shows
+  `README.md +1 −1` cards with red/green lines and a working diff viewer.
+
 - **Qoder writer: native subagent write-back.** With `--include-children`,
   `writeQoderSession` now writes each IR child as
   `<projectDir>/<sessionId>/subagents/agent-<agentId>.jsonl` plus
@@ -36,6 +45,12 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Notes
 
+- **Qoder desktop task list is not fed by local JSONL (2026-10-28 observation).** A valid imported
+  session (with a linked subagent, `verify` all PASS) written into the real `~/.qoder-cn/projects` did
+  not show up in the desktop workspace task list ("暂无任务"), while the Qoder SDK read the same file and
+  its subagents fine. The UI has server-paginated task-list strings ("正在加载更多任务"), so local
+  JSONL imports are CLI/SDK-visible only; the desktop UI limitation is recorded in
+  `research/qoder-format.md` §4/§9.7.
 - Verified against real Qoder data and the real Qoder SDK (asar, read-only): a real
   Qoder→Qoder import keeps `aExplore-…` agent ids and the SDK returns the linked
   `parent_tool_use_id`; a real WorkBuddy session with 11 subagents imports into an
