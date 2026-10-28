@@ -216,9 +216,10 @@ function attachSubagentToolUseResults(
     estimatedTokens: number;
   }>,
   model: string,
-): void {
-  if (links.length === 0) return;
+): number {
+  if (links.length === 0) return 0;
   const byToolUseId = new Map(links.map((link) => [link.toolUseId, link]));
+  let applied = 0;
   for (const row of rows) {
     if (row.type !== 'user') continue;
     for (const block of row.message.content) {
@@ -244,8 +245,10 @@ function attachSubagentToolUseResults(
         usage: { ...SUBAGENT_USAGE_SKELETON, output_tokens: link.estimatedTokens },
         canContinueAgent: true,
       };
+      applied += 1;
     }
   }
+  return applied;
 }
 
 function serializeRows(rows: ClaudeRow[]): string {
@@ -525,7 +528,15 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
   }
 
   // Claude 靠 toolUseResult.agentId 把 tool_result 行和 subagents/agent-*.jsonl 关联起来
-  attachSubagentToolUseResults(rows, childLinks, model);
+  const linkedChildren = attachSubagentToolUseResults(rows, childLinks, model);
+  const unlinkedChildren = childPlans.length - linkedChildren;
+  if (unlinkedChildren > 0) {
+    losses.add(
+      'claude.subagent-unlinked',
+      '子代理 transcript 已写出，但主会话里没有对应的 Agent tool_use（源端缺 viaToolCallId/toolUseId），Claude UI 不会在父会话下展示这些子代理',
+      { count: unlinkedChildren, severity: 'warning' },
+    );
+  }
 
   const filePath = sessionFilePath(configDir, cwd, sessionId);
   if (!options.dryRun) {
