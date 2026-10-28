@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Changed
+
+- **Claude Code writer**: children without a matching parent `Agent` tool_use (e.g. DSH imports, where
+  subagents are independent sessions) now report a `claude.subagent-unlinked` warning instead of
+  silently writing sidecars that the CLI will not surface under the parent conversation.
+- **Docs**: `research/dogfooding-2026-10-28.md` records three real migrations done with the published
+  0.1.4 CLI (Claude Code → DSH, WorkBuddy → Qoder, DSH → Claude Code), including the Qoder children gap.
+
 ## [0.1.4] — 2026-10-28
 
 npm: `sesport@0.1.4` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the

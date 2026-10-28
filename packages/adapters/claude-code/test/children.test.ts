@@ -151,6 +151,10 @@ test('includeChildren：子代理写成原生 subagents transcript，读回 titl
     const nativeLoss = report.losses.find((loss) => loss.code === 'claude.subagent-native-writeback');
     assert.equal(nativeLoss?.severity, 'info');
     assert.equal(nativeLoss?.count, 2);
+    // 子代理二在主会话里没有对应 Task 调用：handler 仍写文件，但要显式警告「UI 不会关联」
+    const unlinkedLoss = report.losses.find((loss) => loss.code === 'claude.subagent-unlinked');
+    assert.equal(unlinkedLoss?.severity, 'warning');
+    assert.equal(unlinkedLoss?.count, 1);
 
     // 主会话文件不掺 sidechain 镜像行，事件不变
     const mainRows = await readRows(report.filePath);
