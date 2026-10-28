@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Claude Code reader: Edit/Write patches become IR `diff` blocks.** `toolUseResult.structuredPatch`
+  (real Claude 2.1.312 field) is converted into a unified diff (`--- a/<repo-relative path>` +
+  `@@ -old,count +new,count @@` + hunk lines) and appended to the `tool_result` event while keeping the
+  original text. This gives Cursor's `additionalData.precomputedDiff` writeback a real source: a real
+  Claude session with two edits imports into Cursor with `toolformer-edit-diff (withDiff=2 bad=0)` and
+  reads back both diff blocks. See `research/claude-code-edit-patches.md`.
+
 ## [0.1.5] — 2026-10-28
 
 npm: `sesport@0.1.5` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the
