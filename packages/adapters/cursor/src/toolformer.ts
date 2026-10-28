@@ -13,6 +13,7 @@
  */
 import type { IrContent } from '@sessionport/core';
 
+import { parseUnifiedDiff } from './diff.ts';
 import { isRecord, tryParseJson } from './wire.ts';
 import type { CursorToolFormerData } from './wire.ts';
 
@@ -297,10 +298,12 @@ function safeStringify(value: unknown): string {
   }
 }
 
-function contentJson(content: IrContent[] | undefined): unknown {
-  if (content === undefined || content.length !== 1) return undefined;
-  const only = content[0];
-  return only !== undefined && only.type === 'json' ? only.value : undefined;
+function contentJson(content: IrContent[] | undefined, allowOtherBlocks = false): unknown {
+  if (content === undefined || content.length === 0) return undefined;
+  const jsonParts = content.filter((part) => part.type === 'json');
+  if (jsonParts.length !== 1) return undefined;
+  if (!allowOtherBlocks && content.length !== 1) return undefined;
+  return jsonParts[0]?.type === 'json' ? jsonParts[0].value : undefined;
 }
 
 /** IR content 拍平成文本（和 core 的 contentToText 语义一致） */
@@ -797,6 +800,83 @@ function buildListSummary(
   };
 }
 
+function resultDiffTexts(content: IrContent[]): string[] {
+  const texts: string[] = [];
+  for (const part of content) {
+    if (part.type === 'diff' && typeof part.text === 'string' && part.text.trim().length > 0) texts.push(part.text);
+  }
+  return texts;
+}
+
+/**
+ * IR 的 diff block → Cursor 的 additionalData.precomputedDiff。
+ *
+ * 之所以走 precomputedDiff 而不是 beforeContentId/afterContentId：Cursor 原生
+ * 的 diff 卡片在缺少全文时会从 diff 文本生成 precomputedDiff（bundle 的
+ * editToolDiffFallback.js），UI 直接消费它；content id 需要
+ * composer.content.<sha256> 全文 blob，IR 里没有可靠来源，不伪造。
+ */
+function editDiffAdditionalData(
+  mapped: MappedToolInput,
+  result: CursorToolResultSpec,
+  isError: boolean,
+  warnings: ToolFormerWarning[],
+): Record<string, unknown> | undefined {
+  const diffTexts = resultDiffTexts(result.content);
+  if (diffTexts.length === 0) {
+    warnings.push({
+      code: 'cursor.edit-diff-unavailable',
+      message:
+        mapped.isWrite === true
+          ? 'Write 只有 after 全文，没有 before 全文或 composer.content 文件 blob；为避免伪造 diff，Cursor 气泡只写路径/结果'
+          : 'IR 的 tool_result 没有 diff block，也没有 before/after 文件全文；Cursor 只能显示路径/结果，无法生成可展开 diff（原生需要 diff 文本，或 beforeContentId/afterContentId 引用的文件 blob）',
+      severity: 'warning',
+    });
+    return undefined;
+  }
+  if (isError) {
+    warnings.push({
+      code: 'cursor.edit-diff-error-result',
+      message: '工具结果是错误态，diff block 未写入 additionalData.precomputedDiff',
+      severity: 'info',
+    });
+    return undefined;
+  }
+  if (diffTexts.length > 1) {
+    warnings.push({
+      code: 'cursor.edit-diff-multiple',
+      message: '工具结果有多个 diff block，一个 Cursor edit 气泡只能展示一个文件；只映射第一个',
+      severity: 'warning',
+    });
+  }
+  const parsed = parseUnifiedDiff(diffTexts[0] as string);
+  if (parsed === undefined) {
+    warnings.push({
+      code: 'cursor.edit-diff-unusable',
+      message: 'diff block 里没有可解析的统一 diff 行，未写入 additionalData.precomputedDiff',
+      severity: 'warning',
+    });
+    return undefined;
+  }
+  if (!parsed.hasChanges) {
+    warnings.push({
+      code: 'cursor.edit-diff-empty',
+      message: 'diff block 没有实际增删行（全部是 context），未写入 additionalData.precomputedDiff',
+      severity: 'warning',
+    });
+    return undefined;
+  }
+  warnings.push({
+    code: 'cursor.edit-diff-mapped',
+    message:
+      'diff 文本已按 Cursor 的 diff fallback 写成 additionalData.precomputedDiff；' +
+      '没有 before/after 文件全文，未写 composer.content blob 与 beforeContentId/afterContentId' +
+      '（diff 卡片可展开，但打开文件/checkpoint 类操作没有内容引用）',
+    severity: 'info',
+  });
+  return { precomputedDiff: parsed };
+}
+
 function mapResult(
   kind: CursorToolKind,
   mapped: MappedToolInput,
@@ -837,36 +917,36 @@ function mapResult(
     }
     case 'edit':
     case 'write': {
+      // resultForModel 是模型可见的结果文本；diff block 单独进 precomputedDiff，
+      // 不把它重复塞进 resultForModel。
+      const modelText = irContentText(result.content.filter((part) => part.type !== 'diff'));
       const resultObj: Record<string, unknown> = {
         rejected: false,
-        resultForModel: text,
+        resultForModel: modelText,
       };
       if (mapped.content !== undefined) {
         resultObj.contentsAfterEdit = mapped.content;
         if (mapped.isWrite === true) resultObj.fileWasCreated = true;
       }
-      if (isRecord(json)) {
-        if (typeof json.fileWasCreated === 'boolean') resultObj.fileWasCreated = json.fileWasCreated;
-        if (typeof json.contentsAfterEdit === 'string') {
-          resultObj.contentsAfterEdit = json.contentsAfterEdit;
+      // 读取方向会产出 [diff, json] 两个 block；json 仍可用于 fileWasCreated 等元数据。
+      const editJson = result === undefined ? undefined : contentJson(result.content, true);
+      if (isRecord(editJson)) {
+        if (typeof editJson.fileWasCreated === 'boolean') resultObj.fileWasCreated = editJson.fileWasCreated;
+        if (typeof editJson.contentsAfterEdit === 'string') {
+          resultObj.contentsAfterEdit = editJson.contentsAfterEdit;
           if (mapped.isWrite === true) resultObj.fileWasCreated = true;
         }
-        if (typeof json.detectedLanguage === 'string') resultObj.detectedLanguage = json.detectedLanguage;
+        if (typeof editJson.detectedLanguage === 'string') resultObj.detectedLanguage = editJson.detectedLanguage;
       }
-      warnings.push({
-        code: 'cursor.edit-diff-unavailable',
-        message:
-          'IR 里没有源端文件的 before/after 全文，Cursor 的 edit 气泡只能显示路径/结果，无法生成可展开的 diff',
-        severity: 'warning',
-      });
+      const additionalData = editDiffAdditionalData(mapped, result, isError, warnings);
       if (mapped.isWrite === true) {
         warnings.push({
           code: 'cursor.write-mapped-to-edit',
-          message: 'Write 工具按 Cursor 的 edit_file_v2 + fileWasCreated 近似写入（内容保留，diff 不可用）',
+          message: 'Write 工具按 Cursor 的 edit_file_v2 + fileWasCreated 近似写入（内容保留；有 diff 时另写 precomputedDiff）',
           severity: 'info',
         });
       }
-      return { result: resultObj, warnings };
+      return { result: resultObj, ...(additionalData !== undefined ? { additionalData } : {}), warnings };
     }
     case 'grep': {
       // 错误文本不是 grep 结果，别把它解析成 totalFiles/topFiles；错误信息在 error 字段里。

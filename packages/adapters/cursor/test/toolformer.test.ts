@@ -4,7 +4,12 @@ import { join } from 'node:path';
 
 import type { IrEvent, IrEventInput } from '@sessionport/core';
 
-import { CAPABILITY_TOOL_FORMER, buildCursorToolFormerData, resolveCursorTool } from '../src/index.ts';
+import {
+  CAPABILITY_TOOL_FORMER,
+  buildCursorToolFormerData,
+  parseUnifiedDiff,
+  resolveCursorTool,
+} from '../src/index.ts';
 import { readCursorSession, verifyCursorSession, writeCursorSession } from '../src/index.ts';
 import { closeCursorDb, openCursorDb, readDiskKvEntries, readDiskKvValue } from '../src/wire.ts';
 import {
@@ -22,6 +27,10 @@ const COPY_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 function at(offset: number): string {
   return new Date(BASE_MS + offset).toISOString();
+}
+
+function lossCount(losses: Array<{ code: string; count: number }>, code: string): number {
+  return losses.filter((loss) => loss.code === code).reduce((sum, loss) => sum + loss.count, 0);
 }
 
 interface ToolCase {
@@ -162,7 +171,7 @@ test('常见工具写入 toolFormerData：字段/枚举/params/result 与读回�
     const lossCodes = new Map(result.losses.map((loss) => [loss.code, loss.count]));
     assert.equal(lossCodes.get('cursor.tool-call-unsupported'), undefined, JSON.stringify(result.losses));
     assert.equal(lossCodes.get('cursor.tool-input-unusable'), undefined, JSON.stringify(result.losses));
-    assert.ok((lossCodes.get('cursor.edit-diff-unavailable') ?? 0) >= 2);
+    assert.ok(lossCount(result.losses, 'cursor.edit-diff-unavailable') >= 2);
     assert.equal(lossCodes.get('cursor.write-mapped-to-edit'), 1);
 
     const bubbles = storedBubbles(fixture, TOOL_ID);
@@ -615,6 +624,235 @@ test('Write 映射为 edit_file_v2，内容保留并显式记录近似', async (
     const resultObj = JSON.parse(String(tool.result)) as Record<string, unknown>;
     assert.equal(resultObj.fileWasCreated, true);
     assert.equal(resultObj.contentsAfterEdit, 'export const x = 1;');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+const DIFF_TEXT = [
+  '@@ -1,3 +1,3 @@',
+  ' const a = 1;',
+  '-const b = 2;',
+  '+const b = 3;',
+  ' export { a, b };',
+].join('\n');
+
+const NATIVE_DIFF = {
+  lines: [
+    { type: 'unchanged', content: 'const a = 1;', originalLineNumber: 1, modifiedLineNumber: 1 },
+    { type: 'removed', content: 'const b = 2;', originalLineNumber: 2 },
+    { type: 'added', content: 'const b = 3;', modifiedLineNumber: 2 },
+    { type: 'unchanged', content: 'export { a, b };', originalLineNumber: 3, modifiedLineNumber: 3 },
+  ],
+  hasChanges: true,
+};
+
+function diffResultEvent(callId: string, text: string, atIso: string): IrEventInput {
+  return {
+    kind: 'tool_result',
+    callId,
+    content: [{ type: 'diff', text }],
+    at: atIso,
+  } as unknown as IrEventInput;
+}
+
+test('Edit 带统一 diff：写 precomputedDiff + grouping 统计，读回保留 diff', async () => {
+  const fixture = createCursorFixture({ composers: [] });
+  try {
+    const bundle = makeIrBundle(
+      [
+        userMessage('改文件'),
+        toolCallEvent(
+          'd-1',
+          'Edit',
+          { file_path: '/tmp/work/a.ts', old_string: 'const b = 2;', new_string: 'const b = 3;' },
+          at(1000),
+        ),
+        diffResultEvent('d-1', DIFF_TEXT, at(1100)),
+      ],
+      { cwd: fixture.cwd, title: 'diff 编辑' },
+    );
+    const result = await writeCursorSession(bundle, {
+      home: fixture.home,
+      composerId: TOOL_ID,
+      backupDir: join(fixture.home, 'backup'),
+    });
+    assert.equal(lossCount(result.losses, 'cursor.edit-diff-unavailable'), 0);
+    assert.equal(lossCount(result.losses, 'cursor.edit-diff-mapped'), 1);
+
+    const tool = storedBubbles(fixture, TOOL_ID)
+      .map(({ bubble }) => toolFormerOf(bubble))
+      .find((value) => value?.toolCallId === 'd-1');
+    assert.ok(tool !== undefined);
+    const additional = tool.additionalData as Record<string, unknown>;
+    assert.deepEqual(additional.precomputedDiff, NATIVE_DIFF);
+
+    // header grouping：折叠状态的行数统计直接来自 precomputedDiff
+    const db = openCursorDb(fixture.dbPath, { readOnly: true });
+    let composerRaw: string | undefined;
+    try {
+      composerRaw = readDiskKvValue(db, 'composerData:' + TOOL_ID);
+    } finally {
+      closeCursorDb(db);
+    }
+    assert.ok(composerRaw !== undefined);
+    const headers = (
+      JSON.parse(composerRaw) as { fullConversationHeadersOnly: Array<Record<string, unknown>> }
+    ).fullConversationHeadersOnly;
+    const editHeader = headers.find((entry) => {
+      const grouping = entry.grouping as Record<string, unknown> | undefined;
+      return grouping?.toolFormerTool === 38;
+    });
+    assert.ok(editHeader !== undefined);
+    const grouping = editHeader.grouping as Record<string, unknown>;
+    assert.equal(grouping.toolCallCase, 'editToolCall');
+    assert.equal(grouping.toolDisplayPath, '/tmp/work/a.ts');
+    assert.equal(grouping.editLinesAdded, 1);
+    assert.equal(grouping.editLinesRemoved, 1);
+
+    const readback = await readCursorSession(TOOL_ID, { home: fixture.home, includeChildren: false });
+    const resultEvent = readback.root.events.find((event) => event.kind === 'tool_result');
+    assert.ok(resultEvent !== undefined && resultEvent.kind === 'tool_result');
+    assert.deepEqual(resultEvent.content, [{ type: 'diff', text: DIFF_TEXT }]);
+
+    const report = await verifyCursorSession({
+      home: fixture.home,
+      sessionId: TOOL_ID,
+      expected: { diffs: 1 },
+    });
+    assert.deepEqual(report.checks.filter((check) => !check.ok), []);
+    assert.equal(report.readback?.diffs, 1);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('原生 edit 的 precomputedDiff 读成 IR diff block，并可再写回', async () => {
+  const fixture = createCursorFixture({
+    composers: [
+      {
+        composerId: TOOL_ID,
+        name: '原生 edit diff',
+        bubbles: [
+          { type: 1, text: '改一下' },
+          {
+            type: 2,
+            tool: {
+              name: 'edit_file_v2',
+              toolCallId: 'native-diff-1',
+              tool: 38,
+              status: 'completed',
+              params: { relativeWorkspacePath: '/tmp/work/a.ts', noCodeblock: true, cloudAgentEdit: false },
+              result: {
+                beforeContentId: 'composer.content.aaa',
+                afterContentId: 'composer.content.bbb',
+              },
+              additionalData: { precomputedDiff: NATIVE_DIFF },
+            },
+          },
+        ],
+      },
+    ],
+  });
+  try {
+    const bundle = await readCursorSession(TOOL_ID, { home: fixture.home, includeChildren: false });
+    const resultEvent = bundle.root.events.find((event) => event.kind === 'tool_result');
+    assert.ok(resultEvent !== undefined && resultEvent.kind === 'tool_result');
+    const diffBlock = resultEvent.content.find((part) => part.type === 'diff');
+    assert.ok(diffBlock !== undefined && diffBlock.type === 'diff');
+    assert.deepEqual(parseUnifiedDiff(diffBlock.text), NATIVE_DIFF);
+    assert.ok(resultEvent.content.some((part) => part.type === 'json'));
+
+    await writeCursorSession(bundle, {
+      home: fixture.home,
+      composerId: COPY_ID,
+      backupDir: join(fixture.home, 'backup'),
+    });
+    const copied = storedBubbles(fixture, COPY_ID)
+      .map(({ bubble }) => toolFormerOf(bubble))
+      .find((value) => value?.toolCallId === 'native-diff-1');
+    assert.ok(copied !== undefined);
+    assert.deepEqual((copied.additionalData as Record<string, unknown>).precomputedDiff, NATIVE_DIFF);
+
+    const report = await verifyCursorSession({
+      home: fixture.home,
+      sessionId: COPY_ID,
+      expected: { diffs: 1 },
+    });
+    assert.deepEqual(report.checks.filter((check) => !check.ok), []);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('edit 无 diff / diff 全是 context：显式 loss，不写 precomputedDiff', async () => {
+  const fixture = createCursorFixture({ composers: [] });
+  try {
+    const bundle = makeIrBundle(
+      [
+        userMessage('两种降级'),
+        toolCallEvent('no-diff', 'Edit', { file_path: '/tmp/work/a.ts', new_string: 'x' }, at(1000)),
+        toolResultEvent('no-diff', 'updated', at(1100)),
+        toolCallEvent('empty-diff', 'Edit', { file_path: '/tmp/work/b.ts', new_string: 'y' }, at(1200)),
+        diffResultEvent('empty-diff', '@@ -1,1 +1,1 @@\n same', at(1300)),
+      ],
+      { cwd: fixture.cwd, title: 'diff 降级' },
+    );
+    const result = await writeCursorSession(bundle, {
+      home: fixture.home,
+      composerId: TOOL_ID,
+      backupDir: join(fixture.home, 'backup'),
+    });
+    assert.equal(lossCount(result.losses, 'cursor.edit-diff-unavailable'), 1);
+    assert.equal(lossCount(result.losses, 'cursor.edit-diff-empty'), 1);
+    assert.equal(lossCount(result.losses, 'cursor.edit-diff-mapped'), 0);
+
+    const tools = storedBubbles(fixture, TOOL_ID)
+      .map(({ bubble }) => toolFormerOf(bubble))
+      .filter((value) => value !== undefined);
+    assert.equal(tools.length, 2);
+    for (const tool of tools) assert.equal(tool.additionalData, undefined);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('verify 能发现坏掉的 edit precomputedDiff', async () => {
+  const fixture = createCursorFixture({ composers: [] });
+  try {
+    const bundle = makeIrBundle(
+      [
+        userMessage('改文件'),
+        toolCallEvent(
+          'd-bad',
+          'Edit',
+          { file_path: '/tmp/work/a.ts', old_string: 'const b = 2;', new_string: 'const b = 3;' },
+          at(1000),
+        ),
+        diffResultEvent('d-bad', DIFF_TEXT, at(1100)),
+      ],
+      { cwd: fixture.cwd, title: '坏 diff' },
+    );
+    await writeCursorSession(bundle, {
+      home: fixture.home,
+      composerId: TOOL_ID,
+      backupDir: join(fixture.home, 'backup'),
+    });
+    const stored = storedBubbles(fixture, TOOL_ID).find(({ bubble }) => toolFormerOf(bubble) !== undefined);
+    assert.ok(stored !== undefined);
+    const tool = toolFormerOf(stored.bubble) as Record<string, unknown>;
+    tool.additionalData = { precomputedDiff: { lines: [{ type: 'added', content: 'x' }], hasChanges: true } };
+    const db = openCursorDb(fixture.dbPath);
+    try {
+      db.prepare('UPDATE cursorDiskKV SET value = ? WHERE key = ?').run(JSON.stringify(stored.bubble), stored.key);
+    } finally {
+      closeCursorDb(db);
+    }
+
+    const report = await verifyCursorSession({ home: fixture.home, sessionId: TOOL_ID, skipReadback: true });
+    assert.equal(report.ok, false);
+    const failed = report.checks.filter((check) => !check.ok).map((check) => check.name);
+    assert.ok(failed.includes('toolformer-edit-diff'), failed.join(','));
   } finally {
     fixture.cleanup();
   }

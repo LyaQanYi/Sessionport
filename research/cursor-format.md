@@ -257,8 +257,15 @@ win32 用 birthtimeMs）。本机 78 个 workspace.json 中可 stat 的目录全
    默认真实用户库路径必须显式 `confirmReal:true`（先 dryRun）。
 
 **没有写**：`toolCallBinary`（agent.v1.ToolCall 的 protobuf；当前只写 params/result，
-UI 渲染需人工确认）、edit 的 `precomputedDiff`/`beforeContentId`/`afterContentId`、
-子代理 composer、图片二进制、conversationState protobuf、checkpoint/diff 数据。
+UI 渲染需人工确认）、edit 的 `beforeContentId`/`afterContentId` 与 `composer.content.<sha256>`
+全文 blob（IR 没有可靠全文来源）、子代理 composer、图片二进制、conversationState protobuf、
+checkpoint/diff 数据。
+
+**edit diff**：IR 的 `tool_result.content` 带 `{type:'diff'}` block 时，writer 会把统一 diff
+编码成 Cursor 原生 `additionalData.precomputedDiff`（与 3.25.9 的 diff fallback 同款），并给
+header grouping 补 `editLinesAdded`/`editLinesRemoved`；reader 会把原生 `precomputedDiff`
+还原成 IR diff block。没有 diff block 时仍只显示路径/结果，并显式记
+`cursor.edit-diff-unavailable`。UI 是否真的显示展开卡片没有 headless 入口，未验证。
 工具映射的已确认/推测边界见 [cursor-toolformer.md](./cursor-toolformer.md)。
 
 ### 9.1 真实库写入证据（2026-10-20，实测）
@@ -366,9 +373,10 @@ readback = 15 events / 7 user / 8 assistant，标题与 cwd 正确。
 - 写入默认带 `agentLocation/agentLocationHistory`；[实测] 不带也能被 app 枚举与索引，
   [推测] 列表可见不受影响，但 Agents 窗口的本地项目分组可能更依赖它。
 - toolFormerData 已写回常见工具（shell/read/edit/write/grep/glob/list/delete/todo），
-  写入 `params`/`result`/`additionalData` 与 `_sessionport` 往返扩展；但
-  `toolCallBinary` 未写、edit diff 不可用、UI 渲染仍需人工确认。证据/字段表/未验证项见
-  [cursor-toolformer.md](./cursor-toolformer.md)。
+  写入 `params`/`result`/`additionalData` 与 `_sessionport` 往返扩展；edit 有 diff block 时
+  另写 `additionalData.precomputedDiff`（结构已验证，Cursor UI 未验证）。
+  `toolCallBinary`、edit 的 `beforeContentId`/`afterContentId`/全文 blob 未写。
+  证据/字段表/未验证项见 [cursor-toolformer.md](./cursor-toolformer.md)。
 - 图片只有 uuid/尺寸，没有本地二进制，读写都只能占位。
 - `conversationState`、`blobEncryptionKey`、`speculativeSummarizationEncryptionKey` 用占位值；
   发送新消息后 app 可能重写这些字段（未验证是否影响首条续聊）。

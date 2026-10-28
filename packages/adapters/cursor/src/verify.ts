@@ -14,6 +14,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { validateCursorPrecomputedDiff } from './diff.ts';
 import { cursorLogsDir, cursorUserDataDir, resolveCursorPaths } from './paths.ts';
 import { readCursorSession } from './read.ts';
 import { isCursorToolStatus } from './toolformer.ts';
@@ -55,6 +56,8 @@ export interface CursorReadbackSummary {
   assistantMessages: number;
   toolCalls: number;
   toolResults: number;
+  /** tool_result 里带 diff block 的条数（edit diff 的读回计数） */
+  diffs: number;
   reasoning: number;
   head: string | null;
 }
@@ -72,6 +75,8 @@ export interface VerifyCursorOptions {
     eventCount?: number;
     toolCalls?: number;
     toolResults?: number;
+    /** 读回时 tool_result 里的 diff block 数量 */
+    diffs?: number;
   };
   /** 跳过 readback（只看 DB 结构） */
   skipReadback?: boolean;
@@ -241,6 +246,40 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
     );
     push('toolformer-extension', badExtension === 0, 'bad=' + String(badExtension));
 
+    // edit 的 diff：只校验实际写了的 additionalData.precomputedDiff；
+    // 文本-only 的 import 或原生 blob-only 气泡没有该字段，不算失败。
+    let editDiffCount = 0;
+    let badEditDiffs = 0;
+    let editDiffNoChanges = 0;
+    let firstEditDiffError = '';
+    for (const { tool } of toolBubbles) {
+      if (tool.tool !== 38 && tool.name !== 'edit_file_v2') continue;
+      const additional = tool.additionalData;
+      const precomputed = isRecord(additional) ? additional.precomputedDiff : undefined;
+      if (precomputed === undefined) continue;
+      editDiffCount += 1;
+      const errors = validateCursorPrecomputedDiff(precomputed);
+      if (errors.length > 0) {
+        badEditDiffs += 1;
+        if (firstEditDiffError.length === 0) firstEditDiffError = errors[0] as string;
+        continue;
+      }
+      const validated = precomputed as { hasChanges?: unknown; lines: Array<{ type: string }> };
+      if (validated.hasChanges !== true || !validated.lines.some((line) => line.type !== 'unchanged')) {
+        editDiffNoChanges += 1;
+      }
+    }
+    push(
+      'toolformer-edit-diff',
+      badEditDiffs === 0,
+      'withDiff=' +
+        String(editDiffCount) +
+        ' bad=' +
+        String(badEditDiffs) +
+        (editDiffNoChanges > 0 ? ' noChanges=' + String(editDiffNoChanges) : '') +
+        (firstEditDiffError.length > 0 ? ' firstError=' + firstEditDiffError : ''),
+    );
+
     let groupingMismatch = 0;
     for (const entry of parsedHeaders) {
       if (!isRecord(entry.grouping)) continue;
@@ -339,6 +378,13 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
             'toolResults=' + String(summary.toolResults) + ' expected=' + String(expected.toolResults),
           );
         }
+        if (expected?.diffs !== undefined) {
+          push(
+            'expected-diffs',
+            summary.diffs === expected.diffs,
+            'diffs=' + String(summary.diffs) + ' expected=' + String(expected.diffs),
+          );
+        }
       } catch (error) {
         push('readback', false, error instanceof Error ? error.message : String(error));
       }
@@ -385,7 +431,10 @@ function headerOrderCheck(headers: CursorConversationHeaderEntry[]): { ok: boole
 }
 
 function summarizeBundle(bundle: {
-  root: { events: Array<{ kind: string; role?: string }>; head: string | null };
+  root: {
+    events: Array<{ kind: string; role?: string; content?: Array<{ type: string }> }>;
+    head: string | null;
+  };
 }): CursorReadbackSummary {
   const summary: CursorReadbackSummary = {
     events: bundle.root.events.length,
@@ -394,6 +443,7 @@ function summarizeBundle(bundle: {
     assistantMessages: 0,
     toolCalls: 0,
     toolResults: 0,
+    diffs: 0,
     reasoning: 0,
     head: bundle.root.head,
   };
@@ -406,6 +456,9 @@ function summarizeBundle(bundle: {
       summary.toolCalls += 1;
     } else if (event.kind === 'tool_result') {
       summary.toolResults += 1;
+      for (const block of event.content ?? []) {
+        if (block.type === 'diff') summary.diffs += 1;
+      }
     } else if (event.kind === 'reasoning') {
       summary.reasoning += 1;
     }
