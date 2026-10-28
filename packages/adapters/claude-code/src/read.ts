@@ -235,6 +235,36 @@ function toolResultContent(value: unknown): IrContent[] {
   return out;
 }
 
+/**
+ * Claude 的 Edit/Write tool_result 带结构化 patch（toolUseResult.structuredPatch），
+ * 转成统一 diff 文本放进 IR 的 { type: 'diff' }，下游（Cursor 等）才能还原 diff 卡片。
+ */
+function structuredPatchDiff(row: ClaudeRow): string | undefined {
+  const result = recordOf(row.toolUseResult);
+  if (result === undefined) return undefined;
+  const patch = result.structuredPatch;
+  if (!Array.isArray(patch) || patch.length === 0) return undefined;
+  const filePath = textOf(result.filePath) ?? 'file';
+  const cwd = textOf(row.cwd);
+  const relative =
+    cwd !== undefined && filePath.startsWith(cwd + '/') ? filePath.slice(cwd.length + 1) : filePath.replace(/^\/+/, '');
+  const lines: string[] = ['--- a/' + relative, '+++ b/' + relative];
+  for (const entry of patch) {
+    const hunk = recordOf(entry);
+    if (hunk === undefined) continue;
+    const oldStart = typeof hunk.oldStart === 'number' ? hunk.oldStart : 0;
+    const oldLines = typeof hunk.oldLines === 'number' ? hunk.oldLines : 0;
+    const newStart = typeof hunk.newStart === 'number' ? hunk.newStart : 0;
+    const newLines = typeof hunk.newLines === 'number' ? hunk.newLines : 0;
+    lines.push('@@ -' + oldStart + ',' + oldLines + ' +' + newStart + ',' + newLines + ' @@');
+    const body = hunk.lines;
+    if (Array.isArray(body)) {
+      for (const line of body) if (typeof line === 'string') lines.push(line);
+    }
+  }
+  return lines.length > 2 ? lines.join('\n') : undefined;
+}
+
 /** 首条“真实”用户文本：跳过 meta / 工具结果回灌 / 注入指令；sidechain 只在读子会话时纳入 */
 function realUserText(row: ClaudeRow, includeSidechain = false): string | undefined {
   if (row.isSidechain === true && !includeSidechain) return undefined;
@@ -373,11 +403,14 @@ function emitRows(rows: ClaudeRow[], sink: EventSink): void {
             }
             if (!counters.calls.has(callId)) counters.orphanResults += 1;
             else counters.results.add(callId);
+            const content = toolResultContent(block.content);
+            const diff = structuredPatchDiff(row);
+            if (diff !== undefined) content.push({ type: 'diff', text: diff });
             const event: Omit<IrToolResultEvent, 'id' | 'parentId'> = {
               kind: 'tool_result',
               at,
               callId,
-              content: toolResultContent(block.content),
+              content,
             };
             if (block.is_error === true) event.isError = true;
             push(event, at);
