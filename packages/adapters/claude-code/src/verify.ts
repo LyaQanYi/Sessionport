@@ -251,16 +251,30 @@ async function verifySubagents(
     const blockMatches =
       !hasParentToolUse ||
       (linkedRow !== undefined && blocksOf(linkedRow).some((block) => block.type === 'tool_result' && block.tool_use_id === toolUseId));
+    // Claude 渲染 "Done (N tool uses · X tokens · Ys)" 需要 usage 对象 + 三个统计字段
+    const linkedResult =
+      linkedRow !== undefined && linkedRow.toolUseResult !== null && typeof linkedRow.toolUseResult === 'object'
+        ? (linkedRow.toolUseResult as Record<string, unknown>)
+        : undefined;
+    const statsOk =
+      linkedResult !== undefined &&
+      typeof linkedResult.totalToolUseCount === 'number' &&
+      typeof linkedResult.totalTokens === 'number' &&
+      typeof linkedResult.totalDurationMs === 'number' &&
+      linkedResult.usage !== null &&
+      typeof linkedResult.usage === 'object';
     checks.push({
       name: 'subagent-' + agentId + '-tool-use-result',
-      ok: !hasParentToolUse || (linkedRow !== undefined && blockMatches),
+      ok: !hasParentToolUse || (linkedRow !== undefined && blockMatches && statsOk),
       detail: !hasParentToolUse
         ? '主会话没有对应 tool_use（无父调用可关联，跳过）'
         : linkedRow === undefined
           ? '主 transcript 里没有 toolUseResult.agentId=' + agentId + ' 的 tool_result（CLI 不会展开子代理）'
           : !blockMatches
             ? 'tool_result.tool_use_id 与 meta.toolUseId 不一致: ' + String(toolUseId)
-            : 'ok',
+            : !statsOk
+              ? 'toolUseResult 缺 totalToolUseCount/totalTokens/totalDurationMs/usage，CLI 不会渲染 Done 行'
+              : 'ok',
     });
 
     reports.push({

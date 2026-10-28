@@ -7,17 +7,17 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
-- **Claude Code: native subagent linking.** Parent `tool_result` rows for subagents now carry a
-  Claude-shaped `toolUseResult` (`status`, `agentId`, `agentType`, `prompt`, `content`,
-  `resolvedModel`, `totalToolUseCount`, `canContinueAgent`), matching what Claude Code itself writes
-  for Agent calls; `verifyClaudeSession` gained a `subagent-<id>-tool-use-result` check.
+- **Claude Code: subagent calls now render in the CLI.** Parent `tool_result` rows for subagents carry a
+  Claude-shaped `toolUseResult` including `totalToolUseCount`, `totalDurationMs`, `totalTokens` and a full
+  `usage` object; `claude --resume` now shows `Done (N tool uses · X tokens · Ys)` under each Agent call
+  (and `Prompt:` / `Response:` in `Ctrl+O` transcript mode). `verifyClaudeSession` checks the link plus
+  the stats fields.
 
 ### Notes
 
-- Claude Code 2.1.31x CLI does **not** render historical subagent transcripts when resuming a session
-  (including in `Ctrl+O` transcript mode); native sessions behave the same. The transcripts are used by
-  `/share` and background agents. We therefore treat file-level parity as the acceptance bar and record
-  the UI limitation in `research/claude-code-subagents.md`.
+- Subagent token counts are estimated from transcript text length (the IR has no usage data); tool-use
+  counts and durations are real. Claude shows the subagent prompt/response summary, not its full message list.
+  See `research/claude-code-subagents.md` for the exact `toolUseResult` field requirements.
 
 ## [0.1.3] — 2026-10-26
 
