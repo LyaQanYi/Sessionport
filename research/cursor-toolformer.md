@@ -68,7 +68,7 @@
 | `result` | string | 2271 | 结果消息的 **protobuf JSON**；grep/list 落库时可能被剪成 additionalData | 按 schema 生成/省略 |
 | `additionalData` | object | 1545 | 非 protobuf 的 UI 数据：shell 状态、grep/list 摘要、edit precomputedDiff | shell/grep/list/delete；edit 有 diff 时 `precomputedDiff` |
 | `error` | string | 59 | `ToolResultError` 的 protobuf JSON | 错误态 |
-| `toolCallBinary` | string | 3198 | base64(`agent.v1.ToolCall`)；app 打开时 `ng.fromBinary` | **不写**（见 §6） |
+| `toolCallBinary` | string | 3198 | base64(`agent.v1.ToolCall`)；app 打开 composer 时 `ng.fromBinary` 解码，缺了编辑卡片退化成文本 | **edit/write 写**（`toolcall-binary.ts`，见 §6）；其余工具暂不写 |
 | `userDecision` | string | 少量 | 如 delete 的 `accepted` | 不写 |
 
 `params`/`result` 的 JSON 字符串是 **紧凑 JSON**：对 13 个有 params 的样本、

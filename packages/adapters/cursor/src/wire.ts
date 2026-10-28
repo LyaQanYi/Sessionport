@@ -74,8 +74,9 @@ export interface CursorToolFormerData {
   /** 工具特有的附加数据（shell 状态、grep 摘要、edit precomputedDiff 等） */
   additionalData?: Record<string, unknown>;
   /**
-   * base64(agent.v1.ToolCall)。真实 Cursor 气泡里都有；本 adapter 目前不生成，
-   * 读取时也忽略（UI 的 params/result 已足够渲染，见 research/cursor-toolformer.md）。
+   * base64(agent.v1.ToolCall)。真实 Cursor 气泡里都有；app 打开 composer 时会用
+   * `ng.fromBinary` 解码它。edit/write 现在会生成（缺了它桌面端只显示纯文本
+   * "Edited <file>"，precomputedDiff 不会渲染成 diff 卡片）；其余工具暂不生成。
    */
   toolCallBinary?: string;
   /**
