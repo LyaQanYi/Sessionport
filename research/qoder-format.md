@@ -83,7 +83,14 @@ SDK 的 `listSessions()`（asar 内函数 `il`）：
 4. `updatedAt = mtime`；按 mtime 倒序；同 sessionId 只留最新。
 5. 没有任何标题/首问的文件不返回（`Kn()` 返回 undefined）。
 
-**没有 SQLite/索引文件可查**；桌面端和 CLI 走同一套 SDK。
+**没有 SQLite/索引文件可查**；CLI/SDK 走目录扫描。
+
+**桌面端任务列表另有一套来源（2026-10-28 实测）**：把一份合法的本地会话（父子代理齐全、
+`verify` 全 PASS）写进真实 `~/.qoder-cn/projects/<slug>/` 后，桌面端工作区仍显示
+「暂无任务 :)」；而同一份文件 Qoder SDK 的 `listSessions/listSubagents/getSubagentMessages`
+都能读到。桌面 UI 的字符串里有「正在加载更多任务」「加载更多任务失败」等分页文案，推测任务列表
+来自账号/服务端而不是本地 `projects/` 目录（待进一步确认；见 §9.6）。因此「本地 JSONL 可读」
+不能等同于「桌面任务列表可见」。
 
 本机实测：adapter 的 `listQoderSessions` 与真实 SDK 输出逐条一致：
 
@@ -347,6 +354,9 @@ async function Vc(filePath, sessionId, opts) {
 5. 若列表没刷新：退出并重开 Qoder CN（[推测] 会话列表可能按项目缓存，需重进项目）。
 6. **子代理（未做人工确认）**：进入带 `Agent` 调用的会话，看子代理是否在父会话下展开；
    SDK 的 `listSubagents`/`getSubagentMessages` 已验证可读，但桌面端 UI 是否展示、如何展示未人工确认。
+7. **2026-10-28 实测补充**：写入真实 `~/.qoder-cn` 的导入会话（1 个 linked child，verify 全 PASS）
+   在桌面端工作区仍显示「暂无任务」；SDK 能读到该会话与子代理。说明桌面任务列表与本地 JSONL
+   不是同一来源（见 §4 备注）。UI 验证应改用 SDK/CLI，或等待确认服务端导入接口。
 
 ## 10. 丢失项
 
