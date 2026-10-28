@@ -66,7 +66,7 @@
 | `tool` | number | 3198 | `aiserver.v1.ClientSideToolV2` 枚举 | 见 §3 |
 | `params` | string | 3130 | 工具参数消息的 **protobuf JSON**（camelCase） | 按 schema 生成 |
 | `result` | string | 2271 | 结果消息的 **protobuf JSON**；grep/list 落库时可能被剪成 additionalData | 按 schema 生成/省略 |
-| `additionalData` | object | 1545 | 非 protobuf 的 UI 数据：shell 状态、grep/list 摘要、edit precomputedDiff | shell/grep/list/delete 等 |
+| `additionalData` | object | 1545 | 非 protobuf 的 UI 数据：shell 状态、grep/list 摘要、edit precomputedDiff | shell/grep/list/delete；edit 有 diff 时 `precomputedDiff` |
 | `error` | string | 59 | `ToolResultError` 的 protobuf JSON | 错误态 |
 | `toolCallBinary` | string | 3198 | base64(`agent.v1.ToolCall`)；app 打开时 `ng.fromBinary` | **不写**（见 §6） |
 | `userDecision` | string | 少量 | 如 delete 的 `accepted` | 不写 |
@@ -88,6 +88,103 @@ case ct.READ_FILE_V2:
 落库前再走 `wQd({forStorage:true})`（以及 `HCt` 的 `toJsonString()`）把 message 序列化成
 protobuf JSON 字符串，把 `toolCall` 转成 `toolCallBinary` 并删除 `toolCall`。
 所以 UI 侧拿到的是解码后的 message 对象，存储侧是 JSON 字符串。
+
+### 1.2 edit_file_v2 的 diff 字段（2026-10-28 追加，实测 + 仓库）
+
+样本仍来自 `.tmp/cursor-app-test/User/globalStorage/state.vscdb`（只读副本）与
+Cursor 3.25.9 bundle。先给结论：**UI 的 diff 卡片靠 `additionalData.precomputedDiff`，
+不靠 `beforeContentId`/`afterContentId`；后两者只是 `composer.content.<sha256>` 全文
+blob 的引用。** 因此 IR 里只有统一 diff 文本时，可以按 app 自己的 diff fallback
+编码出可渲染的 diff 卡片；没有全文 blob 时无法伪造的是“文件内容引用”，不是卡片本身。
+
+#### result：真实样本只有 content id
+
+对 1200 个 `edit_file_v2` 气泡（SQL：`value LIKE '%edit_file_v2%'`）统计：
+
+- `result` 的 key 只有 `beforeContentId`（1115 个）与 `afterContentId`（1177 个）；
+  `contentsBeforeEdit` / `contentsAfterEdit` / `fileWasCreated` / `linesAdded` 均为 0 次。
+- 典型 result 只有 204 字节：
+
+  ```json
+  {"beforeContentId":"composer.content.e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "afterContentId":"composer.content.ddb821e663866f96309fed0c344b93926718e0609044190ae0ca1d8be4457b84"}
+  ```
+
+- `cursorDiskKV` 里存在 `composer.content.<64 hex>` 行，value 是**原始文件文本**，
+  `<64 hex>` 正好是 `sha256(value)`。[实测]
+  - 空文件：id `e3b0c442…b855`，value 长度 0（sha256("")）；
+  - 5,454 B 的 canvas.tsx：id `ddb821…7b84`，sha256(value) 一致；
+  - 3,926 B 的 nginx conf：id `a34615…6bd8`，sha256(value) 一致。
+- bundle 写 blob 的代码在 offset 18,368,211 附近：success 分支
+  `composer.content.${sha256(serialize(content))}`，先 `cursorDiskKVGet`，不存在才
+  `cursorDiskKVSet`。所以**完整原生 diff 需要 before/after 全文 + 两条 blob key**；
+  只有 result id 无法从 diff 反推出全文。
+
+#### additionalData.precomputedDiff：diff 文本的 fallback
+
+同 1200 个样本里 69 个带 `additionalData.precomputedDiff`，且 `additionalData`
+只有这一个 key。形状固定：
+
+```json
+{
+  "lines": [
+    { "type": "added",     "content": "line", "modifiedLineNumber": 1 },
+    { "type": "removed",   "content": "line", "originalLineNumber": 2 },
+    { "type": "unchanged", "content": "line", "originalLineNumber": 3, "modifiedLineNumber": 2 },
+    { "type": "unchanged", "content": "",     "originalLineNumber": 9, "modifiedLineNumber": 8,
+      "isSyntheticUnchanged": true }
+  ],
+  "hasChanges": true
+}
+```
+
+- added 省略 `originalLineNumber`；removed 省略 `modifiedLineNumber`；
+  unchanged 两者都有；跨 hunk 空隙由 app 补空 content + `isSyntheticUnchanged:true`。
+  原生样本还可能出现 `inlineChanges` / `*TokenLineNumber` 等 UI 字段（可选）。[实测+仓库]
+- 69/69 样本 `hasChanges:true`；这 69 个全是新文件的 all-added diff。全局扫描
+  （不限 1200 条）另外只找到 3 个含 removed/unchanged 的样本：
+  - `{type:"removed",content:"--",originalLineNumber:1}`；
+  - `{type:"unchanged",content:"name: …",originalLineNumber:2,modifiedLineNumber:1}`。
+- 字节证据（同一份 3.6 GB 副本）：
+
+  | 样本 | bubble | params | result | additionalData | precomputedDiff | lines |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | 新文件 canvas.tsx | 20,315 | 196 | 204 | 17,331 | 17,311 | 184（全 added） |
+  | 修改 md（2 removed + 26 unchanged） | 9,977 | 1,793 | 102 | 3,821 | 3,801 | 28 |
+  | MEMORY.md（3 removed + 1 unchanged） | 4,194 | 531 | 102 | 654 | 634 | 4 |
+
+- bundle 路径 [仓库]：
+  - `bGh`（offset 18,342,682）：`{lines:e, hasChanges:e.some(t=>t.type!=="unchanged")}`；
+  - `rZ_` / `iZ_` / `nZ_`（18,343,xxx）：从 `diffString` 解析 hunk，跨 hunk 补
+    `isSyntheticUnchanged`；没有 `@@` 时走裸 +/- 解析；
+  - `bFo`（18,345,598）：只有 `beforeFullFileContent`/`afterFullFileContent` 缺失时
+    才用 diff fallback；
+  - edit handler（19,673,089）：success 时 `bFo(...)`，fallback 才把
+    `precomputedDiff` 写进 `additionalData`，同时 `result` 仍写
+    `{beforeContentId, afterContentId}`；
+  - `Z3m`（30,052,240）：`afterContentId` **或** `precomputedDiff` **或**
+    `isNewFile` 任一存在就产出 edit display；
+  - `getCachedEditToolCallDisplay`（30,309,018）：没有 content id 时直接返回
+    `{precomputedDiff, isNewFile}`；
+  - UI `iUs`（11,089,208）：`if(precomputedDiff) result=precomputedDiff`，
+    `hasChanges===true && lines.length>0` 才显示 diff 正文。
+- schema 补充：`aiserver.v1.EditFileV2Result` 有字段 13/14
+  `before_content_id`/`after_content_id`、字段 3 `diff`（FileDiff chunks）、字段 12
+  `contents_after_edit`；`EditFileV2Params` 字段 7 也有 `diff`。但 1200 个真实
+  edit 气泡里 `result.diff` / `contentsAfterEdit` 都是 0 次，UI 渲染也不读
+  `result.diff`。所以 **不需要写结构化 `result.diff`**。
+
+#### 必需 / 可选字段表
+
+| 字段 | 是否必需 | 作用 / 缺失后果 |
+| --- | --- | --- |
+| `additionalData.precomputedDiff.lines` | diff 卡片必需（无 content id 时） | 逐行类型/内容/行号；缺失则 UI 只能走 before/after 全文计算 |
+| `additionalData.precomputedDiff.hasChanges` | 必需 | `true` 且 lines 非空才显示 diff 正文 |
+| `result.afterContentId` | 可选 | 指向 `composer.content.<sha256>` 全文；缺失时 diff 卡片仍能渲染 |
+| `result.beforeContentId` | 可选 | 同上；缺失时 before 视为空/未知（新文件） |
+| `result.diff`（FileDiff chunks） | 可选，UI 不读 | 真实样本 0 次；本 adapter 不写 |
+| `params.contentsAfterEdit` / `streamingContent` | 可选 | 编辑内容/流式展示；不影响 diff 卡片 |
+| `additionalData.isNewFile` | 可选 | 原生 UI 的新文件标记；本 adapter 仅在 Write 的 result 里写 `fileWasCreated` |
 
 ## 2. aiserver.v1.ClientSideToolV2 枚举（实测 bundle）
 
@@ -196,8 +293,8 @@ protobuf JSON 字符串，把 `toolCall` 转成 `toolCallBinary` 并删除 `tool
 | --- | --- | ---: | --- | --- |
 | `Bash`, `shell`, `exec_command`, `run_terminal_command` | `run_terminal_command_v2` | 15 | `command`, `cwd`, `options.timeout`, `commandDescription`, `isBackground` | result: `output`, `exitCode`, `rejected`, `notInterrupted`, `outputRaw`；additionalData: `{status,startedAtMs}` |
 | `Read`, `read`, `read_file` | `read_file_v2` | 40 | `targetFile`, `offset`, `limit`, `charsLimit`(默认 1e6), `effectiveUri` | result: `contents`（+ 可选 `totalLinesInFile`） |
-| `Edit`, `str_replace`, `str_replace_editor` | `edit_file_v2` | 38 | `relativeWorkspacePath`, `contentsAfterEdit` 或 `streamingContent`, `noCodeblock`, `cloudAgentEdit` | result: `resultForModel`, `contentsAfterEdit`, `fileWasCreated` |
-| `Write`, `write_file`, `create_file` | `edit_file_v2` | 38 | 同上 + 必填 `contentsAfterEdit` | result: `fileWasCreated:true`, `contentsAfterEdit`；loss `cursor.write-mapped-to-edit` |
+| `Edit`, `str_replace`, `str_replace_editor` | `edit_file_v2` | 38 | `relativeWorkspacePath`, `contentsAfterEdit` 或 `streamingContent`, `noCodeblock`, `cloudAgentEdit` | result: `resultForModel`（不含 diff 文本）+ 可选 `contentsAfterEdit`；**IR 有 `{type:'diff'}` block 时** additionalData: `{precomputedDiff:{lines,hasChanges}}`（与 app 的 diff fallback 同款） |
+| `Write`, `write_file`, `create_file` | `edit_file_v2` | 38 | 同上 + 必填 `contentsAfterEdit` | 同上；有 diff 时同样写 `precomputedDiff`；result 可带 `fileWasCreated:true`；`cursor.write-mapped-to-edit`（info） |
 | `Grep`, `ripgrep` | `ripgrep_raw_search` | 41 | `pattern`, `path`, `glob`, `outputMode`, `context*`, `caseInsensitive`, `type`, `headLimit`, `multiline`, `ignoreGlobs`, `offset` | **不写 result**，additionalData 摘要：`{isPruned,pattern,path,outputMode,totalFiles,totalMatches,topFiles}`（与 `fgo` 一致） |
 | `Glob`, `file_search` | `glob_file_search` | 42 | `targetDirectory`, `globPattern` | result: `{directories:[{absPath,files:[{relPath}],totalFiles}]}` |
 | `LS`, `ls`, `list` | `list_dir_v2` | 39 | `targetDirectory`, `ignoreGlobs` | **不写 result**，additionalData 摘要：`{isPruned,rootPath,totalDirs,totalFiles,topEntries,extensionCounts}`（与 `fYv` 一致） |
@@ -215,7 +312,20 @@ protobuf JSON 字符串，把 `toolCall` 转成 `toolCallBinary` 并删除 `tool
 每个工具气泡：`type=2`（AI）、`text:""`、`capabilityType=15`（`COMPOSER_CAPABILITY_TYPE_TOOL_FORMER`），
 `startedAtMs` = 调用时间，`completedAtMs` = 结果时间；composerData 的 header entry grouping 写
 `{isRenderable:true, capabilityType:15, toolFormerTool, toolFormerStatus, toolCallId, hasText:false, toolDisplayComputed:true}`。
+`edit_file_v2` 额外写 `toolCallCase:'editToolCall'`、`toolDisplayPath`，以及从
+`precomputedDiff` 算出的 `editLinesAdded` / `editLinesRemoved`（与真实 header 的折叠行数一致）。
 app 加载时会用 `eKi` 重算 grouping（只在不一致时替换），所以近似值不会阻塞加载。[仓库]
+
+Edit/Write 的 diff 降级 loss（都在 `toolformer.ts` 显式记录，不静默）：
+
+| loss code | 触发 |
+| --- | --- |
+| `cursor.edit-diff-mapped`（info） | 有 diff block，已写 `additionalData.precomputedDiff`；没有全文 blob，未写 content id |
+| `cursor.edit-diff-unavailable`（warning） | 没有 diff block；Edit 无 before/after 全文，Write 只有 after 全文；只能显示路径/结果 |
+| `cursor.edit-diff-empty`（warning） | diff block 有行但没有实际增删（全是 context） |
+| `cursor.edit-diff-unusable`（warning） | diff block 为空/解析不出统一 diff 行 |
+| `cursor.edit-diff-multiple`（warning） | 多个 diff block；一个气泡只映射第一个文件 |
+| `cursor.edit-diff-error-result`（info） | 错误态结果带 diff block，不写 `precomputedDiff` |
 
 ## 5. 往返扩展 `_sessionport`（sessionport 私有，Cursor 忽略）
 
@@ -237,6 +347,9 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
   因此该字段不影响 app，且读回时能还原源 IR。[仓库+推测：app 重存时是否保留未单独验证]
 - `read.ts` 优先读 `_sessionport.input/content/name`；没有该字段的原生气泡仍按
   `params`/`rawArgs`/`result` 解码（保持旧行为）。[实测：现有 read 测试 + 真实库 321 events]
+- Edit/Write 带 diff 时，源 IR 的 `{type:'diff',text}` 原样进 `_sessionport.content`，
+  读回优先返回它 → IR → Cursor → IR 的 diff 文本逐字节一致；Cursor UI 侧另由
+  `additionalData.precomputedDiff` 提供原生镜像（两者来自同一个 diff 文本）。[实测]
 - 这是 **sessionport 扩展**，不是 Cursor 原生字段。UI 渲染仍依赖 `params`/`result`。
 
 ## 6. 已验证 / 推测 / 未验证
@@ -255,6 +368,16 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 - 错误态、缺结果、未知工具、孤立结果、参数不可用都有显式 status/loss。
 - 原生 Cursor 的 grep/list `additionalData` 摘要能读成 `tool_result(json)`。
 - 真实库只读回归：321 events / 115 tool_call / 113 tool_result，verify 全 PASS。
+- **edit diff 结构回归（2026-10-28）**：
+  - 400 个真实 `additionalData.precomputedDiff` 样本经 `precomputedDiffToUnifiedDiff` →
+    `parseUnifiedDiff`，变更行 0 差异；另对全局 3 个含 removed/unchanged 的样本单独验证，
+    变更行同样 0 差异（读取方向按统一 diff 惯例只保留变更块 ±3 行 context，未变更的长尾
+    不写进 diff 文本；因此 line 数组不保证逐项相等，变更语义保证相等）；
+  - 真实库只读会话 `6095caea-6779-4e84-a80b-2e211b15efac`：816 events / 324 tool_result /
+    5 个 diff block，verify 的 `toolformer-edit-diff` 全 PASS；
+  - 合成 IR（`tool_result.content` 含 `{type:'diff'}`）→ 临时 SQLite：`additionalData.precomputedDiff`
+    与 header `editLinesAdded/Removed` 落库、读回 diff 文本逐字节一致、`verify` 的
+    `toolformer-edit-diff` + `expected-diffs` PASS（见 `test/toolformer.test.ts` / `test/diff.test.ts`）。
 - **真实 Cursor UI（3.25.9）目视确认**（2026-10-21，用户实测）：测试 composer
   `7d8c3ddf-64d1-49ca-b0d7-148fd9f012a7` 在 Cursor 里正常打开，`run_terminal_command_v2`
   工具卡片渲染出命令摘要与结果正文（不是 “Ran tool” 空卡片），reasoning 显示为
@@ -271,7 +394,8 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 - `_sessionport` 在 app 重存气泡后仍会保留（app 对 toolFormerData 做对象展开）。
 - `list_dir_v2` 的落库形态：schema 与 `fYv` 都确认会剪成 additionalData，但本机 3.6 GB 副本里
   没有 `list_dir_v2` 样本（只有 schema/代码证据）。
-- Write → `edit_file_v2` + `fileWasCreated` 是近似映射；内容保留，但 diff 不可用。
+- Write → `edit_file_v2` + `fileWasCreated` 是近似映射；有 diff block 时 diff 卡片可用，
+  否则仍只显示路径/结果。
 
 ### 未验证（需要人工在 Cursor 里确认）
 
@@ -279,8 +403,11 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
    read / edit / grep / glob / list / delete / todo 的卡片尚未逐项目视确认（同一套
    `params`/`result` 渲染路径，预期一致）。若某类卡片退化成 “Ran tool”，再补 `toolCallBinary`。
 2. **app 是否回写/删除 `_sessionport`**：打开会话、发消息、退出 app 后再读库对比。
-3. **edit 的 diff 卡片**：没有 before/after 全文与 `beforeContentId`/`afterContentId`，
-   预期只显示路径与结果，不显示可展开 diff。
+3. **edit 的 diff 卡片**：结构已验证（`additionalData.precomputedDiff` + UI 的 `Z3m` /
+   `getCachedEditToolCallDisplay` / `iUs` 路径），但 Cursor 没有 headless 入口，**UI 是否
+   真的显示可展开 diff 卡片未验证**。另外没有写 `beforeContentId`/`afterContentId` 与
+   `composer.content.<sha256>` 全文 blob，所以“打开文件对比 / checkpoint”类操作是否可用
+   也未验证——这两项需要全文，不能从 diff 文本安全反推。
 4. **list_dir_v2**：没有真实样本，只有 schema/代码证据；UI 渲染未验证。
 
 ### 明确不写（记录为 loss 或文档边界）
@@ -288,8 +415,11 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 - `toolCallBinary`：不生成。原因：需要完整编码 `agent.v1.ToolCall` 的 args/result 子消息
   （shell 的 success/failure oneof、read 的 content/contentBlobId oneof 等），错误编码的收益低、
   风险高；UI 的 params/result 已能提供显示数据。若人工确认 UI 必须依赖 toolCall，再补。
-- `userDecision`、edit 的 `precomputedDiff`/`beforeContentId`/`afterContentId`：没有可靠的
-  before/after 文件内容来源，写进去会是伪造。edit/write 显式记 `cursor.edit-diff-unavailable`。
+- `userDecision`：不写（本项目没有可靠来源）。
+- edit 的 `beforeContentId`/`afterContentId` 与 `composer.content.<sha256>` 全文 blob：**不写**。
+  原因：IR 只有 diff 文本，没有 before/after 全文；用 diff 反推全文或伪造 content id 会让
+  app 读到错误文件。`precomputedDiff` 现在会写（§1.2），所以 diff 卡片不依赖这两项；
+  代价是没有它们时“打开文件对比 / checkpoint”类操作不可用（结构上已确认，UI 未验证）。
 - 图片工具结果：只写 `[image: ref]` 占位文本，记 `cursor.tool-result-image-dropped`。
 - 未知工具 / 参数不可用：显式 `cursor.tool-call-unsupported` / `cursor.tool-input-unusable`，
   不写半成品气泡。
@@ -302,6 +432,9 @@ cp ~/Library/Application\ Support/Cursor/User/globalStorage/state.vscdb .tmp/sta
 
 # 2) 单测（临时 SQLite 库，不碰真实库）
 node --test packages/adapters/cursor/test/*.test.ts
+
+# 2b) 只跑 diff 解析/反向生成单测
+node --test packages/adapters/cursor/test/diff.test.ts
 
 # 3) 真实样本结构验证（只读副本）
 node .tmp/validate-real-toolformer.mjs .tmp/state.vscdb

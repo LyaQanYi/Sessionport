@@ -62,6 +62,7 @@ import type {
   CursorHeaderRow,
   CursorToolFormerData,
 } from './wire.ts';
+import { isCursorPrecomputedDiff, precomputedDiffToUnifiedDiff } from './diff.ts';
 import { cursorToolName } from './toolformer.ts';
 
 /** core 的 AgentId 目前还没有 'cursor'（集成时由 core 补），这里做一次集中断言 */
@@ -395,14 +396,32 @@ function toolCallInput(data: CursorToolFormerData): unknown {
   return null;
 }
 
+/**
+ * 原生 edit_file_v2 的 additionalData.precomputedDiff → 统一 diff 文本。
+ * 没有 extension 的 Cursor 原生气泡（before/afterContentId 只有 blob 引用）依靠
+ * 这个字段渲染 diff 卡片；这里把它还原成 IR 的 diff block。
+ */
+function nativeEditDiffText(data: CursorToolFormerData): string | undefined {
+  const isEdit = data.tool === 38 || data.name === 'edit_file_v2';
+  if (!isEdit || !isRecord(data.additionalData)) return undefined;
+  const precomputed = data.additionalData.precomputedDiff;
+  if (!isCursorPrecomputedDiff(precomputed)) return undefined;
+  return precomputedDiffToUnifiedDiff(precomputed);
+}
+
 function toolResultContent(data: CursorToolFormerData): { content: IrContent[]; isError: boolean } | undefined {
   const status = typeof data.status === 'string' ? data.status : '';
   const extension = toolExtension(data);
   if (extension !== undefined && isIrContentArray(extension.content)) {
     return { content: extension.content, isError: extension.isError === true || status === 'error' };
   }
+  const isError = status === 'error';
+  const diffText = nativeEditDiffText(data);
   const raw = data.result;
   if (raw === undefined || raw === null) {
+    if (diffText !== undefined) {
+      return { content: [{ type: 'diff', text: diffText }], isError };
+    }
     // 原生 Cursor 的 grep/list 在落库时会把 result 剪成 additionalData 摘要
     // （serializeToolformerBubbleData.js 的 fgo/fYv），这里把摘要保留成 json 结果。
     if (
@@ -413,13 +432,15 @@ function toolResultContent(data: CursorToolFormerData): { content: IrContent[]; 
       isRecord(data.additionalData) &&
       data.additionalData.isPruned === true
     ) {
-      return { content: [{ type: 'json', value: data.additionalData }], isError: status === 'error' };
+      return { content: [{ type: 'json', value: data.additionalData }], isError };
     }
     return undefined;
   }
   let content: IrContent[];
   if (typeof raw === 'string') {
-    if (raw.length === 0) return undefined;
+    if (raw.length === 0) {
+      return diffText === undefined ? undefined : { content: [{ type: 'diff', text: diffText }], isError };
+    }
     const parsed = tryParseJson(raw);
     content = parsed !== undefined ? [{ type: 'json', value: parsed }] : [{ type: 'text', text: raw }];
   } else if (Array.isArray(raw) || isRecord(raw)) {
@@ -427,9 +448,12 @@ function toolResultContent(data: CursorToolFormerData): { content: IrContent[]; 
   } else if (typeof raw === 'number' || typeof raw === 'boolean') {
     content = [{ type: 'json', value: raw }];
   } else {
-    return undefined;
+    return diffText === undefined ? undefined : { content: [{ type: 'diff', text: diffText }], isError };
   }
-  return { content, isError: status === 'error' };
+  // diff 放在前面，JSON/文本结果仍保留（beforeContentId/afterContentId 对读端是
+  // 不透明 blob 引用，但保留下来便于诊断；写回时不会复制这些 id）。
+  if (diffText !== undefined) content = [{ type: 'diff', text: diffText }, ...content];
+  return { content, isError };
 }
 
 function imageParts(bubble: CursorBubble): IrPart[] {

@@ -64,6 +64,7 @@ import {
   readHeaderRow,
   readHeaderRows,
   tableExists,
+  tryParseJson,
 } from './wire.ts';
 import type {
   CursorBubble,
@@ -73,7 +74,8 @@ import type {
   CursorModelConfig,
   CursorToolFormerData,
 } from './wire.ts';
-import { CAPABILITY_TOOL_FORMER, buildCursorToolFormerData } from './toolformer.ts';
+import { isCursorPrecomputedDiff } from './diff.ts';
+import { CAPABILITY_TOOL_FORMER, CURSOR_TOOL, buildCursorToolFormerData } from './toolformer.ts';
 
 export const CURSOR_CAPS: ExportCaps = {
   agent: 'cursor' as unknown as AgentId,
@@ -417,6 +419,21 @@ export function toolGrouping(tool: CursorToolFormerData): Record<string, unknown
   if (typeof tool.tool === 'number') grouping.toolFormerTool = tool.tool;
   if (typeof tool.status === 'string') grouping.toolFormerStatus = tool.status;
   if (typeof tool.toolCallId === 'string' && tool.toolCallId.length > 0) grouping.toolCallId = tool.toolCallId;
+  // 真实 edit_file_v2 header 还带 toolCallCase / toolDisplayPath / editLines*；
+  // 后三项能直接从 precomputedDiff 算出来，补上可以让折叠状态的“+N/-M”与 diff 卡片一致。
+  if (tool.tool === CURSOR_TOOL.EDIT_FILE_V2) {
+    grouping.toolCallCase = 'editToolCall';
+    const params = typeof tool.params === 'string' ? tryParseJson(tool.params) : undefined;
+    if (isRecord(params) && typeof params.relativeWorkspacePath === 'string' && params.relativeWorkspacePath.length > 0) {
+      grouping.toolDisplayPath = params.relativeWorkspacePath;
+    }
+    const additional = tool.additionalData;
+    const precomputed = isRecord(additional) ? additional.precomputedDiff : undefined;
+    if (isCursorPrecomputedDiff(precomputed)) {
+      grouping.editLinesAdded = precomputed.lines.filter((line) => line.type === 'added').length;
+      grouping.editLinesRemoved = precomputed.lines.filter((line) => line.type === 'removed').length;
+    }
+  }
   return grouping;
 }
 

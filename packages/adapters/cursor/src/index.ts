@@ -48,6 +48,14 @@ export type {
 } from './verify.ts';
 
 export {
+  isCursorPrecomputedDiff,
+  parseUnifiedDiff,
+  precomputedDiffToUnifiedDiff,
+  validateCursorPrecomputedDiff,
+} from './diff.ts';
+export type { CursorDiffLine, CursorDiffLineType, CursorPrecomputedDiff } from './diff.ts';
+
+export {
   CAPABILITY_TOOL_FORMER,
   CURSOR_TOOL,
   CURSOR_TOOL_STATUSES,

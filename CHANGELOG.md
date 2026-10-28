@@ -11,6 +11,13 @@ All notable changes to this project are documented here. Format loosely follows
   session id, tiered fuzzy match), jump to pages, refresh the session list, or cycle the theme — with
   keyboard navigation, aria roles and bilingual strings. A `SESSIONPORT_SMOKE_PALETTE` hook makes the
   palette screenshottable in headless mode.
+- **Cursor writer: edit/write diff fidelity.** IR `tool_result` 里的 `{type:'diff'}` block 现在
+  会编码成 Cursor 3.25.9 原生的 `additionalData.precomputedDiff`（`{lines,hasChanges}`，含跨
+  hunk 的 `isSyntheticUnchanged` 空行），并给 header grouping 补 `editLinesAdded`/`editLinesRemoved`；
+  reader 会把原生 `precomputedDiff` 还原成 IR `diff` block。没有 diff 时仍只写路径/结果并显式记
+  `cursor.edit-diff-unavailable`。不写 `beforeContentId`/`afterContentId`/`composer.content` 全文
+  blob（IR 没有可靠全文来源）。结构已验证；Cursor 无 headless 入口，UI diff 卡片未验证。详见
+  `research/cursor-toolformer.md` §1.2。
 
 ### Changed
 
