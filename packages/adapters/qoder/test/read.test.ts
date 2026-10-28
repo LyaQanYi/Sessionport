@@ -67,6 +67,9 @@ test('Qoder: readAllBranches 读所有分叉；子代理作为 children', async 
     assert.equal(child.parentSessionId, QD_SESSION_ID);
     assert.equal(child.label, 'aExplore-abc123');
     assert.equal(child.viaToolCallId, 'call_sub');
+    // meta.json 的 description/agentType 落到 child 标题/profile（真实 Qoder 样本同款）
+    assert.equal(child.session.meta.title, '探索 src');
+    assert.equal(child.session.meta.profile, 'Explore');
     assert.equal(child.session.events.filter((event) => event.kind === 'message').length, 2);
     assert.ok(bundle.root.notices.some((notice) => notice.code === 'qoder.subagents'));
   } finally {

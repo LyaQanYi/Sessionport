@@ -49,7 +49,8 @@ export interface QoderMessage {
   model?: string;
   stop_reason?: string | null;
   stop_sequence?: string | null;
-  content?: QoderContentBlock[];
+  /** 真实子代理 transcript 的首条 user 用字符串 content（主会话用 block 数组） */
+  content?: string | QoderContentBlock[];
   usage?: unknown;
   [key: string]: unknown;
 }
@@ -194,6 +195,26 @@ export function qoderProjectDir(home: string, cwd: string): string {
 
 export function qoderSessionPath(home: string, cwd: string, sessionId: string): string {
   return join(qoderProjectDir(home, cwd), sessionId + '.jsonl');
+}
+
+/** <projectDir>/<sessionId>：主 transcript 的伴生目录（子代理、压缩快照） */
+export function qoderSessionDir(home: string, cwd: string, sessionId: string): string {
+  return join(qoderProjectDir(home, cwd), sessionId);
+}
+
+/** <projectDir>/<sessionId>/subagents：Qoder 原生子代理 transcript 目录 */
+export function qoderSubagentsDir(home: string, cwd: string, sessionId: string): string {
+  return join(qoderSessionDir(home, cwd, sessionId), 'subagents');
+}
+
+/** <sessionId>/subagents/agent-<agentId>.jsonl（agentId 原样拼入文件名） */
+export function qoderSubagentPath(home: string, cwd: string, sessionId: string, agentId: string): string {
+  return join(qoderSubagentsDir(home, cwd, sessionId), 'agent-' + agentId + '.jsonl');
+}
+
+/** <sessionId>/subagents/agent-<agentId>.meta.json（Qoder SDK 从这里读 toolUseId/parentAgentId） */
+export function qoderSubagentMetaPath(home: string, cwd: string, sessionId: string, agentId: string): string {
+  return join(qoderSubagentsDir(home, cwd, sessionId), 'agent-' + agentId + '.meta.json');
 }
 
 export function listQoderSessionFiles(home: string): QoderSessionFile[] {

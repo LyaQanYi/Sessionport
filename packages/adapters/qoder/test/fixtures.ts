@@ -156,7 +156,11 @@ export function writeQoderFixture(home: string, options: QoderFixtureOptions = {
     const subDir = join(dir, sessionId, 'subagents');
     mkdirSync(subDir, { recursive: true });
     writeFileSync(join(subDir, 'agent-' + QD_AGENT_ID + '.jsonl'), qdSubagentLines(QD_AGENT_ID, sessionId, cwd).map((line) => JSON.stringify(line)).join('\n') + '\n', 'utf8');
-    writeFileSync(join(subDir, 'agent-' + QD_AGENT_ID + '.meta.json'), JSON.stringify({ toolUseId: 'call_sub' }), 'utf8');
+    writeFileSync(
+      join(subDir, 'agent-' + QD_AGENT_ID + '.meta.json'),
+      JSON.stringify({ agentType: 'Explore', toolUseId: 'call_sub', description: '探索 src', invocationName: 'Explore' }),
+      'utf8',
+    );
   }
   return { home, sessionId, path, cwd };
 }

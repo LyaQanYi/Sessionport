@@ -59,8 +59,18 @@ export interface ConvertQoderOptions {
   sessionId?: string;
   filePath?: string;
   title?: string;
+  /** agent profile（子代理 meta.json 的 agentType） */
+  profile?: string;
   idPrefix?: string;
   readAllBranches?: boolean;
+}
+
+/** 子代理 meta.json（真实 Qoder 1.1.69 只有这几个字段参与展示/关联） */
+interface QoderSubagentSidecar {
+  agentType?: unknown;
+  description?: unknown;
+  toolUseId?: unknown;
+  parentAgentId?: unknown;
 }
 
 export interface QoderConvertStats {
@@ -316,7 +326,14 @@ export function qoderLinesToSession(lines: QoderLine[], options: ConvertQoderOpt
 
     if (type === 'assistant') {
       const assistant = line as QoderAssistantLine;
-      for (const block of assistant.message?.content ?? []) {
+      const assistantContent = assistant.message?.content;
+      if (typeof assistantContent === 'string') {
+        // 真实子代理 transcript 的 user 用字符串 content；assistant 理论上不会，兼容一下
+        const text = assistantContent.trim();
+        if (text.length > 0) push({ kind: 'message', at, role: 'assistant', parts: [{ type: 'text', text }] }, at);
+        continue;
+      }
+      for (const block of assistantContent ?? []) {
         if (block.type === 'thinking') {
           const thinking = qoderThinkingText(block);
           if (thinking.length === 0) {
@@ -447,6 +464,7 @@ export function qoderLinesToSession(lines: QoderLine[], options: ConvertQoderOpt
       ...(firstTimestamp !== undefined ? { createdAt: firstTimestamp } : {}),
       ...(lastTimestamp !== undefined ? { updatedAt: lastTimestamp } : {}),
       ...(model !== undefined ? { model } : {}),
+      ...(options.profile !== undefined ? { profile: options.profile } : {}),
       ...(lastPrompt !== undefined ? { lastPrompt } : {}),
     },
     events,
@@ -503,23 +521,29 @@ export async function readQoderSession(input: string, options: ReadQoderOptions 
   const children: IrChildSession[] = [];
   const subagentsDir = join(path.slice(0, -'.jsonl'.length), 'subagents');
   if (options.includeSubagents !== false && existsSync(subagentsDir)) {
-    for (const name of readdirSync(subagentsDir)) {
+    for (const name of readdirSync(subagentsDir).sort()) {
       if (!name.startsWith('agent-') || !name.endsWith('.jsonl')) continue;
       const childPath = join(subagentsDir, name);
       const agentId = name.slice('agent-'.length, -'.jsonl'.length);
-      let viaToolCallId: string | undefined;
+      let sidecar: QoderSubagentSidecar | undefined;
       try {
-        const meta = JSON.parse(readFileSync(childPath.replace(/\.jsonl$/, '.meta.json'), 'utf8')) as { toolUseId?: unknown };
-        if (typeof meta.toolUseId === 'string' && meta.toolUseId.length > 0) viaToolCallId = meta.toolUseId;
+        sidecar = JSON.parse(readFileSync(childPath.replace(/\.jsonl$/, '.meta.json'), 'utf8')) as QoderSubagentSidecar;
       } catch {
         // 没有 meta 文件也能读 transcript
       }
+      const viaToolCallId = textOf(sidecar?.toolUseId);
+      const profile = textOf(sidecar?.agentType);
+      // Qoder 把子代理的描述放在 meta.json（transcript 里没有 custom-title），
+      // 读回时用它当标题；缺失才回落到首条 user 文本。
+      const metaTitle = textOf(sidecar?.description);
       const childParsed = readQoderLines(childPath);
       const { session: childSession } = qoderLinesToSession(childParsed.lines, {
         sessionId: agentId,
         filePath: childPath,
         idPrefix: 'qd-child',
         readAllBranches: true,
+        ...(metaTitle !== undefined ? { title: metaTitle } : {}),
+        ...(profile !== undefined ? { profile } : {}),
       });
       children.push({
         session: childSession,
