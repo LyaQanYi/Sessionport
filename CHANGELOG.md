@@ -5,6 +5,13 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Desktop ⌘K command palette.** Search sessions across every handled harness (title / path / agent /
+  session id, tiered fuzzy match), jump to pages, refresh the session list, or cycle the theme — with
+  keyboard navigation, aria roles and bilingual strings. A `SESSIONPORT_SMOKE_PALETTE` hook makes the
+  palette screenshottable in headless mode.
+
 ### Changed
 
 - **Claude Code writer**: children without a matching parent `Agent` tool_use (e.g. DSH imports, where

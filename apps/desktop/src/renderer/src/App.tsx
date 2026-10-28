@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { ArrowLeftRight, Blocks, ChevronLeft, ChevronRight, MessagesSquare, Monitor, Moon, Settings2, Sun } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeftRight, Blocks, ChevronLeft, ChevronRight, MessagesSquare, Monitor, Moon, Search, Settings2, Sun } from 'lucide-react';
 
 import { api } from './api.ts';
 import type { SessionRow } from './api.ts';
 import { AgentGlyph, AGENT_META, agentLabel } from './agents.tsx';
+import { CommandPalette } from './CommandPalette.tsx';
+import { nextTheme } from './commandPalette.ts';
 import { HOME_TO_AGENT, useAgentPreferences } from './preferences.ts';
 import { useT } from './i18n/I18nProvider.tsx';
-import { cn } from './ui.tsx';
+import { Kbd, cn } from './ui.tsx';
 import { SessionsPage } from './pages/SessionsPage.tsx';
 import { ReaderPage } from './pages/ReaderPage.tsx';
 import { MigratePage } from './pages/MigratePage.tsx';
@@ -48,10 +50,24 @@ export function App() {
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [theme, setTheme] = useTheme();
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const isMac = window.sessionport?.platform === 'darwin';
+  const queryClient = useQueryClient();
 
   const pathsQuery = useQuery({ queryKey: ['paths'], queryFn: api.paths });
   const sessionsQuery = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
+
+  // ⌘K / Ctrl+K 打开命令面板（再按一次关闭）
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== 'k') return;
+      event.preventDefault();
+      setPaletteOpen((open) => !open);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const detected = useMemo(() => {
     const homes = pathsQuery.data?.homes ?? {};
@@ -74,7 +90,11 @@ export function App() {
     return <Monitor className="h-3.5 w-3.5" />;
   }, [theme]);
 
-  const nextTheme = (): void => setTheme(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
+  const cycleTheme = (): void => setTheme(nextTheme(theme));
+  const navigate = (target: View): void => {
+    if (target === 'sessions') setAgentFilter(null);
+    setView(target);
+  };
   const themeLabel = theme === 'system' ? t('theme.system') : theme === 'light' ? t('theme.light') : t('theme.dark');
 
   const navBack = (): void => setView('sessions');
@@ -111,6 +131,22 @@ export function App() {
             title={t('app.collapseSidebar')}
           >
             <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* ⌘K 命令面板入口（快捷键的可见提示） */}
+        <div className="px-2 pb-1">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className={cn(rowClass(false), 'justify-start')}
+            title={t('palette.openHint', { shortcut: isMac ? '⌘K' : 'Ctrl+K' })}
+          >
+            <Search className="h-4 w-4 shrink-0 opacity-80" />
+            <span className="truncate">{t('palette.open')}</span>
+            <span className="ml-auto">
+              <Kbd>{isMac ? '⌘K' : 'Ctrl K'}</Kbd>
+            </span>
           </button>
         </div>
 
@@ -219,7 +255,7 @@ export function App() {
             <span className="text-3xs text-sidebar-muted">v0.0.0 · alpha</span>
             <button
               type="button"
-              onClick={nextTheme}
+              onClick={cycleTheme}
               className="flex h-6 items-center gap-1 rounded px-1.5 text-3xs text-sidebar-muted hover:bg-sidebar-row hover:text-sidebar-foreground"
               title={t('theme.title', { mode: themeLabel })}
             >
@@ -268,6 +304,24 @@ export function App() {
         {view === 'migrate' ? <MigratePage initial={active} enabledAgents={enabledAgents} /> : null}
         {view === 'settings' ? <SettingsPage theme={theme} onThemeChange={setTheme} prefs={prefs} /> : null}
       </main>
+
+      {paletteOpen ? (
+        <CommandPalette
+          sessions={sessionsQuery.data?.sessions}
+          loading={sessionsQuery.isLoading}
+          theme={theme}
+          onClose={() => setPaletteOpen(false)}
+          onOpenSession={(session) => {
+            setActive(session);
+            setView('reader');
+          }}
+          onNavigate={navigate}
+          onRefreshSessions={() => {
+            void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+          }}
+          onThemeChange={setTheme}
+        />
+      ) : null}
     </div>
   );
 }

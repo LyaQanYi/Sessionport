@@ -33,6 +33,25 @@ export const zhCN = {
   'theme.dark': '深色',
   'theme.title': '主题：{mode}',
 
+  // 命令面板（⌘K）
+  'palette.title': '命令面板',
+  'palette.open': '搜索命令',
+  'palette.openHint': '打开命令面板（{shortcut}）',
+  'palette.placeholder': '搜索会话、页面或操作…',
+  'palette.group.sessions': '会话',
+  'palette.group.pages': '页面',
+  'palette.group.actions': '操作',
+  'palette.empty': '无匹配',
+  'palette.emptyHint': '试试标题、路径、agent 或 session id',
+  'palette.loading': '正在加载会话…',
+  'palette.footer.hint': '↑↓ 选择 · ↵ 打开 · esc 关闭',
+  'palette.close': '关闭',
+  'palette.resultCount': '{count} 项结果',
+  'palette.action.refreshSessions': '刷新会话列表',
+  'palette.action.cycleTheme': '切换主题',
+  'palette.action.cycleThemeHint': '当前：{current} → {next}',
+  'palette.action.openSettings': '打开设置',
+
   // 通用
   'common.loading': '加载中…',
   'common.expand': '展开',
@@ -285,6 +304,25 @@ export const enUS: Record<MessageKey, string> = {
   'theme.light': 'Light',
   'theme.dark': 'Dark',
   'theme.title': 'Theme: {mode}',
+
+  // Command palette (⌘K)
+  'palette.title': 'Command palette',
+  'palette.open': 'Search commands',
+  'palette.openHint': 'Open the command palette ({shortcut})',
+  'palette.placeholder': 'Search sessions, pages, or actions…',
+  'palette.group.sessions': 'Sessions',
+  'palette.group.pages': 'Pages',
+  'palette.group.actions': 'Actions',
+  'palette.empty': 'No matches',
+  'palette.emptyHint': 'Try a title, path, agent, or session id',
+  'palette.loading': 'Loading sessions…',
+  'palette.footer.hint': '↑↓ to select · ↵ to open · esc to close',
+  'palette.close': 'Close',
+  'palette.resultCount': '{count} results',
+  'palette.action.refreshSessions': 'Refresh sessions',
+  'palette.action.cycleTheme': 'Cycle theme',
+  'palette.action.cycleThemeHint': 'Current: {current} → {next}',
+  'palette.action.openSettings': 'Open settings',
 
   // Common
   'common.loading': 'Loading…',
