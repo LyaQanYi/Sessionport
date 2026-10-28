@@ -3,6 +3,46 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Qoder writer: native subagent write-back.** With `--include-children`,
+  `writeQoderSession` now writes each IR child as
+  `<projectDir>/<sessionId>/subagents/agent-<agentId>.jsonl` plus
+  `agent-<agentId>.meta.json` (`agentType` / `toolUseId?` / `description` /
+  `invocationName`), matching the real qodercli 1.1.69 layout. Every row carries
+  `sessionId` (the parent session), `agentId` and `isSidechain: true`; linked children
+  add `parent_tool_use_id`. Child transcripts contain only `user`/`assistant` rows
+  (no `active-leaf`/`last-prompt` control rows), the first user row uses the string
+  `content` form observed in real files, and assistant rows keep the native snake-case
+  `session_id`. `agentId` reuses the source `nativeSessionId` when legal
+  (`^[A-Za-z0-9][A-Za-z0-9_-]*$`, ≤64 chars) and falls back to a salted sha256 prefix.
+  `toolUseId` is only written when the parent transcript actually contains that
+  `Agent` tool_use; otherwise the child is reported as `qoder.subagent-unlinked`
+  (warning) instead of being linked to a non-existent call. `QODER_CAPS.subagents`
+  is now `true`; the main transcript is unchanged.
+- **Qoder reader: subagent title/profile from meta.json.** `readQoderSession` now maps
+  `meta.json`'s `description` to the child title and `agentType` to
+  `session.meta.profile` (previously the title fell back to the first user line and
+  profile was unset). `verifyQoderSession` gained per-child checks (JSONL parses,
+  `isSidechain`/`agentId`, parentUuid chain, parent session id, tool pairing,
+  `meta.json` fields, and `meta.toolUseId` ↔ `parent_tool_use_id` ↔ parent transcript
+  `tool_use`) plus optional `expectedChildren` meta matching;
+  `verifyQoderRoundTrip` now also compares the written children (count / title /
+  profile / via). Subagent runtimes stay honest: `subagents/task-*.json` is not
+  written (it is transient CLI task bookkeeping and is not read by
+  `listSubagents`/`getSubagentMessages`), and desktop UI rendering is unverified.
+
+### Notes
+
+- Verified against real Qoder data and the real Qoder SDK (asar, read-only): a real
+  Qoder→Qoder import keeps `aExplore-…` agent ids and the SDK returns the linked
+  `parent_tool_use_id`; a real WorkBuddy session with 11 subagents imports into an
+  isolated Qoder home, reads back 11 children with matching titles, and passes
+  `verify --agent qoder` (104 checks). `pnpm test` is 206 tests / 199 pass / 7 skip
+  (7 new tests). See `research/qoder-format.md` §5/§6.1/§7.2.
+
 ## [0.1.6] — 2026-10-28
 
 npm: `sesport@0.1.6` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the

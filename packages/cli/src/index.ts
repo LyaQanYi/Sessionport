@@ -50,7 +50,7 @@ const USAGE = [
   '  --json                 输出机器可读 JSON',
   '  --force                sync: 目标端有新增时仍然覆盖（会丢目标端新内容）',
   '  --confirm-real         写 Cursor 真实库时必须显式确认（先用 --dry-run 看计划）',
-  '  --include-children     子代理会话一并导出（dsh / claude-code / command-code 支持；其余记入损失清单）',
+  '  --include-children     子代理会话一并导出（dsh / claude-code / command-code / qoder 支持；其余记入损失清单）',
   '  --keep-injected        保留源端注入消息（默认在支持的目标上丢弃并记损失）',
   '  --slim                 dsh 目标精简导入：截断 tool_result/参数、丢弃较早 reasoning（日志也损）',
   '  --compact              dsh 目标压缩导入：保留全部事件日志，写 DSH 原生 compaction（摘要+最近 step）',

@@ -39,7 +39,7 @@ test('Qoder write: 行序列落盘 -> reader 读回逐事件一致', async () =>
     assert.ok(result.rows.some((row) => row.type === 'custom-title'));
     assert.ok(result.rows.some((row) => row.type === 'last-prompt'));
     assert.equal(result.rows.at(-1)!.type, 'active-leaf');
-    assert.deepEqual(QODER_CAPS, { agent: 'qoder', reasoning: 'plain', toolResults: 'separate', branching: false, subagents: false, modelPinned: true });
+    assert.deepEqual(QODER_CAPS, { agent: 'qoder', reasoning: 'plain', toolResults: 'separate', branching: false, subagents: true, modelPinned: true });
 
     const readBack = await readQoderSession(sessionId, { home: outHome });
     assert.equal(readBack.root.meta.title, source.root.meta.title);

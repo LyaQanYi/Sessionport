@@ -22,10 +22,10 @@ import {
 
 export { readQoderSession, parseQoderTranscript, qoderLinesToSession, qoderLinesToBundle, selectActiveQoderLines, printQoderSummary } from './read.ts';
 export type { ReadQoderOptions, ConvertQoderOptions, QoderConvertStats, ActiveSelection } from './read.ts';
-export { writeQoderSession, printWriteReport, QODER_CAPS } from './write.ts';
-export type { WriteQoderOptions, WriteQoderResult } from './write.ts';
+export { writeQoderSession, printWriteReport, QODER_CAPS, QODER_DEFAULT_SUBAGENT_TYPE } from './write.ts';
+export type { WriteQoderOptions, WriteQoderResult, WriteQoderChild, QoderSubagentMeta } from './write.ts';
 export { verifyQoderSession, verifyQoderLines, verifyQoderRoundTrip } from './verify.ts';
-export type { VerifyCheck, VerifyQoderReport } from './verify.ts';
+export type { VerifyCheck, VerifyQoderReport, VerifyQoderOptions, VerifyQoderSubagentExpectation, VerifyQoderSubagentReport } from './verify.ts';
 export {
   QODER_AGENT,
   QODER_CLI_VERSION,
@@ -41,8 +41,12 @@ export {
   qoderProjectDir,
   qoderProjectKey,
   qoderProjectsDir,
+  qoderSessionDir,
   qoderSessionIdFromPath,
   qoderSessionPath,
+  qoderSubagentMetaPath,
+  qoderSubagentPath,
+  qoderSubagentsDir,
   qoderThinkingText,
   qoderTimestampToIso,
   qoderToolResult,
