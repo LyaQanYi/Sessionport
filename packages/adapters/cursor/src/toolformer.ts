@@ -14,6 +14,8 @@
 import type { IrContent } from '@sessionport/core';
 
 import { parseUnifiedDiff } from './diff.ts';
+import { encodeEditToolCallBinary } from './toolcall-binary.ts';
+import type { EditToolBinaryInput } from './toolcall-binary.ts';
 import { isRecord, tryParseJson } from './wire.ts';
 import type { CursorToolFormerData } from './wire.ts';
 
@@ -405,6 +407,8 @@ interface MappedToolInput {
 interface MappedToolResult {
   result?: unknown;
   additionalData?: Record<string, unknown>;
+  /** edit/write 的 toolCallBinary 输入（app 靠它把气泡还原成编辑卡片） */
+  editBinary?: EditToolBinaryInput;
   warnings: ToolFormerWarning[];
 }
 
@@ -821,7 +825,7 @@ function editDiffAdditionalData(
   result: CursorToolResultSpec,
   isError: boolean,
   warnings: ToolFormerWarning[],
-): Record<string, unknown> | undefined {
+): { additionalData?: Record<string, unknown>; binary?: EditToolBinaryInput } {
   const diffTexts = resultDiffTexts(result.content);
   if (diffTexts.length === 0) {
     warnings.push({
@@ -832,7 +836,7 @@ function editDiffAdditionalData(
           : 'IR 的 tool_result 没有 diff block，也没有 before/after 文件全文；Cursor 只能显示路径/结果，无法生成可展开 diff（原生需要 diff 文本，或 beforeContentId/afterContentId 引用的文件 blob）',
       severity: 'warning',
     });
-    return undefined;
+    return {};
   }
   if (isError) {
     warnings.push({
@@ -840,7 +844,7 @@ function editDiffAdditionalData(
       message: '工具结果是错误态，diff block 未写入 additionalData.precomputedDiff',
       severity: 'info',
     });
-    return undefined;
+    return {};
   }
   if (diffTexts.length > 1) {
     warnings.push({
@@ -856,7 +860,7 @@ function editDiffAdditionalData(
       message: 'diff block 里没有可解析的统一 diff 行，未写入 additionalData.precomputedDiff',
       severity: 'warning',
     });
-    return undefined;
+    return {};
   }
   if (!parsed.hasChanges) {
     warnings.push({
@@ -864,7 +868,7 @@ function editDiffAdditionalData(
       message: 'diff block 没有实际增删行（全部是 context），未写入 additionalData.precomputedDiff',
       severity: 'warning',
     });
-    return undefined;
+    return {};
   }
   warnings.push({
     code: 'cursor.edit-diff-mapped',
@@ -874,7 +878,21 @@ function editDiffAdditionalData(
       '（diff 卡片可展开，但打开文件/checkpoint 类操作没有内容引用）',
     severity: 'info',
   });
-  return { precomputedDiff: parsed };
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  for (const line of parsed.lines) {
+    if (line.type === 'added') linesAdded += 1;
+    else if (line.type === 'removed') linesRemoved += 1;
+  }
+  return {
+    additionalData: { precomputedDiff: parsed },
+    binary: {
+      path: stringOf(mapped.params['relativeWorkspacePath']) ?? mapped.path ?? 'file',
+      linesAdded,
+      linesRemoved,
+      diffText: diffTexts[0] as string,
+    },
+  };
 }
 
 function mapResult(
@@ -938,7 +956,7 @@ function mapResult(
         }
         if (typeof editJson.detectedLanguage === 'string') resultObj.detectedLanguage = editJson.detectedLanguage;
       }
-      const additionalData = editDiffAdditionalData(mapped, result, isError, warnings);
+      const outcome = editDiffAdditionalData(mapped, result, isError, warnings);
       if (mapped.isWrite === true) {
         warnings.push({
           code: 'cursor.write-mapped-to-edit',
@@ -946,7 +964,12 @@ function mapResult(
           severity: 'info',
         });
       }
-      return { result: resultObj, ...(additionalData !== undefined ? { additionalData } : {}), warnings };
+      return {
+        result: resultObj,
+        ...(outcome.additionalData !== undefined ? { additionalData: outcome.additionalData } : {}),
+        ...(outcome.binary !== undefined ? { editBinary: outcome.binary } : {}),
+        warnings,
+      };
     }
     case 'grep': {
       // 错误文本不是 grep 结果，别把它解析成 totalFiles/topFiles；错误信息在 error 字段里。
@@ -1095,6 +1118,9 @@ export function buildCursorToolFormerData(
       : {}),
     ...(mappedResult.additionalData !== undefined
       ? { additionalData: emptyToUndefined(mappedResult.additionalData) }
+      : {}),
+    ...(mappedResult.editBinary !== undefined
+      ? { toolCallBinary: encodeEditToolCallBinary(mappedResult.editBinary) }
       : {}),
     _sessionport: toolExtension(call, result),
   };
