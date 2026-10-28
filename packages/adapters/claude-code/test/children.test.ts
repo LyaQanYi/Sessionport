@@ -172,6 +172,11 @@ test('includeChildren：子代理写成原生 subagents transcript，读回 titl
     assert.equal(typeof linkedResult.prompt, 'string');
     assert.ok((linkedResult.prompt as string).length > 0);
     assert.ok(Array.isArray(linkedResult.content));
+    // Claude 渲染 "Done (...)" 需要 usage + 三个统计字段
+    assert.equal(typeof linkedResult.totalToolUseCount, 'number');
+    assert.equal(typeof linkedResult.totalTokens, 'number');
+    assert.equal(typeof linkedResult.totalDurationMs, 'number');
+    assert.ok(linkedResult.usage !== null && typeof linkedResult.usage === 'object');
     // 子代理二在主会话里没有对应 Task 调用：不应伪造关联
     assert.equal(mainRows.filter((row) => row.toolUseResult !== undefined).length, 1);
 

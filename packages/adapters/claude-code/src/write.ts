@@ -157,6 +157,20 @@ function textFromParts(parts: unknown): string {
     .join('\n');
 }
 
+/** 子代理的展示统计：真实耗时 + 按文本长度估算的 token 数（IR 不携带 usage） */
+function childStats(session: IrSession): { durationMs: number; estimatedTokens: number } {
+  const times = session.events.map((event) => Date.parse(event.at)).filter((value) => Number.isFinite(value));
+  const durationMs = times.length >= 2 ? Math.max(0, Math.max(...times) - Math.min(...times)) : 0;
+  let chars = 0;
+  for (const event of session.events) {
+    if (event.kind === 'message') chars += textFromParts(event.parts).length;
+    else if (event.kind === 'reasoning' && event.reasoning.kind === 'plain') chars += event.reasoning.text.length;
+    else if (event.kind === 'tool_call') chars += JSON.stringify(event.input ?? {}).length;
+    else if (event.kind === 'tool_result') chars += textFromParts(event.content).length;
+  }
+  return { durationMs, estimatedTokens: Math.ceil(chars / 4) };
+}
+
 /** 子代理会话的第一条真实用户消息（Claude 的 toolUseResult.prompt 用它） */
 function firstUserText(session: IrSession): string {
   for (const event of session.events) {
@@ -173,9 +187,34 @@ function firstUserText(session: IrSession): string {
  * 关联 <sessionId>/subagents/agent-<agentId>.jsonl；缺这个字段时 CLI 只显示一行
  * "explore(...)"，不会展开子代理转录。
  */
+/** Claude 渲染子代理 "Done (N tool uses · X tokens · Ys)" 需要完整 usage 形状，缺字段时整行不渲染 */
+const SUBAGENT_USAGE_SKELETON = {
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_creation_input_tokens: 0,
+  cache_read_input_tokens: 0,
+  output_tokens_details: { thinking_tokens: 0 },
+  server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
+  service_tier: 'standard',
+  cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
+  inference_geo: 'not_available',
+  iterations: [],
+  speed: 'standard',
+  fallback_credit: null,
+} as const;
+
 function attachSubagentToolUseResults(
   rows: ClaudeRow[],
-  links: Array<{ toolUseId: string; agentId: string; agentType: string; description?: string; prompt: string; toolCalls: number }>,
+  links: Array<{
+    toolUseId: string;
+    agentId: string;
+    agentType: string;
+    description?: string;
+    prompt: string;
+    toolCalls: number;
+    durationMs: number;
+    estimatedTokens: number;
+  }>,
   model: string,
 ): void {
   if (links.length === 0) return;
@@ -199,7 +238,10 @@ function attachSubagentToolUseResults(
         ...(link.description !== undefined ? { description: link.description } : {}),
         ...(text.length > 0 ? { content: [{ type: 'text', text }] } : {}),
         resolvedModel: model,
+        totalDurationMs: link.durationMs,
+        totalTokens: link.estimatedTokens,
         totalToolUseCount: link.toolCalls,
+        usage: { ...SUBAGENT_USAGE_SKELETON, output_tokens: link.estimatedTokens },
         canContinueAgent: true,
       };
     }
@@ -417,6 +459,8 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
     description?: string;
     prompt: string;
     toolCalls: number;
+    durationMs: number;
+    estimatedTokens: number;
   }> = [];
   if (options.includeChildren === true && bundle.children.length > 0) {
     const usedAgentIds = new Set<string>();
@@ -451,6 +495,7 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
       });
       const toolUseId = nonEmptyText(child.viaToolCallId);
       if (toolUseId !== undefined) {
+        const stats = childStats(child.session);
         childLinks.push({
           toolUseId,
           agentId,
@@ -458,14 +503,23 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
           ...(meta.description !== undefined ? { description: meta.description } : {}),
           prompt: firstUserText(child.session),
           toolCalls: child.session.events.filter((event) => event.kind === 'tool_call').length,
+          durationMs: stats.durationMs,
+          estimatedTokens: stats.estimatedTokens,
         });
       }
     }
     if (childPlans.length > 0) {
       losses.add(
         'claude.subagent-native-writeback',
-        '子代理已写成 Claude 原生 subagents transcript（<sessionId>/subagents/agent-<agentId>.jsonl + .meta.json）。未验证：Claude Code app/CLI 是否在 UI 中展示这些子代理、真实 resume 时父子关系是否完整；IR 只建模一层子代理，子代理自己的子代理不会写回',
+        '子代理已写成 Claude 原生 subagents transcript（<sessionId>/subagents/agent-<agentId>.jsonl + .meta.json）；Claude Code 会在 Agent 调用下渲染 "Done (N tool uses · X tokens · Ys)"。IR 只建模一层子代理，子代理自己的子代理不会写回',
         { count: childPlans.length, severity: 'info' },
+      );
+    }
+    if (childLinks.length > 0) {
+      losses.add(
+        'claude.subagent-usage-estimated',
+        '子代理的 token 数按转录文本长度估算（源 IR 不携带 usage）；tool use 数与耗时为真实值',
+        { severity: 'info' },
       );
     }
   }
