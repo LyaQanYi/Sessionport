@@ -11,6 +11,7 @@ import {
   resolveCursorTool,
 } from '../src/index.ts';
 import { readCursorSession, verifyCursorSession, writeCursorSession } from '../src/index.ts';
+import { decodeEditToolCallBinary } from '../src/toolcall-binary.ts';
 import { closeCursorDb, openCursorDb, readDiskKvEntries, readDiskKvValue } from '../src/wire.ts';
 import {
   BASE_MS,
@@ -686,6 +687,15 @@ test('Edit 带统一 diff：写 precomputedDiff + grouping 统计，读回保留
     assert.ok(tool !== undefined);
     const additional = tool.additionalData as Record<string, unknown>;
     assert.deepEqual(additional.precomputedDiff, NATIVE_DIFF);
+
+    // app 读 DB 时靠 toolCallBinary 还原编辑卡片；缺它会退化成纯文本摘要
+    assert.equal(typeof tool.toolCallBinary, 'string');
+    const decodedBinary = decodeEditToolCallBinary(tool.toolCallBinary as string);
+    assert.ok(decodedBinary !== undefined);
+    assert.equal(decodedBinary.path, '/tmp/work/a.ts');
+    assert.equal(decodedBinary.linesAdded, 1);
+    assert.equal(decodedBinary.linesRemoved, 1);
+    assert.equal(decodedBinary.diffString, DIFF_TEXT);
 
     // header grouping：折叠状态的行数统计直接来自 precomputedDiff
     const db = openCursorDb(fixture.dbPath, { readOnly: true });

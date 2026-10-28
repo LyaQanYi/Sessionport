@@ -15,6 +15,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { validateCursorPrecomputedDiff } from './diff.ts';
+import { decodeEditToolCallBinary } from './toolcall-binary.ts';
 import { cursorLogsDir, cursorUserDataDir, resolveCursorPaths } from './paths.ts';
 import { readCursorSession } from './read.ts';
 import { isCursorToolStatus } from './toolformer.ts';
@@ -251,6 +252,8 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
     let editDiffCount = 0;
     let badEditDiffs = 0;
     let editDiffNoChanges = 0;
+    let editBinaryMissing = 0;
+    let editBinaryMismatch = 0;
     let firstEditDiffError = '';
     for (const { tool } of toolBubbles) {
       if (tool.tool !== 38 && tool.name !== 'edit_file_v2') continue;
@@ -268,6 +271,20 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
       if (validated.hasChanges !== true || !validated.lines.some((line) => line.type !== 'unchanged')) {
         editDiffNoChanges += 1;
       }
+      // Cursor 从 toolCallBinary 解码编辑卡片；只有 precomputedDiff 而没有它时
+      // app 会退化成纯文本摘要（"Edited <file>"），diff 不可见。
+      const decoded =
+        typeof tool.toolCallBinary === 'string' ? decodeEditToolCallBinary(tool.toolCallBinary) : undefined;
+      if (decoded === undefined) {
+        editBinaryMissing += 1;
+      } else {
+        const params = typeof tool.params === 'string' ? tryParseJson(tool.params) : undefined;
+        const expectedPath =
+          isRecord(params) && typeof params.relativeWorkspacePath === 'string'
+            ? params.relativeWorkspacePath
+            : undefined;
+        if (expectedPath !== undefined && decoded.path !== expectedPath) editBinaryMismatch += 1;
+      }
     }
     push(
       'toolformer-edit-diff',
@@ -278,6 +295,11 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
         String(badEditDiffs) +
         (editDiffNoChanges > 0 ? ' noChanges=' + String(editDiffNoChanges) : '') +
         (firstEditDiffError.length > 0 ? ' firstError=' + firstEditDiffError : ''),
+    );
+    push(
+      'toolformer-edit-binary',
+      editBinaryMissing === 0 && editBinaryMismatch === 0,
+      'missing=' + String(editBinaryMissing) + ' pathMismatch=' + String(editBinaryMismatch),
     );
 
     let groupingMismatch = 0;
