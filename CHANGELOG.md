@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Claude Code: native subagent linking.** Parent `tool_result` rows for subagents now carry a
+  Claude-shaped `toolUseResult` (`status`, `agentId`, `agentType`, `prompt`, `content`,
+  `resolvedModel`, `totalToolUseCount`, `canContinueAgent`), matching what Claude Code itself writes
+  for Agent calls; `verifyClaudeSession` gained a `subagent-<id>-tool-use-result` check.
+
+### Notes
+
+- Claude Code 2.1.31x CLI does **not** render historical subagent transcripts when resuming a session
+  (including in `Ctrl+O` transcript mode); native sessions behave the same. The transcripts are used by
+  `/share` and background agents. We therefore treat file-level parity as the acceptance bar and record
+  the UI limitation in `research/claude-code-subagents.md`.
+
 ## [0.1.3] — 2026-10-26
 
 npm: `sesport@0.1.3` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the

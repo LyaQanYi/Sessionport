@@ -142,5 +142,27 @@ sessionport inspect "claude:93bcfa78-fd45-4802-a7b3-866d106d5e74"
   `<sessionId>/subagents/agent-*.jsonl`。IR 只建模一层子代理，子代理自己的子代理不会写回。
 - 写入侧不在主文件里补 sidechain 镜像行（Claude 的两种写法 reader 都能读）。
 - 写入前已存在的旧 `agent-*.jsonl` 不会被主动清理；`verify` 传入 `expectedChildren` 时会把多出的文件判为失败。
-- **未验证**：Claude Code app/CLI 的 UI 是否展示原生写回的子代理、真实 `claude --resume` 是否完整恢复
-  父子关系与 `toolUseId` 关联；当前只做了结构自检 + reader 往返。
+- **UI 展示**：见下一节。数据层已完成；Claude Code CLI 恢复历史会话时不渲染子代理转录内容。
+
+## UI 展示（2.1.310–2.1.312 实测，2026-10-28）
+
+结论：**`claude --resume` 能加载写回的会话、也能识别 Agent 调用，但 TUI 不展示历史子代理的转录内容。**
+
+证据：
+
+1. 用 `claude --resume` 打开写回的测试会话（含 2 个子代理），TUI 显示：
+   `⏺ explore(子代理一：check explore)` 和 `⏺ Agent(子代理二：check general)`，
+   说明 tool_use、subagent_type、description 都被正确识别。
+2. 按 `Ctrl+O`（transcript 模式）后用 `expect` 抓完整屏幕：只有上面两行调用，
+   **没有**子代理 transcript 文本（如 `EXPLORE_DONE` / `GENERAL_DONE`）。
+3. 原生带子代理的会话（`4402912c…`、`0beb93b8…`）用同样方式抓屏，同样看不到子代理转录。
+4. 二进制（2.1.310 / 2.1.312）键位表里只有 `app:toggleTranscript`（`ctrl+o`），没有
+   「打开子代理转录」的 UI 动作；`diskSubagentTranscripts` 只出现在 `/share` / feedback 的
+   payload 构造里（`Ks({messages, backgroundTasks, transcripts, diskSubagentTranscripts})`），
+   不在 resume 的渲染路径。
+
+因此 CLI 的可见形态就是「Agent 工具调用一行」；`subagents/agent-*.jsonl` 供 `/share`、
+后台 agent / workflow 续跑等使用。写回侧已按原生格式补齐主会话的 `toolUseResult`
+（`status/agentId/agentType/prompt/content/resolvedModel/totalToolUseCount/canContinueAgent`），
+`verify` 增加 `subagent-<agentId>-tool-use-result` 检查（父会话没有对应 tool_use 时跳过），
+数据层与 Claude 自己写出的会话一致。
