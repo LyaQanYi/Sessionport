@@ -24,7 +24,7 @@
     "packages/adapters/*"
   ],
   "license": "Apache-2.0",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "devDependencies": {
     "@types/node": "^24.0.0",
     "esbuild": "^0.28.2",
