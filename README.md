@@ -82,12 +82,12 @@ State lives in `~/.sessionport/registry.json` (`--state <dir>` to override).
 | Agent | Read | Write | Resume verified | Against |
 |---|---|---|---|---|
 | Kimi Code | ✅ `state.json` + `agents/*/wire.jsonl` | — | source only | CLI 2.1.1 / format v2 |
-| Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ new composer + header | app-visible on restart (manual send) | 3.25.9 |
-| Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ new transcript file | ✅ Qoder SDK `listSessions` sees it | 1.1.69 |
+| Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ new composer + header | ✅ app-visible; edit cards + diff (manual check) | 3.25.9 |
+| Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ new transcript file | ✅ Qoder SDK `listSessions/listSubagents` (desktop task list is server-backed) | 1.1.69 |
 | WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | source only | 5.8.3 |
-| Claude Code | — | ✅ JSONL session files | ✅ `claude -p --resume` | CLI 2.1.303 |
+| Claude Code | — | ✅ JSONL session files | ✅ `claude --resume` TUI (matrix) | CLI 2.1.312 |
 | Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + desktop registration | ✅ `cmd -p --session` | 1.82.3 |
-| DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load + replay | 5.8.3 (format v4) |
+| DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load (matrix) | 5.8.3 (format v4) |
 | Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index registration | ✅ `codex exec resume` | 0.163.0 |
 | opencode | ✅ `opencode export` JSON | ✅ `opencode import` | ✅ `opencode run --session` | 1.19.3 |
 
