@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Verification matrix: opencode and Codex targets.** `pnpm matrix` now covers nine pairs and six
+  targets. opencode checks run in an isolated `XDG_DATA_HOME` (CLI `--home` now maps to it) and are
+  loaded back with the real `opencode export`; Codex checks use `CODEX_HOME=<iso> codex exec resume
+  --json`, accepting the `thread.started` event that arrives before the isolated home's missing
+  credentials produce a 401 (so no model spend). All nine pairs pass structurally and six have native
+  target loads; notes in `research/verification-matrix-2026-10-29.md`.
+
 ## [0.1.8] — 2026-10-29
 
 npm: `sesport@0.1.8` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the

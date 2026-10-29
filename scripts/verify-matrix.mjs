@@ -63,6 +63,22 @@ const PAIRS = [
     native: 'claude',
   },
   {
+    id: 'claude-opencode',
+    source: 'claude:4402912c-5c81-4696-a2c6-3743e09914c8',
+    to: 'opencode',
+    children: false,
+    cwd: '/Users/lyaqanyi/Documents/Coding/LyaQanYi.com',
+    native: 'opencode',
+  },
+  {
+    id: 'claude-codex',
+    source: 'claude:4402912c-5c81-4696-a2c6-3743e09914c8',
+    to: 'codex',
+    children: false,
+    cwd: '/Users/lyaqanyi/Documents/Coding/LyaQanYi.com',
+    native: 'codex',
+  },
+  {
     id: 'claude-qoder',
     source: 'claude:0beb93b8-5179-4b81-8d54-9ec96de91c13',
     to: 'qoder',
@@ -196,6 +212,71 @@ function nativeDshCheck(pair, homePath) {
   });
 }
 
+function nativeOpencodeCheck(pair, homePath) {
+  const exported = run('opencode', ['export', pair.report.sessionId], {
+    env: { XDG_DATA_HOME: homePath },
+    cwd: pair.cwd,
+  });
+  const start = exported.stdout.indexOf('{');
+  if (start < 0) return { status: 'fail', detail: 'opencode export 没有 JSON 输出' };
+  let parsed;
+  try {
+    parsed = JSON.parse(exported.stdout.slice(start));
+  } catch {
+    return { status: 'fail', detail: 'opencode export JSON 解析失败' };
+  }
+  const infoId = parsed?.info?.id;
+  const messages = Array.isArray(parsed?.messages) ? parsed.messages.length : 0;
+  if (infoId === pair.report.sessionId && messages > 0) {
+    return { status: 'pass', detail: 'opencode export 读回 ' + messages + ' 条消息' };
+  }
+  return { status: 'fail', detail: 'export 内容不匹配（id=' + String(infoId) + ' messages=' + messages + '）' };
+}
+
+function nativeCodexCheck(pair, homePath) {
+  const sid = pair.report.sessionId;
+  return new Promise((resolvePromise) => {
+    const child = spawn('codex', ['exec', 'resume', '--skip-git-repo-check', sid, '--json', 'hi'], {
+      cwd: pair.cwd,
+      env: { ...process.env, CODEX_HOME: homePath },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout.on('data', (chunk) => {
+      output += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      output += chunk.toString();
+    });
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      const started = /"type":"thread\.started"/.test(output) && output.includes(sid);
+      const turn = /"type":"turn\.started"/.test(output);
+      const authBlocked = /401|Missing bearer|Unauthorized/i.test(output);
+      if (started) {
+        resolvePromise({
+          status: 'pass',
+          detail:
+            'codex exec resume 载入 thread' +
+            (turn ? ' 并开始 turn' : '') +
+            (authBlocked ? '（隔离 home 无凭据，模型调用被 401 拦下）' : ''),
+        });
+      } else {
+        resolvePromise({ status: 'fail', detail: 'codex 未发出 thread.started' });
+      }
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish();
+    }, 25_000);
+    child.on('exit', finish);
+    child.on('error', finish);
+  });
+}
+
 async function runPair(pair) {
   const homePath = join(MATRIX, pair.id + '-home');
   rmSync(homePath, { recursive: true, force: true });
@@ -205,6 +286,8 @@ async function runPair(pair) {
   if (pair.to === 'dsh') pushArgs.push('--home', targetHome, '--register', '--compact');
   else if (pair.to === 'claude-code') pushArgs.push('--config-dir', targetHome);
   else if (pair.to === 'qoder') pushArgs.push('--home', targetHome);
+  else if (pair.to === 'opencode') pushArgs.push('--home', targetHome);
+  else if (pair.to === 'codex') pushArgs.push('--home', targetHome);
   else if (pair.to === 'cursor') pushArgs.push('--home', targetHome, '--confirm-real', '--title', '[sessionport 矩阵] ' + pair.id);
   if (pair.children) pushArgs.push('--include-children');
   const pushed = run(process.execPath, pushArgs);
@@ -225,6 +308,13 @@ async function runPair(pair) {
     const file = report.path || report.filePath;
     const verified = run(process.execPath, [CLI, 'verify', '--agent', 'qoder', '--file', file]);
     structural = summarizeVerify(verified.stdout);
+  } else if (pair.to === 'opencode') {
+    const verified = run(process.execPath, [CLI, 'verify', '--agent', 'opencode', '--home', targetHome, '--id', report.sessionId]);
+    structural = summarizeVerify(verified.stdout);
+  } else if (pair.to === 'codex') {
+    const file = report.filePath || report.paths?.[0];
+    const verified = run(process.execPath, [CLI, 'verify', '--agent', 'codex', '--file', file]);
+    structural = summarizeVerify(verified.stdout);
   } else {
     const verified = run(process.execPath, [CLI, 'verify', '--agent', 'cursor', '--home', targetHome, '--id', report.composerId]);
     structural = summarizeVerify(verified.stdout);
@@ -236,6 +326,8 @@ async function runPair(pair) {
     native = nativeClaudeCheck({ ...pair, report }, homePath);
   }
   else if (pair.native === 'dsh') native = await nativeDshCheck({ ...pair, report }, homePath);
+  else if (pair.native === 'opencode') native = nativeOpencodeCheck({ ...pair, report }, homePath);
+  else if (pair.native === 'codex') native = await nativeCodexCheck({ ...pair, report }, homePath);
   else if (pair.native === 'sdk') native = { status: 'manual', detail: 'Qoder 桌面无本地入口；SDK listSubagents/getSubagentMessages 已单独验证' };
   else native = { status: 'manual', detail: 'Cursor 无 headless；diff 卡片已人工验证' };
 
