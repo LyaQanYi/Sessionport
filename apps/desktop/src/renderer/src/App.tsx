@@ -252,7 +252,7 @@ export function App() {
             <span className="truncate">{t('app.settings')}</span>
           </button>
           <div className="flex items-center justify-between rounded-control px-1">
-            <span className="text-3xs text-sidebar-muted">v0.0.0 · alpha</span>
+            <span className="text-3xs text-sidebar-muted">v{pathsQuery.data?.version ?? '—'} · alpha</span>
             <button
               type="button"
               onClick={cycleTheme}
