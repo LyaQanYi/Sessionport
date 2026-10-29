@@ -11,7 +11,7 @@ import {
   resolveCursorTool,
 } from '../src/index.ts';
 import { readCursorSession, verifyCursorSession, writeCursorSession } from '../src/index.ts';
-import { decodeEditToolCallBinary } from '../src/toolcall-binary.ts';
+import { decodeEditToolCallBinary, decodeToolCallBinary, encodeEditToolCallBinary } from '../src/toolcall-binary.ts';
 import { closeCursorDb, openCursorDb, readDiskKvEntries, readDiskKvValue } from '../src/wire.ts';
 import {
   BASE_MS,
@@ -863,6 +863,244 @@ test('verify 能发现坏掉的 edit precomputedDiff', async () => {
     assert.equal(report.ok, false);
     const failed = report.checks.filter((check) => !check.ok).map((check) => check.name);
     assert.ok(failed.includes('toolformer-edit-diff'), failed.join(','));
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+const BINARY_TOOL_OUTPUTS = {
+  shell: 'total 0\nfile.txt',
+  read: 'line1\nline2',
+  grep: 'a.ts:1:foo\na.ts:3:foo\nb.ts:2:foo',
+  glob: './a.ts\n./b.ts',
+  list: 'a.ts\nsrc/\nb.ts',
+  delete: 'Deleted a.ts',
+} as const;
+
+test('每个工具气泡都带 toolCallBinary：可解码、字段与 params 一致、verify PASS', async () => {
+  const fixture = createCursorFixture({ composers: [] });
+  try {
+    const bundle = makeIrBundle(
+      [
+        userMessage('跑一遍带 binary 的工具'),
+        toolCallEvent('b-shell', 'Bash', { command: 'ls -la', cwd: '/tmp/work' }, at(1000)),
+        toolResultEvent('b-shell', BINARY_TOOL_OUTPUTS.shell, at(1100)),
+        toolCallEvent('b-read', 'Read', { file_path: '/tmp/work/a.ts', offset: 2, limit: 10 }, at(1200)),
+        toolResultEvent('b-read', BINARY_TOOL_OUTPUTS.read, at(1300)),
+        toolCallEvent('b-grep', 'Grep', { pattern: 'foo', path: '/tmp/work', output_mode: 'content' }, at(1400)),
+        toolResultEvent('b-grep', BINARY_TOOL_OUTPUTS.grep, at(1500)),
+        toolCallEvent('b-glob', 'Glob', { pattern: '**/*.ts', path: '/tmp/work' }, at(1600)),
+        toolResultEvent('b-glob', BINARY_TOOL_OUTPUTS.glob, at(1700)),
+        toolCallEvent('b-list', 'LS', { path: '/tmp/work' }, at(1800)),
+        toolResultEvent('b-list', BINARY_TOOL_OUTPUTS.list, at(1900)),
+        toolCallEvent('b-delete', 'Delete', { file_path: '/tmp/work/a.ts' }, at(2000)),
+        toolResultEvent('b-delete', BINARY_TOOL_OUTPUTS.delete, at(2100)),
+        toolCallEvent(
+          'b-edit',
+          'Edit',
+          { file_path: '/tmp/work/a.ts', old_string: 'const b = 2;', new_string: 'const b = 3;' },
+          at(2200),
+        ),
+        diffResultEvent('b-edit', DIFF_TEXT, at(2300)),
+      ],
+      { cwd: fixture.cwd, title: 'binary 工具' },
+    );
+    await writeCursorSession(bundle, {
+      home: fixture.home,
+      composerId: TOOL_ID,
+      backupDir: join(fixture.home, 'backup'),
+    });
+
+    const tools = new Map(
+      storedBubbles(fixture, TOOL_ID)
+        .map(({ bubble }) => toolFormerOf(bubble))
+        .filter((value) => value !== undefined)
+        .map((tool) => [String(tool.toolCallId), tool]),
+    );
+    assert.equal(tools.size, 7);
+
+    const shell = tools.get('b-shell');
+    assert.ok(shell !== undefined);
+    assert.equal(typeof shell.toolCallBinary, 'string');
+    const decodedShell = decodeToolCallBinary(shell.toolCallBinary as string);
+    assert.ok(decodedShell !== undefined && decodedShell.tool === 'shell');
+    assert.equal(decodedShell.command, 'ls -la');
+    assert.equal(decodedShell.workingDirectory, '/tmp/work');
+    assert.equal(decodedShell.resultCase, 'success');
+    assert.equal(decodedShell.exitCode, 0);
+    assert.equal(decodedShell.stdout, BINARY_TOOL_OUTPUTS.shell);
+
+    const read = tools.get('b-read');
+    assert.ok(read !== undefined);
+    const decodedRead = decodeToolCallBinary(read.toolCallBinary as string);
+    assert.ok(decodedRead !== undefined && decodedRead.tool === 'read');
+    assert.equal(decodedRead.path, '/tmp/work/a.ts');
+    assert.equal(decodedRead.offset, 2);
+    assert.equal(decodedRead.limit, 10);
+    assert.equal(decodedRead.resultCase, 'success');
+
+    const grep = tools.get('b-grep');
+    assert.ok(grep !== undefined);
+    const decodedGrep = decodeToolCallBinary(grep.toolCallBinary as string);
+    assert.ok(decodedGrep !== undefined && decodedGrep.tool === 'grep');
+    assert.equal(decodedGrep.pattern, 'foo');
+    assert.equal(decodedGrep.path, '/tmp/work');
+    assert.equal(decodedGrep.outputMode, 'content');
+    assert.equal(decodedGrep.totalFiles, 2);
+    assert.equal(decodedGrep.totalMatches, 3);
+    assert.deepEqual(decodedGrep.fileCounts, [
+      { file: 'a.ts', count: 2 },
+      { file: 'b.ts', count: 1 },
+    ]);
+
+    const glob = tools.get('b-glob');
+    assert.ok(glob !== undefined);
+    const decodedGlob = decodeToolCallBinary(glob.toolCallBinary as string);
+    assert.ok(decodedGlob !== undefined && decodedGlob.tool === 'glob');
+    assert.equal(decodedGlob.pattern, '**/*.ts');
+    assert.equal(decodedGlob.targetDirectory, '/tmp/work');
+    assert.deepEqual(decodedGlob.files, ['a.ts', 'b.ts']);
+    assert.equal(decodedGlob.totalFiles, 2);
+
+    const list = tools.get('b-list');
+    assert.ok(list !== undefined);
+    const decodedList = decodeToolCallBinary(list.toolCallBinary as string);
+    assert.ok(decodedList !== undefined && decodedList.tool === 'ls');
+    assert.equal(decodedList.path, '/tmp/work');
+    assert.equal(decodedList.rootPath, '/tmp/work');
+    assert.equal(decodedList.fileCount, 2);
+    assert.equal(decodedList.dirCount, 1);
+
+    const deleted = tools.get('b-delete');
+    assert.ok(deleted !== undefined);
+    const decodedDelete = decodeToolCallBinary(deleted.toolCallBinary as string);
+    assert.ok(decodedDelete !== undefined && decodedDelete.tool === 'delete');
+    assert.equal(decodedDelete.path, '/tmp/work/a.ts');
+    assert.equal(decodedDelete.resultCase, 'success');
+
+    const edit = tools.get('b-edit');
+    assert.ok(edit !== undefined);
+    const decodedEdit = decodeToolCallBinary(edit.toolCallBinary as string);
+    assert.ok(decodedEdit !== undefined && decodedEdit.tool === 'edit');
+    assert.equal(decodedEdit.path, '/tmp/work/a.ts');
+    assert.equal(decodedEdit.linesAdded, 1);
+    assert.equal(decodedEdit.linesRemoved, 1);
+    assert.equal(decodedEdit.diffString, DIFF_TEXT);
+
+    // params/result 没被 binary 改变
+    assert.equal((JSON.parse(String(shell.params)) as Record<string, unknown>).command, 'ls -la');
+    assert.equal((JSON.parse(String(read.result)) as Record<string, unknown>).contents, BINARY_TOOL_OUTPUTS.read);
+
+    const report = await verifyCursorSession({ home: fixture.home, sessionId: TOOL_ID });
+    assert.deepEqual(report.checks.filter((check) => !check.ok), []);
+    const binaryCheck = report.checks.find((check) => check.name === 'toolformer-tool-call-binary');
+    assert.ok(binaryCheck !== undefined);
+    assert.equal(binaryCheck.ok, true);
+    assert.match(String(binaryCheck.detail), /binary=7/);
+    assert.match(String(binaryCheck.detail), /edit:1/);
+    assert.match(String(binaryCheck.detail), /shell:1/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('原生工具气泡没有 toolCallBinary：verify 仍 PASS（binary=0），读回保持旧行为', async () => {
+  const fixture = createCursorFixture({
+    composers: [
+      {
+        composerId: TOOL_ID,
+        name: '原生无 binary',
+        bubbles: [
+          { type: 1, text: '看下文件' },
+          {
+            type: 2,
+            tool: {
+              name: 'read_file_v2',
+              toolCallId: 'native-read-1',
+              tool: 40,
+              params: { targetFile: '/tmp/work/a.ts', charsLimit: 1000000, effectiveUri: '/tmp/work/a.ts' },
+              result: { contents: 'line1' },
+              status: 'completed',
+            },
+          },
+          {
+            type: 2,
+            tool: {
+              name: 'run_terminal_command_v2',
+              toolCallId: 'native-shell-1',
+              tool: 15,
+              params: { command: 'ls' },
+              result: { output: 'a.ts', exitCode: 0 },
+              status: 'completed',
+            },
+          },
+        ],
+      },
+    ],
+  });
+  try {
+    const bundle = await readCursorSession(TOOL_ID, { home: fixture.home, includeChildren: false });
+    const calls = bundle.root.events.filter((event) => event.kind === 'tool_call');
+    assert.equal(calls.length, 2);
+    const results = bundle.root.events.filter((event) => event.kind === 'tool_result');
+    assert.equal(results.length, 2);
+
+    const report = await verifyCursorSession({ home: fixture.home, sessionId: TOOL_ID });
+    assert.deepEqual(report.checks.filter((check) => !check.ok), []);
+    const binaryCheck = report.checks.find((check) => check.name === 'toolformer-tool-call-binary');
+    assert.ok(binaryCheck !== undefined);
+    assert.equal(binaryCheck.ok, true);
+    assert.match(String(binaryCheck.detail), /binary=0/);
+    assert.doesNotMatch(String(binaryCheck.detail), /bad=[1-9]/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('verify 能发现坏掉的 toolCallBinary（分支不匹配 / 解不开）', async () => {
+  const fixture = createCursorFixture({ composers: [] });
+  try {
+    const bundle = makeIrBundle(
+      [
+        userMessage('破坏 binary'),
+        toolCallEvent('x-shell', 'Bash', { command: 'ls' }, at(1000)),
+        toolResultEvent('x-shell', 'ok', at(1100)),
+        toolCallEvent('x-read', 'Read', { file_path: '/tmp/work/a.ts' }, at(1200)),
+        toolResultEvent('x-read', 'line1', at(1300)),
+      ],
+      { cwd: fixture.cwd, title: '坏 binary' },
+    );
+    await writeCursorSession(bundle, {
+      home: fixture.home,
+      composerId: TOOL_ID,
+      backupDir: join(fixture.home, 'backup'),
+    });
+
+    const db = openCursorDb(fixture.dbPath);
+    try {
+      const wrongBranch = encodeEditToolCallBinary({ path: 'a.ts', linesAdded: 1, linesRemoved: 0, diffText: 'x' });
+      for (const [, value] of readDiskKvEntries(db, 'bubbleId:' + TOOL_ID + ':')) {
+        const bubble = JSON.parse(value) as Record<string, unknown>;
+        const tool = toolFormerOf(bubble);
+        if (tool === undefined) continue;
+        if (tool.toolCallId === 'x-shell') tool.toolCallBinary = wrongBranch;
+        if (tool.toolCallId === 'x-read') tool.toolCallBinary = 'not base64 !!!';
+        db.prepare('UPDATE cursorDiskKV SET value = ? WHERE key = ?').run(
+          JSON.stringify(bubble),
+          'bubbleId:' + TOOL_ID + ':' + String(bubble.bubbleId),
+        );
+      }
+    } finally {
+      closeCursorDb(db);
+    }
+
+    const report = await verifyCursorSession({ home: fixture.home, sessionId: TOOL_ID, skipReadback: true });
+    assert.equal(report.ok, false);
+    const binaryCheck = report.checks.find((check) => check.name === 'toolformer-tool-call-binary');
+    assert.ok(binaryCheck !== undefined);
+    assert.equal(binaryCheck.ok, false);
+    assert.match(String(binaryCheck.detail), /bad=1/);
+    assert.match(String(binaryCheck.detail), /branchMismatch=1/);
   } finally {
     fixture.cleanup();
   }
