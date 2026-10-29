@@ -302,7 +302,12 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
     report = await mod.writeCodexSession(bundle, opts);
   } else if (to === 'opencode') {
     const mod = await import('@sessionport/adapter-opencode');
-    report = await mod.writeOpencodeSession(bundle, opts);
+    // opencode CLI 用 XDG_DATA_HOME 定位数据目录：--home 映射过去才能隔离写库
+    const opencodeHome = opts.home as string | undefined;
+    report = await mod.writeOpencodeSession(bundle, {
+      ...opts,
+      ...(opencodeHome !== undefined ? { env: { XDG_DATA_HOME: opencodeHome } } : {}),
+    });
   } else if (to === 'cursor') {
     const mod = await import('@sessionport/adapter-cursor');
     report = await mod.writeCursorSession(bundle, {
@@ -650,7 +655,12 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
     const file = typeof values.file === 'string' ? values.file : undefined;
     const id = typeof opts.id === 'string' ? opts.id : undefined;
     if (!file && !id) fail('opencode 校验需要 --file <导出 JSON> 或 --id <ses_…>');
-    const report = await mod.verifyOpencodeSession({ filePath: file, sessionId: id });
+    const opencodeHome = typeof values.home === 'string' ? values.home : undefined;
+    const report = await mod.verifyOpencodeSession({
+      filePath: file,
+      sessionId: id,
+      ...(opencodeHome !== undefined ? { env: { XDG_DATA_HOME: opencodeHome } } : {}),
+    });
     result = { ok: report.ok, checks: report.checks };
   } else if (agent === 'codex') {
     const mod = await import('@sessionport/adapter-codex');
