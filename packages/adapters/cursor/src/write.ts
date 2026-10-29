@@ -376,20 +376,65 @@ export function buildCursorHeaderValue(data: Record<string, unknown>): CursorHea
   };
 }
 
+/** app 里 I9a() 的 short plain text 判定：≤100 字符、≤2 行、没有 markdown 块 */
+const SHORT_TEXT_MAX_CHARS = 100;
+const SHORT_TEXT_MAX_LINES = 2;
+const SHORT_TEXT_MARKDOWN = /```|^#{1,6}\s|^\s*[-*]\s|\|.*\|/m;
+/** app 里 J_l 的 textPreview 上限 */
+const TEXT_PREVIEW_MAX_CHARS = 280;
+
+export function isShortPlainText(text: string): boolean {
+  const value = text.trim();
+  if (value.length > SHORT_TEXT_MAX_CHARS) return false;
+  if (value.split(/\r?\n/).length > SHORT_TEXT_MAX_LINES) return false;
+  return !SHORT_TEXT_MARKDOWN.test(value);
+}
+
+/**
+ * header.grouping.textPreview：app 先取第一行非空文本，拍平 markdown/空白，再截到 280 字符。
+ * 真实样本里普通 human / AI 文本 header 都可能带 textPreview（app 加载时 gTf() 会把它清掉）；
+ * 它只影响折叠行的预览，不参与 header 与气泡重算的 grouping 比较。
+ */
+export function textPreview(text: string): string | undefined {
+  let line: string | undefined;
+  for (const candidate of text.split(/\r?\n/)) {
+    const trimmed = candidate.trim();
+    if (trimmed.length === 0) continue;
+    line = trimmed;
+    break;
+  }
+  if (line === undefined) return undefined;
+  const plain = line
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^\s*[-*+]\s+/, '')
+    .replace(/^\s*\d+[.)]\s+/, '')
+    .replace(/<\/?think>/gi, '')
+    .replace(/`{1,3}/g, '')
+    .replace(/\*\*|__|~~/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (plain.length === 0) return undefined;
+  return plain.length <= TEXT_PREVIEW_MAX_CHARS
+    ? plain
+    : plain.slice(0, TEXT_PREVIEW_MAX_CHARS).trimEnd() + '…';
+}
+
 export function userGrouping(text: string): Record<string, unknown> {
-  const grouping: Record<string, unknown> = { isRenderable: true, hasText: true, toolDisplayComputed: true };
-  if (text.trim().length <= 200) grouping.isShortPlainText = true;
+  const grouping: Record<string, unknown> = { isRenderable: true, hasText: true };
+  if (isShortPlainText(text)) grouping.isShortPlainText = true;
+  const preview = textPreview(text);
+  if (preview !== undefined) grouping.textPreview = preview;
+  grouping.toolDisplayComputed = true;
   return grouping;
 }
 
 export function assistantGrouping(text: string): Record<string, unknown> {
-  const grouping: Record<string, unknown> = {
-    isRenderable: true,
-    hasText: true,
-    isKeptFinalAiVisibleOutsideWorkedForGroup: true,
-    toolDisplayComputed: true,
-  };
-  if (text.trim().length <= 200) grouping.isShortPlainText = true;
+  const grouping: Record<string, unknown> = { isRenderable: true, hasText: true };
+  if (isShortPlainText(text)) grouping.isShortPlainText = true;
+  const preview = textPreview(text);
+  if (preview !== undefined) grouping.textPreview = preview;
+  grouping.isKeptFinalAiVisibleOutsideWorkedForGroup = true;
+  grouping.toolDisplayComputed = true;
   return grouping;
 }
 
@@ -398,35 +443,123 @@ export function thinkingGrouping(durationMs: number | undefined): Record<string,
     isRenderable: true,
     capabilityType: CAPABILITY_THINKING,
     hasThinking: true,
-    toolDisplayComputed: true,
   };
   if (durationMs !== undefined && durationMs > 0) grouping.thinkingDurationMs = durationMs;
+  grouping.toolDisplayComputed = true;
   return grouping;
 }
 
 /**
- * 工具气泡的 grouping。app 打开会话时会用气泡重算（JEk），这里写的是保守近似值；
- * 关键是 toolFormerTool / toolFormerStatus / toolCallId 与 toolFormerData 一致。
+ * toolFormerTool（ClientSideToolV2 枚举）→ header.grouping.toolCallCase。
+ * 数值来自 bundle 的 agent.v1.ToolCall oneof；只有本 adapter 会写的工具在表里。
+ */
+const TOOL_CALL_CASE_BY_TOOL = new Map<number, string>([
+  [CURSOR_TOOL.RUN_TERMINAL_COMMAND_V2, 'shellToolCall'],
+  [CURSOR_TOOL.READ_FILE_V2, 'readToolCall'],
+  [CURSOR_TOOL.EDIT_FILE_V2, 'editToolCall'],
+  [CURSOR_TOOL.RIPGREP_RAW_SEARCH, 'grepToolCall'],
+  [CURSOR_TOOL.GLOB_FILE_SEARCH, 'globToolCall'],
+  [CURSOR_TOOL.LIST_DIR_V2, 'lsToolCall'],
+  [CURSOR_TOOL.DELETE_FILE, 'deleteToolCall'],
+  [CURSOR_TOOL.TODO_WRITE, 'updateTodosToolCall'],
+]);
+
+export function cursorToolCallCase(tool: number): string | undefined {
+  return TOOL_CALL_CASE_BY_TOOL.get(tool);
+}
+
+/** app 里 GTm 集合：这些工具的调用会折叠进 worked-for 分组 */
+const GROUPABLE_TOOLS = new Set<number>([
+  CURSOR_TOOL.WEB_SEARCH,
+  CURSOR_TOOL.WEB_FETCH,
+  CURSOR_TOOL.LIST_DIR,
+  CURSOR_TOOL.LIST_DIR_V2,
+  CURSOR_TOOL.RIPGREP_SEARCH,
+  CURSOR_TOOL.RIPGREP_RAW_SEARCH,
+  CURSOR_TOOL.SEMANTIC_SEARCH_FULL,
+  CURSOR_TOOL.FILE_SEARCH,
+  CURSOR_TOOL.GLOB_FILE_SEARCH,
+  CURSOR_TOOL.READ_SEMSEARCH_FILES,
+  CURSOR_TOOL.SEARCH_SYMBOLS,
+  CURSOR_TOOL.GO_TO_DEFINITION,
+  CURSOR_TOOL.READ_FILE,
+  CURSOR_TOOL.READ_FILE_V2,
+  CURSOR_TOOL.TODO_READ,
+  CURSOR_TOOL.FETCH_RULES,
+  CURSOR_TOOL.READ_LINTS,
+  CURSOR_TOOL.AWAIT,
+  CURSOR_TOOL.GET_MCP_TOOLS,
+]);
+
+const LS_COMMAND_SEPARATORS = /[|;&]|&&|\|\|/;
+
+/** app 里 TFa()：只有「单独一条 ls」的命令才算可折叠 */
+function isSafeLsCommand(command: string | undefined): boolean {
+  if (command === undefined) return false;
+  const value = command.trim();
+  if (value.length === 0 || !/^\s*ls(\s|$)/i.test(value)) return false;
+  if (LS_COMMAND_SEPARATORS.test(value)) return false;
+  if (/\$\(|`/.test(value)) return false;
+  return !/[><]/.test(value);
+}
+
+/** app 里 MX0(tool, params)：决定 header.grouping.isToolGroupable */
+export function isCursorToolGroupable(tool: number, params: unknown): boolean {
+  if (tool === CURSOR_TOOL.RUN_TERMINAL_COMMAND_V2) {
+    return isSafeLsCommand(isRecord(params) && typeof params.command === 'string' ? params.command : undefined);
+  }
+  return GROUPABLE_TOOLS.has(tool);
+}
+
+/**
+ * header.grouping.toolDisplayPath。app 从解码后的 ToolCall args.path 取；
+ * 这里按 params 还原等价路径（glob 的 args 没有 path，所以不写）。
+ */
+export function cursorToolDisplayPath(tool: number, params: unknown): string | undefined {
+  if (!isRecord(params)) return undefined;
+  const value = (key: string): string | undefined =>
+    typeof params[key] === 'string' && (params[key] as string).length > 0 ? (params[key] as string) : undefined;
+  switch (tool) {
+    case CURSOR_TOOL.READ_FILE_V2:
+      return value('targetFile');
+    case CURSOR_TOOL.RIPGREP_RAW_SEARCH:
+      return value('path');
+    case CURSOR_TOOL.LIST_DIR_V2:
+      return value('targetDirectory');
+    case CURSOR_TOOL.DELETE_FILE:
+    case CURSOR_TOOL.EDIT_FILE_V2:
+      return value('relativeWorkspacePath');
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * 工具气泡的 header.grouping。字段与 app 的 kms()/gok() 重算结果对齐：
+ * capabilityType=15、toolFormerTool/Status、toolCallId、toolCallCase、toolDisplayPath、
+ * isToolGroupable、shellStatus、editLines*，最后 toolDisplayComputed=true。
  */
 export function toolGrouping(tool: CursorToolFormerData): Record<string, unknown> {
   const grouping: Record<string, unknown> = {
     isRenderable: true,
     capabilityType: CAPABILITY_TOOL_FORMER,
-    hasText: false,
-    hasThinking: false,
-    toolDisplayComputed: true,
   };
   if (typeof tool.tool === 'number') grouping.toolFormerTool = tool.tool;
   if (typeof tool.status === 'string') grouping.toolFormerStatus = tool.status;
+  if (tool.tool === CURSOR_TOOL.RUN_TERMINAL_COMMAND_V2) {
+    const status = isRecord(tool.additionalData) ? tool.additionalData.status : undefined;
+    if (typeof status === 'string' && status.length > 0) grouping.shellStatus = status;
+  }
   if (typeof tool.toolCallId === 'string' && tool.toolCallId.length > 0) grouping.toolCallId = tool.toolCallId;
-  // 真实 edit_file_v2 header 还带 toolCallCase / toolDisplayPath / editLines*；
-  // 后三项能直接从 precomputedDiff 算出来，补上可以让折叠状态的“+N/-M”与 diff 卡片一致。
+  const params = typeof tool.params === 'string' ? tryParseJson(tool.params) : undefined;
+  if (typeof tool.tool === 'number') {
+    if (isCursorToolGroupable(tool.tool, params)) grouping.isToolGroupable = true;
+    const toolCallCase = cursorToolCallCase(tool.tool);
+    if (toolCallCase !== undefined) grouping.toolCallCase = toolCallCase;
+    const displayPath = cursorToolDisplayPath(tool.tool, params);
+    if (displayPath !== undefined) grouping.toolDisplayPath = displayPath;
+  }
   if (tool.tool === CURSOR_TOOL.EDIT_FILE_V2) {
-    grouping.toolCallCase = 'editToolCall';
-    const params = typeof tool.params === 'string' ? tryParseJson(tool.params) : undefined;
-    if (isRecord(params) && typeof params.relativeWorkspacePath === 'string' && params.relativeWorkspacePath.length > 0) {
-      grouping.toolDisplayPath = params.relativeWorkspacePath;
-    }
     const additional = tool.additionalData;
     const precomputed = isRecord(additional) ? additional.precomputedDiff : undefined;
     if (isCursorPrecomputedDiff(precomputed)) {
@@ -434,6 +567,7 @@ export function toolGrouping(tool: CursorToolFormerData): Record<string, unknown
       grouping.editLinesRemoved = precomputed.lines.filter((line) => line.type === 'removed').length;
     }
   }
+  grouping.toolDisplayComputed = true;
   return grouping;
 }
 
@@ -514,6 +648,9 @@ function buildBubble(spec: BubbleSpec): CursorBubble {
     base.text = text;
     base.richText = plainTextToRichTextDoc(text);
     base.agentMode = 1;
+    // 原生 human 气泡带 startedAtMs/completedAtMs，header 会从气泡复制这两个值
+    base.startedAtMs = spec.atMs;
+    base.completedAtMs = spec.atMs;
     return base;
   }
   if (spec.tool !== undefined) {
@@ -529,7 +666,6 @@ function buildBubble(spec: BubbleSpec): CursorBubble {
     base.thinking = { text: spec.thinking, signature: '' };
     base.capabilityType = CAPABILITY_THINKING;
     base.thinkingStyle = 1;
-    base.thinkingDurationMs = 0;
     base.startedAtMs = spec.atMs;
     base.completedAtMs = spec.atMs;
     return base;
@@ -548,6 +684,8 @@ function buildConversationHeader(spec: BubbleSpec): CursorConversationHeaderEntr
   };
   if (spec.type === BUBBLE_TYPE_HUMAN) {
     entry.grouping = userGrouping(spec.text ?? '');
+    entry.startedAtMs = spec.atMs;
+    entry.completedAtMs = spec.atMs;
     return entry;
   }
   if (spec.tool !== undefined) {

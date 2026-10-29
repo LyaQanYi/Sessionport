@@ -25,6 +25,27 @@ All notable changes to this project are documented here. Format loosely follows
   `research/cursor-toolformer.md` §3.1/§3.2. Desktop card rendering is **not** verified — Cursor has
   no headless entry.
 
+### Fixed
+
+- **Cursor writer: read（以及 grep/glob/ls/delete）卡片不再整行消失。**
+  `composerData.fullConversationHeadersOnly` now writes native-shaped `grouping` for every bubble:
+  human/AI text (`hasText` / `isShortPlainText` / `textPreview` /
+  `isKeptFinalAiVisibleOutsideWorkedForGroup`), thinking (`capabilityType: 30`) and tool headers
+  (`capabilityType: 15`, `toolCallCase`, `toolDisplayPath`, `isToolGroupable`, `shellStatus`,
+  `editLines*`). Cursor loads bubbles through these headers (`getInitialMessages`) and then recomputes
+  grouping from each bubble (`rck()` / `kms()`); the old headers only carried
+  `toolFormerTool/Status/toolCallId`, so read rows collapsed into a worked-for group without a case or
+  path and disappeared, while shell/edit still rendered through their own paths. Headers are now
+  one-per-bubble in write order with `type`/`createdAt` matching the bubble; human bubbles also carry
+  `startedAtMs`/`completedAtMs` like native samples. `verifyCursorSession` gained
+  `headers-count`, `headers-bubble-timestamps`, `headers-text-grouping` and
+  `headers-tool-grouping` (cross-checks `toolCallCase`/`toolDisplayPath` against `toolFormerData` and
+  the decoded `toolCallBinary`). Field table, bundle evidence and boundaries:
+  `research/cursor-headers.md`. Tests: 225 total / 218 pass / 7 skipped (3 new header tests); real-copy
+  composer `11eb7e0d-bc75-4764-afb3-0dd475058bd4` (8 headers, shell/read/grep/edit) and real composer
+  `99c1076b-1ee2-48c6-9994-02f931778ccc` both verify 35/35 PASS. Desktop rendering of the read row is
+  still a human restart check — Cursor has no headless render entry.
+
 - **Reproducible verification matrix (`pnpm matrix`).** A script writes each source→target pair into an
   isolated target home and then loads the result with the target itself where an entry point exists:
   `claude --resume` TUI (expect + Ctrl+O capture), DSH headless (`--json --session-id`), and structural +
