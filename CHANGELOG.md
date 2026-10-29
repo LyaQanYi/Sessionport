@@ -3,6 +3,23 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Verification matrix records target versions.** `pnpm matrix` now captures the installed target
+  versions into `.tmp/matrix/versions.json` and prints them above the result table, and a single-pair
+  run merges into `.tmp/matrix/results.json` instead of replacing the other pairs.
+
+### Changed
+
+- **Matrix re-run against the current targets (2026-10-30).** Nine pairs structurally PASS and six
+  native loads PASS at Claude Code 2.1.312 / Codex 0.165.0 / opencode 1.19.5 / DSH 0.2.1-rc.3 /
+  qodercli 1.1.75-hotfix.1 / Cursor 3.27.22. The Codex sample grew from 14 to 38 events (two tool
+  calls) and the DSH→Claude source was replaced after the old session was cleaned up. Remaining
+  boundaries (Qoder UI server-backed, Cursor manual rendering, Kimi/Command Code not in the matrix,
+  DSH→Claude subagent linking): `research/verification-matrix-2026-10-30.md`.
+
 ## [0.1.9] — 2026-10-30
 
 npm: `sesport@0.1.9` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the
