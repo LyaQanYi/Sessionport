@@ -95,6 +95,10 @@ Sub-agent sessions: pass `--include-children`. DSH and Claude Code keep the nati
 (Claude Code writes `<sessionId>/subagents/agent-<id>.jsonl` + `meta.json`); Command Code has no parent
 concept, so children are written as independent sessions (content preserved, relationship reported as lost).
 
+Verification is reproducible: `pnpm matrix` writes each pair into an isolated target home and then loads the
+result in the target itself where an entry point exists (`claude --resume` TUI, DSH headless, Cursor/Qoder
+structural + SDK). Latest run: [research/verification-matrix-2026-10-29.md](research/verification-matrix-2026-10-29.md).
+
 ## How fidelity works
 
 Reading and writing are asymmetric, so losses are tracked separately:

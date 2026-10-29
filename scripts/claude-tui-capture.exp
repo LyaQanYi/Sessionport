@@ -1,0 +1,19 @@
+#!/usr/bin/expect -f
+# 校验用：用真实 claude --resume 打开写出的会话，Ctrl+O 抓屏后退出。
+# 用法: expect claude-tui-capture.exp <sessionId> <cwd> <logPath>
+set timeout 40
+set sid [lindex $argv 0]
+set cwd [lindex $argv 1]
+set out [lindex $argv 2]
+cd $cwd
+log_user 0
+log_file $out
+spawn claude --resume $sid
+after 8000
+send -- "\017"
+after 4000
+log_user 1
+send -- "\003"
+after 1500
+send -- "\004"
+expect eof

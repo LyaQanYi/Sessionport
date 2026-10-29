@@ -94,6 +94,10 @@ node packages/cli/src/index.ts sync "dsh:<session-dir>" --to command-code --regi
 `<sessionId>/subagents/agent-<id>.jsonl` + `meta.json`）；Command Code 没有父子概念，子代理会被写成
 独立会话（内容保留，父子关系记入损失清单）。
 
+验证可复现：`pnpm matrix` 会把每对迁移写进隔离目标目录，再尽量用目标端自己的入口加载
+（`claude --resume` TUI、DSH headless、Cursor/Qoder 结构 + SDK）。最近一次结果：
+[research/verification-matrix-2026-10-29.md](research/verification-matrix-2026-10-29.md)。
+
 ## 保真度是怎么算的
 
 读和写是不对称的，所以损失分两类记录：
