@@ -1,6 +1,6 @@
 {
   "name": "sesport",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "type": "module",
   "bin": {
     "sesport": "./dist/index.js",
