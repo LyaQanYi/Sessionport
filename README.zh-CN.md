@@ -81,12 +81,12 @@ node packages/cli/src/index.ts sync "dsh:<session-dir>" --to command-code --regi
 | Agent | 读 | 写 | Resume 验证 | 验证版本 |
 |---|---|---|---|---|
 | Kimi Code | ✅ `state.json` + `agents/*/wire.jsonl` | — | 仅作源 | CLI 2.1.1 / format v2 |
-| Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ 新建 composer + header | 重启 app 后可见（续聊需手动发消息） | 3.25.9 |
-| Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ 新建 transcript 文件 | ✅ Qoder SDK `listSessions` 能看到 | 1.1.69 |
+| Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ 新建 composer + header | ✅ app 内可见；编辑卡片 + diff（人工确认） | 3.25.9 |
+| Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ 新建 transcript 文件 | ✅ Qoder SDK `listSessions/listSubagents`（桌面任务列表由服务端驱动） | 1.1.69 |
 | WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | 仅作源 | 5.8.3 |
-| Claude Code | ✅ JSONL 会话文件 | ✅ JSONL 会话文件 | ✅ `claude -p --resume` | CLI 2.1.303 |
+| Claude Code | ✅ JSONL 会话文件 | ✅ JSONL 会话文件 | ✅ `claude --resume` TUI（矩阵） | CLI 2.1.312 |
 | Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + 桌面端注册 | ✅ `cmd -p --session` | 1.82.3 |
-| DeepSeek Harness | ✅ 多帧 zstd 事件日志 | ✅ 原生 workspace 布局 | ✅ 无头加载 + 回放 | 5.8.3（format v4） |
+| DeepSeek Harness | ✅ 多帧 zstd 事件日志 | ✅ 原生 workspace 布局 | ✅ 无头加载（矩阵） | 5.8.3（format v4） |
 | Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index 注册 | ✅ `codex exec resume` | 0.163.0 |
 | opencode | ✅ `opencode export` JSON | ✅ `opencode import` | ✅ `opencode run --session` | 1.19.3 |
 
