@@ -14,8 +14,13 @@
 import type { IrContent } from '@sessionport/core';
 
 import { parseUnifiedDiff } from './diff.ts';
-import { encodeEditToolCallBinary } from './toolcall-binary.ts';
-import type { EditToolBinaryInput } from './toolcall-binary.ts';
+import { encodeToolCallBinary, TOOL_CALL_FIELD } from './toolcall-binary.ts';
+import type {
+  EditToolBinaryInput,
+  LsTreeNodeInput,
+  ToolCallBinaryInput,
+  ToolCallBinaryKind,
+} from './toolcall-binary.ts';
 import { isRecord, tryParseJson } from './wire.ts';
 import type { CursorToolFormerData } from './wire.ts';
 
@@ -200,6 +205,32 @@ export function resolveCursorTool(name: string): CursorToolDefinition | undefine
 
 export function cursorToolName(tool: number): string | undefined {
   return TOOL_NAME_BY_NUMBER.get(tool);
+}
+
+/**
+ * aiserver.v1.ClientSideToolV2 枚举 → agent.v1.ToolCall 的 oneof 分支。
+ *
+ * 写侧用它选 toolCallBinary 的字段；verify 用它校验「tool 枚举与 oneof 分支匹配」。
+ * 只有本 adapter 会写 binary 的工具在表里（edit/write 共用 EDIT_FILE_V2）。
+ */
+const TOOL_CALL_KIND_BY_TOOL = new Map<number, ToolCallBinaryKind>([
+  [CURSOR_TOOL.RUN_TERMINAL_COMMAND_V2, 'shell'],
+  [CURSOR_TOOL.DELETE_FILE, 'delete'],
+  [CURSOR_TOOL.GLOB_FILE_SEARCH, 'glob'],
+  [CURSOR_TOOL.RIPGREP_RAW_SEARCH, 'grep'],
+  [CURSOR_TOOL.READ_FILE_V2, 'read'],
+  [CURSOR_TOOL.EDIT_FILE_V2, 'edit'],
+  [CURSOR_TOOL.LIST_DIR_V2, 'ls'],
+]);
+
+/** tool 枚举 → toolCallBinary 期望的 oneof 分支（不写 binary 的工具返回 undefined） */
+export function cursorToolCallKind(tool: number): ToolCallBinaryKind | undefined {
+  return TOOL_CALL_KIND_BY_TOOL.get(tool);
+}
+
+/** oneof 分支 → ToolCall 字段号（verify 报错信息用） */
+export function cursorToolCallField(kind: ToolCallBinaryKind): number {
+  return TOOL_CALL_FIELD[kind];
 }
 
 export function isCursorToolStatus(value: unknown): value is CursorToolStatus {
@@ -407,8 +438,11 @@ interface MappedToolInput {
 interface MappedToolResult {
   result?: unknown;
   additionalData?: Record<string, unknown>;
-  /** edit/write 的 toolCallBinary 输入（app 靠它把气泡还原成编辑卡片） */
-  editBinary?: EditToolBinaryInput;
+  /**
+   * toolCallBinary 的输入（app 靠它把气泡还原成原生工具卡片）。
+   * 没有可用字段时省略，气泡保持纯文本摘要的旧行为。
+   */
+  toolCallBinary?: ToolCallBinaryInput;
   warnings: ToolFormerWarning[];
 }
 
@@ -639,13 +673,13 @@ function shellResult(text: string, isError: boolean, exitCode: number): Record<s
   };
 }
 
-function buildGrepSummary(
-  text: string,
-  params: Record<string, unknown>,
-  outputMode: string | undefined,
-): Record<string, unknown> {
-  const pattern = typeof params.pattern === 'string' ? params.pattern : '';
-  const path = typeof params.path === 'string' ? params.path : undefined;
+interface GrepCounts {
+  counts: Map<string, number>;
+  totalMatches: number;
+}
+
+/** grep 结果文本 → 每文件命中数（additionalData 摘要用） */
+function collectGrepCounts(text: string, outputMode: string | undefined): GrepCounts {
   const mode = outputMode ?? 'content';
   const lines = splitLines(text);
   const counts = new Map<string, number>();
@@ -679,6 +713,18 @@ function buildGrepSummary(
       totalMatches += 1;
     }
   }
+  return { counts, totalMatches };
+}
+
+function buildGrepSummary(
+  text: string,
+  params: Record<string, unknown>,
+  outputMode: string | undefined,
+): Record<string, unknown> {
+  const pattern = typeof params.pattern === 'string' ? params.pattern : '';
+  const path = typeof params.path === 'string' ? params.path : undefined;
+  const mode = outputMode ?? 'content';
+  const { counts, totalMatches } = collectGrepCounts(text, outputMode);
   const topFiles = [...counts.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, 20)
@@ -804,6 +850,185 @@ function buildListSummary(
   };
 }
 
+// ---------------------------------------------------------------------------
+// toolCallBinary 的输入（每个工具只填「确实来自 IR」的字段）
+// ---------------------------------------------------------------------------
+
+/** single-file glob 结果很多时截断，避免 toolCallBinary 比会话本身还大 */
+const MAX_GLOB_BINARY_FILES = 2000;
+/** grep 的 workspace_results 只写每文件命中数，最多这么多文件 */
+const MAX_GREP_BINARY_FILES = 200;
+/** ls 树最多展开这么多节点，避免深层目录把 binary 撑爆 */
+const MAX_LS_BINARY_NODES = 500;
+
+interface LsMutableNode {
+  absPath: string;
+  files: string[];
+  dirs: Map<string, LsMutableNode>;
+}
+
+function joinPath(parent: string, name: string): string {
+  if (parent.length === 0 || parent === '.') return name;
+  return parent.endsWith('/') ? parent + name : parent + '/' + name;
+}
+
+function relativeSegments(entryPath: string, rootPath: string): string[] {
+  const root = rootPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  let path = entryPath.replace(/\\/g, '/');
+  if (root.length > 0 && root !== '.' && path.startsWith(root + '/')) path = path.slice(root.length + 1);
+  else if (root.length > 0 && root !== '.' && path === root) return [];
+  else if (path.startsWith('./')) path = path.slice(2);
+  return path.split('/').filter((segment) => segment.length > 0 && segment !== '.');
+}
+
+/**
+ * additionalData 的 topEntries（扁平的 path/isDir）→ LsDirectoryTreeNode 需要的树。
+ * app 的 ls 卡片只用 absPath / childrenDirs / childrenFiles 三样，这里就只建这三样。
+ */
+function buildLsTree(
+  rootPath: string,
+  entries: Array<{ path: string; isDir: boolean }>,
+): LsTreeNodeInput | undefined {
+  const root: LsMutableNode = { absPath: rootPath, files: [], dirs: new Map() };
+  let nodes = 1;
+  for (const entry of entries) {
+    const segments = relativeSegments(entry.path, rootPath);
+    if (segments.length === 0) continue;
+    let node = root;
+    let ok = true;
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const segment = segments[index] as string;
+      let child = node.dirs.get(segment);
+      if (child === undefined) {
+        if (nodes >= MAX_LS_BINARY_NODES) {
+          ok = false;
+          break;
+        }
+        child = { absPath: joinPath(node.absPath, segment), files: [], dirs: new Map() };
+        node.dirs.set(segment, child);
+        nodes += 1;
+      }
+      node = child;
+    }
+    if (!ok) break;
+    const leaf = segments[segments.length - 1] as string;
+    if (entry.isDir) {
+      if (!node.dirs.has(leaf)) {
+        if (nodes >= MAX_LS_BINARY_NODES) break;
+        node.dirs.set(leaf, { absPath: joinPath(node.absPath, leaf), files: [], dirs: new Map() });
+        nodes += 1;
+      }
+    } else if (!node.files.includes(leaf)) {
+      node.files.push(leaf);
+    }
+  }
+  const freeze = (node: LsMutableNode): LsTreeNodeInput => {
+    const dirs = [...node.dirs.values()].map(freeze);
+    return { absPath: node.absPath, files: [...node.files], dirs };
+  };
+  return freeze(root);
+}
+
+/**
+ * 结果文本里不像文件名的行（命中的代码正文、分页提示、rg 分隔符）不该进
+ * GrepCountResult：会渲染成假文件。这里只做展示层过滤，additionalData 摘要不变。
+ */
+function isPlausibleGrepFile(file: string): boolean {
+  if (file.length === 0 || file === '--') return false;
+  if (file.startsWith('[') || file.startsWith('…') || file.startsWith('...')) return false;
+  return !/\s/.test(file);
+}
+
+/**
+ * toolCallBinary 专用的更严格解析：同时认 Cursor/Claude 的 `file:line:content`
+ * 和 ripgrep 无 heading 的 `file-line-content`（DSH 的 grep 结果就是后者）。
+ * 解析不出就返回空 Map，由调用方回退到宏观摘要。
+ */
+function collectGrepBinaryCounts(text: string, outputMode: string | undefined): Map<string, number> {
+  const mode = outputMode ?? 'content';
+  const counts = new Map<string, number>();
+  const add = (file: string, count: number): void => {
+    if (!isPlausibleGrepFile(file) || !Number.isFinite(count) || count <= 0) return;
+    counts.set(file, (counts.get(file) ?? 0) + count);
+  };
+  for (const line of splitLines(text)) {
+    if (mode === 'files_with_matches') {
+      add(stripDotSlash(line), 1);
+      continue;
+    }
+    if (mode === 'count') {
+      const match = /^(.*?):(\d+)$/.exec(line);
+      if (match !== null) add(match[1] as string, Number(match[2]));
+      continue;
+    }
+    const match = /^(.*?):(\d+):(.*)$/.exec(line) ?? /^(.*?)-(\d+)-(.*)$/.exec(line);
+    if (match !== null) add(match[1] as string, 1);
+  }
+  return counts;
+}
+
+function grepBinaryCounts(counts: Map<string, number>): {
+  fileCounts: Array<{ file: string; count: number }>;
+  totalFiles: number;
+  totalMatches: number;
+} {
+  const all = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const plausible = all.filter(([file]) => isPlausibleGrepFile(file));
+  const kept = plausible.length > 0 ? plausible : all;
+  return {
+    fileCounts: kept.slice(0, MAX_GREP_BINARY_FILES).map(([file, count]) => ({ file, count })),
+    totalFiles: kept.length,
+    totalMatches: kept.reduce((sum, [, count]) => sum + count, 0),
+  };
+}
+
+function grepBinaryBase(mapped: MappedToolInput): ToolCallBinaryInput & { kind: 'grep' } {
+  const params = mapped.params;
+  const pattern = typeof params.pattern === 'string' ? params.pattern : '';
+  const path = typeof params.path === 'string' ? params.path : undefined;
+  const glob = typeof params.glob === 'string' ? params.glob : undefined;
+  const outputMode = typeof params.outputMode === 'string' ? params.outputMode : mapped.outputMode;
+  return {
+    kind: 'grep',
+    pattern,
+    ...(path !== undefined ? { path } : {}),
+    ...(glob !== undefined ? { glob } : {}),
+    ...(outputMode !== undefined ? { outputMode } : {}),
+    ...(params.caseInsensitive === true ? { caseInsensitive: true } : {}),
+    ...(typeof params.headLimit === 'number' ? { headLimit: params.headLimit } : {}),
+    ...(params.multiline === true ? { multiline: true } : {}),
+  };
+}
+
+/** 参数够就能写的「只有 args」的 binary（工具还没结果时用） */
+function cancelledToolCallBinary(
+  kind: CursorToolKind,
+  mapped: MappedToolInput | undefined,
+): ToolCallBinaryInput | undefined {
+  if (mapped === undefined) return undefined;
+  switch (kind) {
+    case 'shell':
+      return mapped.command !== undefined ? { kind: 'shell', command: mapped.command } : undefined;
+    case 'read':
+      return mapped.path !== undefined ? { kind: 'read', path: mapped.path } : undefined;
+    case 'grep':
+      return grepBinaryBase(mapped);
+    case 'glob':
+      return {
+        kind: 'glob',
+        pattern: String(mapped.params.globPattern ?? ''),
+        targetDirectory: String(mapped.params.targetDirectory ?? '.'),
+      };
+    case 'list':
+      return { kind: 'ls', path: mapped.path ?? '.' };
+    case 'delete':
+      return mapped.path !== undefined ? { kind: 'delete', path: mapped.path } : undefined;
+    default:
+      // edit/write 只在有 diff 时才写 binary（缺 diff 时保持旧的纯文本行为）
+      return undefined;
+  }
+}
+
 function resultDiffTexts(content: IrContent[]): string[] {
   const texts: string[] = [];
   for (const part of content) {
@@ -907,8 +1132,10 @@ function mapResult(
   const isError = result?.isError === true;
 
   if (result === undefined) {
-    if (kind === 'shell') return { additionalData: { status: 'cancelled' }, warnings };
-    return { warnings };
+    const binary = cancelledToolCallBinary(kind, mapped);
+    const withBinary = binary === undefined ? {} : { toolCallBinary: binary };
+    if (kind === 'shell') return { additionalData: { status: 'cancelled' }, ...withBinary, warnings };
+    return { ...withBinary, warnings };
   }
 
   switch (kind) {
@@ -924,14 +1151,36 @@ function mapResult(
         if (typeof json.exitCode === 'number') exitCode = json.exitCode;
         else if (typeof json.exit_code === 'number') exitCode = json.exit_code;
       }
-      return { result: shellResult(output, isError, exitCode), additionalData, warnings };
+      const options = isRecord(mapped.params.options) ? mapped.params.options : undefined;
+      const binary: ToolCallBinaryInput = {
+        kind: 'shell',
+        command: mapped.command ?? '',
+        ...(typeof mapped.params.cwd === 'string' ? { workingDirectory: mapped.params.cwd } : {}),
+        ...(typeof mapped.params.commandDescription === 'string' ? { description: mapped.params.commandDescription } : {}),
+        ...(options !== undefined && typeof options.timeout === 'number' ? { timeoutMs: options.timeout } : {}),
+        ...(mapped.params.isBackground === true ? { isBackground: true } : {}),
+        outcome: { ok: !isError, output, exitCode },
+      };
+      return { result: shellResult(output, isError, exitCode), additionalData, toolCallBinary: binary, warnings };
     }
     case 'read': {
       let contents = text;
       if (isRecord(json) && typeof json.contents === 'string') contents = json.contents;
       const resultObj: Record<string, unknown> = { contents };
       if (isRecord(json) && typeof json.totalLinesInFile === 'number') resultObj.totalLinesInFile = json.totalLinesInFile;
-      return { result: resultObj, warnings };
+      const offset = numberOf(mapped.params.offset);
+      const limit = numberOf(mapped.params.limit);
+      const totalLines = isRecord(json) && typeof json.totalLinesInFile === 'number' ? json.totalLinesInFile : undefined;
+      const binary: ToolCallBinaryInput = {
+        kind: 'read',
+        path: mapped.path ?? (typeof mapped.params.targetFile === 'string' ? mapped.params.targetFile : ''),
+        ...(offset !== undefined && offset > 0 ? { offset } : {}),
+        ...(limit !== undefined && limit > 0 ? { limit } : {}),
+        outcome: isError
+          ? { ok: false, errorMessage: text }
+          : { ok: true, ...(totalLines !== undefined ? { totalLines } : {}) },
+      };
+      return { result: resultObj, toolCallBinary: binary, warnings };
     }
     case 'edit':
     case 'write': {
@@ -967,37 +1216,108 @@ function mapResult(
       return {
         result: resultObj,
         ...(outcome.additionalData !== undefined ? { additionalData: outcome.additionalData } : {}),
-        ...(outcome.binary !== undefined ? { editBinary: outcome.binary } : {}),
+        ...(outcome.binary !== undefined ? { toolCallBinary: { kind: 'edit' as const, ...outcome.binary } } : {}),
         warnings,
       };
     }
     case 'grep': {
       // 错误文本不是 grep 结果，别把它解析成 totalFiles/topFiles；错误信息在 error 字段里。
-      if (isError) return { warnings };
+      const base = grepBinaryBase(mapped);
+      if (isError) {
+        return { toolCallBinary: { ...base, errorMessage: text }, warnings };
+      }
       // 从原生 Cursor 读回来的摘要已经是我们需要的形状，直接复用。
       if (isRecord(json) && json.isPruned === true) {
-        return { additionalData: json, warnings };
+        const fileCounts: Array<{ file: string; count: number }> = [];
+        for (const item of Array.isArray(json.topFiles) ? json.topFiles : []) {
+          if (!isRecord(item)) continue;
+          const file = stringOf(item.uri);
+          const count = numberOf(item.matchCount);
+          if (file !== undefined && count !== undefined && isPlausibleGrepFile(file)) {
+            fileCounts.push({ file, count });
+          }
+        }
+        const totalFiles = numberOf(json.totalFiles);
+        const totalMatches = numberOf(json.totalMatches);
+        return {
+          additionalData: json,
+          toolCallBinary: {
+            ...base,
+            ...(fileCounts.length > 0 ? { fileCounts } : {}),
+            ...(totalFiles !== undefined ? { totalFiles } : {}),
+            ...(totalMatches !== undefined ? { totalMatches } : {}),
+          },
+          warnings,
+        };
       }
-      return { additionalData: buildGrepSummary(text, mapped.params, mapped.outputMode), warnings };
+      // additionalData 保持原摘要；binary 用更严格的解析，解析不出再回退到摘要计数。
+      const strictCounts = collectGrepBinaryCounts(text, mapped.outputMode);
+      const counts = strictCounts.size > 0 ? strictCounts : collectGrepCounts(text, mapped.outputMode).counts;
+      return {
+        additionalData: buildGrepSummary(text, mapped.params, mapped.outputMode),
+        toolCallBinary: { ...base, ...grepBinaryCounts(counts) },
+        warnings,
+      };
     }
     case 'glob': {
-      if (isError) return { warnings };
       const targetDirectory =
         typeof mapped.params.targetDirectory === 'string' ? mapped.params.targetDirectory : '.';
-      return { result: { directories: buildGlobDirectories(text, json, targetDirectory) }, warnings };
+      const pattern = typeof mapped.params.globPattern === 'string' ? mapped.params.globPattern : '';
+      if (isError) {
+        return { toolCallBinary: { kind: 'glob', pattern, targetDirectory, errorMessage: text }, warnings };
+      }
+      const directories = buildGlobDirectories(text, json, targetDirectory);
+      const files: string[] = [];
+      for (const directory of directories) {
+        for (const file of Array.isArray(directory.files) ? directory.files : []) {
+          if (isRecord(file) && typeof file.relPath === 'string') files.push(file.relPath);
+        }
+      }
+      const truncated = files.length > MAX_GLOB_BINARY_FILES;
+      return {
+        result: { directories },
+        toolCallBinary: {
+          kind: 'glob',
+          pattern,
+          targetDirectory,
+          files: truncated ? files.slice(0, MAX_GLOB_BINARY_FILES) : files,
+          totalFiles: files.length,
+          ...(truncated ? { clientTruncated: true } : {}),
+        },
+        warnings,
+      };
     }
     case 'list': {
-      if (isError) return { warnings };
-      if (isRecord(json) && json.isPruned === true) {
-        return { additionalData: json, warnings };
+      const lsPath = mapped.path ?? (typeof mapped.params.targetDirectory === 'string' ? mapped.params.targetDirectory : '.');
+      if (isError) {
+        return { toolCallBinary: { kind: 'ls', path: lsPath, errorMessage: text }, warnings };
       }
-      return { additionalData: buildListSummary(text, json, mapped.params), warnings };
+      const pruned = isRecord(json) && json.isPruned === true;
+      const summary = pruned ? (json as Record<string, unknown>) : buildListSummary(text, json, mapped.params);
+      const rootPath = typeof summary.rootPath === 'string' ? summary.rootPath : lsPath;
+      const entries: Array<{ path: string; isDir: boolean }> = [];
+      for (const item of Array.isArray(summary.topEntries) ? summary.topEntries : []) {
+        if (!isRecord(item) || typeof item.path !== 'string') continue;
+        entries.push({ path: item.path, isDir: item.isDir === true });
+      }
+      const root = buildLsTree(rootPath, entries);
+      return {
+        additionalData: summary,
+        toolCallBinary: { kind: 'ls', path: rootPath, ...(root !== undefined ? { root } : {}) },
+        warnings,
+      };
     }
     case 'delete': {
       let fileNonExistent = false;
       if (isError) fileNonExistent = /not\s*found|no such file|does not exist/i.test(text);
+      const deletePath = mapped.path ?? String(mapped.params.relativeWorkspacePath ?? '');
       return {
         result: { rejected: false, fileNonExistent, fileDeletedSuccessfully: !isError },
+        toolCallBinary: {
+          kind: 'delete',
+          path: deletePath,
+          outcome: isError ? { ok: false, notFound: fileNonExistent, errorMessage: text } : { ok: true },
+        },
         warnings,
       };
     }
@@ -1119,8 +1439,8 @@ export function buildCursorToolFormerData(
     ...(mappedResult.additionalData !== undefined
       ? { additionalData: emptyToUndefined(mappedResult.additionalData) }
       : {}),
-    ...(mappedResult.editBinary !== undefined
-      ? { toolCallBinary: encodeEditToolCallBinary(mappedResult.editBinary) }
+    ...(mappedResult.toolCallBinary !== undefined
+      ? { toolCallBinary: encodeToolCallBinary(mappedResult.toolCallBinary) }
       : {}),
     _sessionport: toolExtension(call, result),
   };

@@ -68,7 +68,7 @@
 | `result` | string | 2271 | 结果消息的 **protobuf JSON**；grep/list 落库时可能被剪成 additionalData | 按 schema 生成/省略 |
 | `additionalData` | object | 1545 | 非 protobuf 的 UI 数据：shell 状态、grep/list 摘要、edit precomputedDiff | shell/grep/list/delete；edit 有 diff 时 `precomputedDiff` |
 | `error` | string | 59 | `ToolResultError` 的 protobuf JSON | 错误态 |
-| `toolCallBinary` | string | 3198 | base64(`agent.v1.ToolCall`)；app 打开 composer 时 `ng.fromBinary` 解码，缺了编辑卡片退化成文本 | **edit/write 写**（`toolcall-binary.ts`，见 §6）；其余工具暂不写 |
+| `toolCallBinary` | string | 3198 | base64(`agent.v1.ToolCall`)；app 打开 composer 时 `ug.fromBinary` 解码，缺了工具卡片退化成文本摘要 | **shell/read/grep/glob/ls/delete/edit 都写**（`toolcall-binary.ts`，见 §3.1/§4.1）；todo 等其余分支暂不写 |
 | `userDecision` | string | 少量 | 如 delete 的 `accepted` | 不写 |
 
 `params`/`result` 的 JSON 字符串是 **紧凑 JSON**：对 13 个有 params 的样本、
@@ -250,39 +250,118 @@ blob 的引用。** 因此 IR 里只有统一 diff 文本时，可以按 app 自
 `run_terminal_command_v2` 913、`edit_file_v2` 473、`glob_file_search` 219、
 `todo_write` 41、`get_mcp_tools` 41、`task_v2` 5、`read_lints` 7、`await` 14 等。[实测]
 
-## 3. toolCallBinary 的 wire 结构（只读验证，不写）
+## 3. toolCallBinary 的 wire 结构（写侧实现）
 
-`toolCallBinary` = base64(`agent.v1.ToolCall`)。`agent.v1.ToolCall` 是 oneof：
+`toolCallBinary` = base64(`agent.v1.ToolCall`)。app 读 composer 时
+`if(e.toolCallBinary){const u=iN(e.toolCallBinary);o=ug.fromBinary(u.buffer)}`（bundle
+15,981,704 起），解出来的 `toolCall` 决定工具卡片怎么渲染；缺它时 UI 只能显示文本摘要
+（"Ran tool" / "Edited <file>"）。[仓库]
 
-| toolFormerData.name | tool 枚举 | agent.v1.ToolCall 字段 | 真实样本首字节（base64 解码后） |
-| --- | ---: | ---: | --- |
-| `run_terminal_command_v2` | 15 | 1 `shell_tool_call` | `0a c2 0f` |
-| `delete_file` | 11 | 3 `delete_tool_call` | `1a b5 04 0a ae 01 …` |
-| `glob_file_search` | 42 | 4 `glob_tool_call` | `22 f2 d8 0c` |
-| `ripgrep_raw_search` | 41 | 5 `grep_tool_call` | `2a f4 e6 0a` |
-| `read_file_v2` | 40 | 8 `read_tool_call` | `42 ff 01` |
-| `todo_write` | 35 | 9 `update_todos_tool_call` | `4a 87 04` |
-| `edit_file_v2` | 38 | 12 `edit_tool_call` | `62 c6 03` |
-| `list_dir_v2` | 39 | 13 `ls_tool_call` | （本机库无 list_dir_v2 样本，schema 已确认） |
-| `read_lints` | 30 | 14 `read_lints_tool_call` | `72 7e` |
-| `task_v2` | 48 | 19 `task_tool_call` | `9a 01 9e 0c` |
-| `get_mcp_tools` | 63 | 44（实测样本字段 44） | `e2 02 e8 04` |
+`agent.v1.ToolCall`（`ug`，bundle offset 14,340,506）是 oneof，本 adapter 写其中 7 个分支：
 
-字段号来自 `ng=S.makeMessageType("agent.v1.ToolCall", ...)`：[仓库]
+| toolFormerData.name | tool 枚举 | agent.v1.ToolCall 字段 | 真实样本首字节（base64 解码后） | 本 adapter 写 |
+| --- | ---: | ---: | --- | --- |
+| `run_terminal_command_v2` | 15 | 1 `shell_tool_call` | `0a c2 0f` | ✅ |
+| `delete_file` | 11 | 3 `delete_tool_call` | `1a b5 04 0a ae 01 …` | ✅ |
+| `glob_file_search` | 42 | 4 `glob_tool_call` | `22 f2 d8 0c` | ✅ |
+| `ripgrep_raw_search` | 41 | 5 `grep_tool_call` | `2a f4 e6 0a` | ✅ |
+| `read_file_v2` | 40 | 8 `read_tool_call` | `42 ff 01` | ✅ |
+| `todo_write` | 35 | 9 `update_todos_tool_call` | `4a 87 04` | ❌（本次未涉及；todo 卡片仍走文本摘要） |
+| `edit_file_v2` | 38 | 12 `edit_tool_call` | `62 c6 03` | ✅（96e6765 起） |
+| `list_dir_v2` | 39 | 13 `ls_tool_call` | （本机库无 list_dir_v2 样本，schema 已确认） | ✅ |
+| `read_lints` | 30 | 14 `read_lints_tool_call` | `72 7e` | ❌ |
+| `task_v2` | 48 | 19 `task_tool_call` | `9a 01 9e 0c` | ❌ |
+| `get_mcp_tools` | 63 | 44（实测样本字段 44） | `e2 02 e8 04` | ❌ |
+
+字段号来自 `ug=S.makeMessageType("agent.v1.ToolCall", ...)`（bundle 14,340,506）：[仓库]
 
 ```js
 [
- {no:1,name:"shell_tool_call",kind:"message",T:Soe,oneof:"tool"},
- {no:3,name:"delete_tool_call",kind:"message",T:kwt,oneof:"tool"},
- {no:4,name:"glob_tool_call",kind:"message",T:hNn,oneof:"tool"},
- {no:5,name:"grep_tool_call",kind:"message",T:C8e,oneof:"tool"},
- {no:8,name:"read_tool_call",kind:"message",T:_Le,oneof:"tool"},
- {no:9,name:"update_todos_tool_call",kind:"message",T:fNn,oneof:"tool"},
- {no:12,name:"edit_tool_call",kind:"message",T:koe,oneof:"tool"},
- {no:13,name:"ls_tool_call",kind:"message",T:Ewt,oneof:"tool"},
+ {no:1,name:"shell_tool_call",kind:"message",T:Oae,oneof:"tool"},
+ {no:3,name:"delete_tool_call",kind:"message",T:j0t,oneof:"tool"},
+ {no:4,name:"glob_tool_call",kind:"message",T:cFn,oneof:"tool"},
+ {no:5,name:"grep_tool_call",kind:"message",T:d$e,oneof:"tool"},
+ {no:8,name:"read_tool_call",kind:"message",T:$Ne,oneof:"tool"},
+ {no:9,name:"update_todos_tool_call",kind:"message",T:hFn,oneof:"tool"},
+ {no:12,name:"edit_tool_call",kind:"message",T:Fae,oneof:"tool"},
+ {no:13,name:"ls_tool_call",kind:"message",T:K0t,oneof:"tool"},
  ...
 ]
 ```
+
+### 3.1 各工具子消息 schema（bundle 内 `makeMessageType` 原文）
+
+标号即 protobuf 字段号；`T:9`=string、`T:5`=int32、`T:13`=uint32、`T:3`=int64、
+`T:4`=uint64、`T:8`=bool、`T:12`=bytes。所有子消息的 args/result 都是 field 1/field 2。
+
+| 工具（ToolCall field） | 子消息 | 字段（号: 名字 类型） |
+| --- | --- | --- |
+| shell（1） | `ShellToolCall`（14,191,119） | 1 args `ShellArgs`、2 result `ShellResult`、3 description string |
+| | `ShellArgs`（13,689,596） | 1 command string、2 working_directory string、3 timeout int32、4 tool_call_id string、5 simple_commands string[]、8 parsing_result message、9 requested_sandbox_policy、10 file_output_threshold_bytes uint64、11 is_background bool、13 timeout_behavior enum、14 hard_timeout int32、15 description string、17 close_stdin bool、21 conversation_id string |
+| | `ShellResult`（13,690,964） | oneof result：1 success `ShellSuccess`、2 failure `ShellFailure`、3 timeout、4 rejected、5 spawn_error、7 permission_denied；101 sandbox_policy、102 is_background、103 terminals_folder、104 pid |
+| | `ShellSuccess`（13,694,158）/ `ShellFailure`（13,695,064） | 1 command、2 working_directory、3 exit_code int32、4 signal、5 stdout、6 stderr、7 execution_time int32、10 interleaved_output、15 output_head、16 output_tail、17 elided_chars |
+| delete（3） | `DeleteToolCall`（14,193,452） | 1 args `DeleteArgs`、2 result `DeleteResult` |
+| | `DeleteArgs`（14,191,776） | 1 path string、2 tool_call_id string |
+| | `DeleteResult`（14,191,909） | oneof result：1 success `DeleteSuccess`、2 file_not_found、3 not_file、4 permission_denied、5 file_busy、6 rejected、7 error |
+| | `DeleteSuccess`（14,192,387） | 1 path、2 deleted_file、3 file_size int64、4 prev_content |
+| glob（4） | `GlobToolCall`（14,194,402） | 1 args `GlobToolArgs`、2 result `GlobToolResult` |
+| | `GlobToolArgs`（14,193,661） | 1 target_directory string、2 glob_pattern string |
+| | `GlobToolResult`（14,193,815） | oneof result：1 success `GlobToolSuccess`、2 error `GlobToolError{1 error}` |
+| | `GlobToolSuccess`（14,194,076） | 1 pattern、2 path、3 files string[]、4 total_files int32、5 client_truncated bool、6 ripgrep_truncated bool |
+| grep（5） | `GrepToolCall`（14,198,028） | 1 args `GrepArgs`、2 result `GrepResult` |
+| | `GrepArgs`（14,194,639） | 1 pattern、2 path、3 glob、4 output_mode、5/6/7 context_before/after/context、8 case_insensitive bool、9 type、10 head_limit、11 multiline bool、12 sort、13 sort_ascending、14 tool_call_id、16 offset |
+| | `GrepResult`（14,195,473） | oneof result：1 success `GrepSuccess`、2 error `GrepError{1 error}` |
+| | `GrepSuccess`（14,195,726） | 1 pattern、2 path、3 output_mode、4 workspace_results map<string, `GrepUnionResult`>、5 active_editor_result |
+| | `GrepUnionResult` | oneof result：1 count `GrepCountResult`、2 files `GrepFilesResult`、3 content `GrepContentResult` |
+| | `GrepCountResult`（14,196,260） | 1 counts repeated {1 file, 2 count int32}、2 total_files、3 total_matches、4 client_truncated、5 ripgrep_truncated、6/7 head_limit_applied/offset_applied |
+| | `GrepFilesResult`（14,196,800） | 1 files string[]、2 total_files、3/4 truncated 标记 |
+| | `GrepContentResult`（14,197,161） | 1 matches repeated {1 file, 2 matches repeated {1 line_number, 2 content, 3 content_truncated, 4 is_context_line}}、2 total_lines、3 total_matched_lines |
+| read（8） | `ReadToolCall`（14,200,070） | 1 args `ReadToolArgs`、2 result `ReadToolResult` |
+| | `ReadToolArgs`（14,200,205） | 1 path、2 offset int32、3 limit int32、5 include_line_numbers bool |
+| | `ReadToolResult`（14,200,446） | oneof result：1 success `ReadToolSuccess`、2 error `ReadToolError{1 error_message}` |
+| | `ReadToolSuccess`（14,200,751） | output oneof：1 content / 6 data / 9 data_blob_id / 10 content_blob_id；2 is_empty、3 exceeded_limit、4 total_lines uint32、5 file_size uint32、7 path、8 read_range{1 start_line, 2 end_line} |
+| edit（12） | `EditToolCall`（14,205,624） | 1 args `EditArgs`、2 result `EditResult` |
+| | `EditArgs`（14,203,943） | 1 path、6 stream_content |
+| | `EditResult`（14,204,083） | oneof result：1 success、2 file_not_found、3 read_permission_denied、4 write_permission_denied、6 rejected、7 error |
+| | `EditSuccess`（14,204,519） | 1 path、3 lines_added、4 lines_removed、5 diff_string、6 before_full_file_content、7 after_full_file_content、8 message |
+| ls（13） | `LsToolCall`（14,205,930） | 1 args `LsArgs`、2 result `LsResult` |
+| | `LsArgs`（13,745,179） | 1 path、2 ignore string[]、3 tool_call_id、4 sandbox_policy、5 timeout_ms uint32 |
+| | `LsResult`（13,745,467） | oneof result：1 success `LsSuccess`、2 error `LsError{1 path,2 error}`、3 rejected、4 timeout |
+| | `LsSuccess`（13,745,747） | 1 directory_tree_root `LsDirectoryTreeNode` |
+| | `LsDirectoryTreeNode`（13,745,852） | 1 abs_path、2 children_dirs repeated（同类型递归）、3 children_files repeated {1 name}、4 children_were_processed、5 full_subtree_extension_counts map<string,int32>、6 num_files |
+
+### 3.2 UI 到底读 toolCall 里的哪些字段
+
+工具卡片的 view model 由 `FFm(toolCall, {callId})`（bundle 30,087,... 起）构造，逐分支读：[仓库]
+
+| 分支 | UI 读取 | 缺失后果 |
+| --- | --- | --- |
+| `shellToolCall` | `args.command`、`ShellToolCall.description`（或 `args.description`）、`result.success/failure` 的 `interleavedOutput \|\| stdout+stderr` 与 `exitCode`、`timeout.timeoutMs`、`rejected.reason`、`spawnError/permissionDenied.error` | command 为空时卡片只有 "Ran command" |
+| `readToolCall` | `args.path`、`result.success.read_range`（否则回退 `args.offset/limit`） | 没有 path 卡片没有文件名 |
+| `grepToolCall` | `args.pattern`、`args.path`、`result.success.workspace_results`（union count/files/content → 每文件命中数） | 没有 workspace_results 就只显示 pattern |
+| `globToolCall` | `args.glob_pattern`、`args.target_directory`、`result.success.path`、`result.success.files` | 没有 files 只显示 pattern |
+| `lsToolCall` | `args.path`、`result.success.directory_tree_root`（`Tck` 只展平一层 childrenDirs/childrenFiles） | 没有树就没有目录列表 |
+| `deleteToolCall` | `args.path`、`result.success.path/prev_content` | 没有 path 卡片没有文件名 |
+| `editToolCall` | `args.path`、`result.success.path/lines_added/lines_removed/beforeFullFileContent` | 没有 path 就没有编辑卡片 |
+
+> **shell 的特殊路径**：`kFm(toolFormerData)`（bundle 30,065,025）里 `yak(e)` 对
+> `RUN_TERMINAL_COMMAND_V2 / WEB_SEARCH / ASK_QUESTION / MCP_AUTH` 返回 true，
+> 此时**即使有 toolCallBinary 也忽略 toolCall**，改用 `gak(params, result)` 从
+> params/result 重建 shellToolCall（为了拿 parsingResult/allowlist）。
+> 也就是说 shell 的 binary 在 glass 这条渲染路径上不是必需的；但写了不冲突，
+> 且其它读 toolCall 的路径（审批、终端块）仍可能用到。read/grep/glob/ls/delete/edit
+> 的 `kFm` 会优先返回解码出来的 toolCall。
+
+### 3.3 真实样本（`.tmp/cursor-app-test` 副本，40k bubble 抽样）
+
+| 分支 | 样本数 | 实测结构 |
+| --- | ---: | --- |
+| read（8） | 11,381 | args{1 path, 2 offset, 3 limit}；result.success{1 content **空串**, 4 total_lines, 5 file_size, 7 path, 8 read_range}；317 B 的 binary 对应 6.4 KB 的 result → **原生不把文件正文写进 binary** |
+| grep（5） | 11,367 | args{1 pattern, 2 path, 3 glob, 4 output_mode, 8 case_insensitive, 10 head_limit, 11 multiline, 14 tool_call_id, 16 offset}；success{1 pattern,2 path,3 output_mode,4 workspace_results}（content/files 两种 union 都见过；177 KB 的 binary 是全量命中） |
+| glob（4） | 3,840 | args{1 target_directory,2 glob_pattern}；success{2 path,3 files[N]（相对路径，2000 条）,4 total_files=10000,5 client_truncated,6 ripgrep_truncated} |
+| shell（1） | 6,197 | args{1 command,3 timeout,4 tool_call_id,5 simple_commands,8 parsing_result,9 sandbox_policy,10 file_output_threshold_bytes,13 timeout_behavior,14 hard_timeout,15 description,17 close_stdin,21 conversation_id}；result.failure{1 command,3 exit_code,5 stdout,6 stderr,7 execution_time,9 interleaved_output,12 local_execution_time_ms}；`ShellToolCall.description` 与 `args.description` 同值 |
+| todo（9） | 158 | args{1 todos[N],2 merge}；success{1 todos,2 total_count,3 was_merge} |
+| delete（3）/ ls（13） | 0 | 本机副本里没有样本，只有 schema + `zok`/`Kok` 合成逻辑证据 |
 
 > 注意：`aiserver.v1.ToolCall`（`y8i`，field 1 builtin / field 2 custom）是另一套旧结构，
 > 不是 `toolCallBinary` 用的消息。toolFormerData 用的是 `agent.v1.ToolCall`（`ng`）。
@@ -300,6 +379,29 @@ blob 的引用。** 因此 IR 里只有统一 diff 文本时，可以按 app 自
 | `LS`, `ls`, `list` | `list_dir_v2` | 39 | `targetDirectory`, `ignoreGlobs` | **不写 result**，additionalData 摘要：`{isPruned,rootPath,totalDirs,totalFiles,topEntries,extensionCounts}`（与 `fYv` 一致） |
 | `Delete`, `rm` | `delete_file` | 11 | `relativeWorkspacePath` | result: `{rejected,fileNonExistent,fileDeletedSuccessfully}` |
 | `TodoWrite`, `update_plan` | `todo_write` | 35 | `todos`, `merge` | result: `{success,finalTodos,initialTodos,wasMerge}` |
+
+### 4.1 每个工具写进 toolCallBinary 的字段
+
+写得**最小但结构合法**：只填 IR 里确实有的字段，没有的省略（protobuf 默认值），
+不伪造文件全文。
+
+| IR 工具 | ToolCall 分支 | args 写什么 | result 写什么（有结果时） | 明确不写 |
+| --- | --- | --- | --- | --- |
+| `Bash` | shell（1） | `command`、`working_directory`（cwd）、`timeout`（options.timeout）、`is_background`、`description`（commandDescription，同值写 `ShellToolCall.description`） | `success/failure{command, working_directory, exit_code, stdout}`（错误态走 failure + stderr） | parsing_result / sandbox_policy / tool_call_id / 终端 id |
+| `Read` | read（8） | `path`、`offset`、`limit` | `success{content:"", total_lines（只有 totalLinesInFile 时）, path}`；错误态 `error{error_message}` | 文件正文（原生也不写）、file_size |
+| `Grep` | grep（5） | `pattern`、`path`、`glob`、`output_mode`、`case_insensitive`、`head_limit`、`multiline` | `success{pattern, path, output_mode, workspace_results{根目录: GrepCountResult 每文件命中数}}`；错误态 `error{error}` | 命中行正文、GrepContentResult/GrepFilesResult |
+| `Glob` | glob（4） | `target_directory`、`glob_pattern` | `success{pattern, path, files[≤2000], total_files, client_truncated}`；错误态 `error` | ripgrep_truncated |
+| `LS` | ls（13） | `path`、`ignore` | `success{directory_tree_root{abs_path, children_dirs, children_files}}`（节点 ≤500）；错误态 `error{path,error}` | num_files / extension counts |
+| `Delete` | delete（3） | `path` | `success{path, deleted_file}` / `file_not_found{path}` / `error{path,error}` | file_size / prev_content |
+| `Edit` / `Write` | edit（12） | `path` | `success{path, lines_added, lines_removed, diff_string}` | before/after 全文、content id |
+
+截断策略（都在 `toolformer.ts` 顶部常量）：glob 文件列表 2000 条（超出写
+`client_truncated`）、grep 每文件命中数 200 条、ls 目录树 500 个节点。
+grep 只用 `GrepCountResult` 承载「每文件命中数」——这个计数来自真实结果文本，
+不是编造的；命中行正文没有可靠来源，宁可不写。
+
+没有结果（工具调用被取消）时只写 args 分支，不写 result；edit/write 在没有 diff 时
+仍然完全不写 binary（保持 96e6765 之前的纯文本行为）。
 
 状态：
 
@@ -381,7 +483,19 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 - **真实 Cursor UI（3.25.9）目视确认**（2026-10-21，用户实测）：测试 composer
   `7d8c3ddf-64d1-49ca-b0d7-148fd9f012a7` 在 Cursor 里正常打开，`run_terminal_command_v2`
   工具卡片渲染出命令摘要与结果正文（不是 “Ran tool” 空卡片），reasoning 显示为
-  “Thought briefly”，`_sessionport` 不影响加载。→ **不需要补 `toolCallBinary`**（至少 shell 卡片）。
+  “Thought briefly”，`_sessionport` 不影响加载。当时的结论是“不需要补 `toolCallBinary`”；
+  后来 edit 卡片（96e6765）证明卡片是否原生取决于 `toolCallBinary`，所以 2026-10-29 起
+  所有支持的工具都写 binary。shell 在 glass 渲染路径上仍会用 params 重建（§3.2 的 `yak`），
+  这解释了 2026-10-21 的观察。
+- **toolCallBinary 全工具结构回归（2026-10-29）**：
+  - bundle 内 7 个分支的 args/result 子消息 schema 逐字段抄进 §3.1；
+  - 单测覆盖每个工具 encode→decode 往返（字段号、path/command/pattern、行数、命中数、
+    文件列表、目录树、错误态）与 verify 的坏 binary 检测；
+  - 真实副本库：DSH 会话（853 bubbles / 461 工具气泡）→ `.tmp/cursor-app-test`（composer
+    `c0ffee00-3333-4444-8555-666677778888`），`verify --agent cursor` **31 项全 PASS**，
+    `toolformer-tool-call-binary` = `binary=321 (shell:183,grep:86,read:52) bad=0 branchMismatch=0
+    fieldMismatch=0 editMissing=0`；binary 体积 min 126 B / p50 1,044 B / p95 10,867 B / max 27,722 B；
+  - 其余 140 个工具气泡是没有 diff 的 edit/write，按设计不写 binary（旧行为不变）。
 - **真实库写入回归**（2026-10-21，sessionport 自测）：把一条真实 Claude 会话（225 events、
   103 个 tool_call）写进真实 `state.vscdb`，composer
   `7d8c3ddf-64d1-49ca-b0d7-148fd9f012a7`（标题 `[sessionport 测试] 工具卡片（PR #213 review）`）。
@@ -399,9 +513,10 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 
 ### 未验证（需要人工在 Cursor 里确认）
 
-1. **其余工具的 UI 外观**：shell（`run_terminal_command_v2`）卡片已实测正常（命令摘要 + 结果正文）；
-   read / edit / grep / glob / list / delete / todo 的卡片尚未逐项目视确认（同一套
-   `params`/`result` 渲染路径，预期一致）。若某类卡片退化成 “Ran tool”，再补 `toolCallBinary`。
+1. **其余工具的 UI 外观**：shell 卡片 2026-10-21 实测正常；read / grep / glob / list / delete / edit
+   的卡片**尚未逐项目视确认**。现在 binary 都写了、结构也校验过（§3.1/§6），但 Cursor 没有
+   headless 入口，**是否真的渲染成原生卡片未验证**。若某类卡片仍退化成 “Ran tool”，
+   优先怀疑该分支 `result` 的 oneof case（见 §3.2 的字段读取表）。
 2. **app 是否回写/删除 `_sessionport`**：打开会话、发消息、退出 app 后再读库对比。
 3. **edit 的 diff 卡片**：结构已验证（`additionalData.precomputedDiff` + UI 的 `Z3m` /
    `getCachedEditToolCallDisplay` / `iUs` 路径），但 Cursor 没有 headless 入口，**UI 是否
@@ -412,9 +527,12 @@ Cursor 的 `params`/`result` 是规范化后的形态（例如 Read 的 `file_pa
 
 ### 明确不写（记录为 loss 或文档边界）
 
-- `toolCallBinary`：不生成。原因：需要完整编码 `agent.v1.ToolCall` 的 args/result 子消息
-  （shell 的 success/failure oneof、read 的 content/contentBlobId oneof 等），错误编码的收益低、
-  风险高；UI 的 params/result 已能提供显示数据。若人工确认 UI 必须依赖 toolCall，再补。
+- `toolCallBinary` 的其余分支：`update_todos_tool_call`（9）、`read_lints_tool_call`（14）、
+  `task_tool_call`（19）、`get_mcp_tools_tool_call`（44）等暂不写——本 adapter 对这些工具
+  本来也没有完整的 args/result 映射，宁可保留文本摘要也不写半成品 binary。
+- `toolCallBinary` 里的文件正文：read 的 `content` 留空、edit 的 before/after 全文不写
+  （原生落库前 `yM_` 也会清空它们，§3.3 的 317 B read 样本即证据），grep 只写每文件命中数、
+  不写命中行正文。这些字段没有可靠来源，伪造会让 app 显示错误内容。
 - `userDecision`：不写（本项目没有可靠来源）。
 - edit 的 `beforeContentId`/`afterContentId` 与 `composer.content.<sha256>` 全文 blob：**不写**。
   原因：IR 只有 diff 文本，没有 before/after 全文；用 diff 反推全文或伪造 content id 会让
@@ -443,9 +561,16 @@ node .tmp/validate-real-toolformer.mjs .tmp/state.vscdb
 SESSIONPORT_CURSOR_HOME="$PWD/.tmp/cursor-app-test" \
   node --test packages/adapters/cursor/test/gated.test.ts
 
-# 5) 写真实库前先 dryRun，再 confirmReal（会先复制到 .tmp 备份）
+# 5) 写真实库前先 dryRun，再 confirmReal（只写 .tmp 副本，会先把计划 key 备份到 .tmp/cursor-write-backup-*.json）
 #    writeCursorSession(bundle, { dryRun: true })
 #    writeCursorSession(bundle, { confirmReal: true })
+
+# 6) toolCallBinary 真实副本回归（DSH 会话 → cursor；只写 .tmp/cursor-app-test）
+pnpm cli push "dsh:$HOME/.dsh/sessions/<projectKey>/<sessionId>" --to cursor \
+  --home .tmp/cursor-app-test --dry-run
+pnpm cli push "dsh:$HOME/.dsh/sessions/<projectKey>/<sessionId>" --to cursor \
+  --home .tmp/cursor-app-test --confirm-real --id <composerId>
+pnpm cli verify --agent cursor --home .tmp/cursor-app-test --id <composerId>
 ```
 
 ### 人工确认步骤（需要用户在 Cursor 里操作）
@@ -453,5 +578,6 @@ SESSIONPORT_CURSOR_HOME="$PWD/.tmp/cursor-app-test" \
 1. 在隔离 profile（`.tmp/cursor-app-test` 的副本）或真实库里写入一个带工具调用的测试会话；
 2. 完全退出并重启 Cursor，打开该会话；
 3. 检查 shell/read/edit/grep/glob/list/delete 卡片是否显示参数与结果；记录哪些卡片退化；
-4. 若 shell/read 卡片只显示 “Ran tool”，则下一步补 `toolCallBinary`（agent.v1.ToolCall 编码）；
+4. 卡片退化成 “Ran tool” 时，用 `decodeToolCallBinary` 解一下该气泡的 `toolCallBinary`：
+   能解出正确分支却仍退化，说明 UI 读的是别的字段（§3.2），不是 binary 缺失；
 5. 发一条新消息再退出，重新读库确认 `_sessionport` 是否仍在、气泡是否被 app 重写。

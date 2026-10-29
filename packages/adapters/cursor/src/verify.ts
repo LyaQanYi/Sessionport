@@ -15,10 +15,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { validateCursorPrecomputedDiff } from './diff.ts';
-import { decodeEditToolCallBinary } from './toolcall-binary.ts';
+import { decodeToolCallBinary } from './toolcall-binary.ts';
+import type { DecodedToolCallBinary } from './toolcall-binary.ts';
 import { cursorLogsDir, cursorUserDataDir, resolveCursorPaths } from './paths.ts';
 import { readCursorSession } from './read.ts';
-import { isCursorToolStatus } from './toolformer.ts';
+import { cursorToolCallKind, isCursorToolStatus } from './toolformer.ts';
 import {
   BUBBLE_TYPE_AI,
   BUBBLE_TYPE_HUMAN,
@@ -252,8 +253,6 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
     let editDiffCount = 0;
     let badEditDiffs = 0;
     let editDiffNoChanges = 0;
-    let editBinaryMissing = 0;
-    let editBinaryMismatch = 0;
     let firstEditDiffError = '';
     for (const { tool } of toolBubbles) {
       if (tool.tool !== 38 && tool.name !== 'edit_file_v2') continue;
@@ -271,20 +270,6 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
       if (validated.hasChanges !== true || !validated.lines.some((line) => line.type !== 'unchanged')) {
         editDiffNoChanges += 1;
       }
-      // Cursor 从 toolCallBinary 解码编辑卡片；只有 precomputedDiff 而没有它时
-      // app 会退化成纯文本摘要（"Edited <file>"），diff 不可见。
-      const decoded =
-        typeof tool.toolCallBinary === 'string' ? decodeEditToolCallBinary(tool.toolCallBinary) : undefined;
-      if (decoded === undefined) {
-        editBinaryMissing += 1;
-      } else {
-        const params = typeof tool.params === 'string' ? tryParseJson(tool.params) : undefined;
-        const expectedPath =
-          isRecord(params) && typeof params.relativeWorkspacePath === 'string'
-            ? params.relativeWorkspacePath
-            : undefined;
-        if (expectedPath !== undefined && decoded.path !== expectedPath) editBinaryMismatch += 1;
-      }
     }
     push(
       'toolformer-edit-diff',
@@ -296,10 +281,68 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
         (editDiffNoChanges > 0 ? ' noChanges=' + String(editDiffNoChanges) : '') +
         (firstEditDiffError.length > 0 ? ' firstError=' + firstEditDiffError : ''),
     );
+
+    // toolCallBinary：app 靠它把气泡渲染成原生工具卡片。只校验实际写了 binary 的气泡
+    // （没有 binary 的旧气泡保持文本摘要，不算失败）；每一条都必须可解码、
+    // oneof 分支与 tool 枚举一致、关键字段与 params 一致。
+    const binaryKinds = new Map<string, number>();
+    let binaryCount = 0;
+    let badBinary = 0;
+    let binaryBranchMismatch = 0;
+    let binaryFieldMismatch = 0;
+    let editBinaryMissing = 0;
+    let firstBinaryError = '';
+    for (const { tool } of toolBubbles) {
+      const isEdit = tool.tool === 38 || tool.name === 'edit_file_v2';
+      const precomputed = isRecord(tool.additionalData) ? tool.additionalData.precomputedDiff : undefined;
+      // edit 卡片完全靠 binary 还原；有 precomputedDiff 却没有 binary 时 diff 不渲染。
+      if (isEdit && precomputed !== undefined && typeof tool.toolCallBinary !== 'string') {
+        editBinaryMissing += 1;
+      }
+      if (typeof tool.toolCallBinary !== 'string') continue;
+      binaryCount += 1;
+      const decoded = decodeToolCallBinary(tool.toolCallBinary);
+      if (decoded === undefined) {
+        badBinary += 1;
+        if (firstBinaryError.length === 0) firstBinaryError = 'decode failed (tool=' + String(tool.tool ?? '?') + ')';
+        continue;
+      }
+      binaryKinds.set(decoded.tool, (binaryKinds.get(decoded.tool) ?? 0) + 1);
+      const expected = typeof tool.tool === 'number' ? cursorToolCallKind(tool.tool) : undefined;
+      if (expected !== undefined && decoded.tool !== expected) {
+        binaryBranchMismatch += 1;
+        if (firstBinaryError.length === 0) {
+          firstBinaryError =
+            'tool=' + String(tool.tool) + ' branch=' + decoded.tool + ' expected=' + expected;
+        }
+        continue;
+      }
+      const params = typeof tool.params === 'string' ? tryParseJson(tool.params) : undefined;
+      const mismatch = binaryFieldMismatchOf(decoded, params);
+      if (mismatch !== undefined) {
+        binaryFieldMismatch += 1;
+        if (firstBinaryError.length === 0) firstBinaryError = mismatch;
+      }
+    }
+    const kindSummary = [...binaryKinds.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([kind, count]) => kind + ':' + String(count))
+      .join(',');
     push(
-      'toolformer-edit-binary',
-      editBinaryMissing === 0 && editBinaryMismatch === 0,
-      'missing=' + String(editBinaryMissing) + ' pathMismatch=' + String(editBinaryMismatch),
+      'toolformer-tool-call-binary',
+      badBinary === 0 && binaryBranchMismatch === 0 && binaryFieldMismatch === 0 && editBinaryMissing === 0,
+      'binary=' +
+        String(binaryCount) +
+        (kindSummary.length > 0 ? ' (' + kindSummary + ')' : '') +
+        ' bad=' +
+        String(badBinary) +
+        ' branchMismatch=' +
+        String(binaryBranchMismatch) +
+        ' fieldMismatch=' +
+        String(binaryFieldMismatch) +
+        ' editMissing=' +
+        String(editBinaryMissing) +
+        (firstBinaryError.length > 0 ? ' firstError=' + firstBinaryError : ''),
     );
 
     let groupingMismatch = 0;
@@ -421,6 +464,51 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
     };
   } finally {
     closeCursorDb(db);
+  }
+}
+
+/**
+ * binary 的关键字段必须和 params 对得上（写错了 app 会显示另一条命令/文件）。
+ * 只比对「两边都有」的字段；params 里没有的字段跳过。
+ */
+function binaryFieldMismatchOf(decoded: DecodedToolCallBinary, params: unknown): string | undefined {
+  if (!isRecord(params)) return undefined;
+  const param = (key: string): string | undefined => (typeof params[key] === 'string' ? (params[key] as string) : undefined);
+  switch (decoded.tool) {
+    case 'shell': {
+      const want = param('command');
+      return want !== undefined && decoded.command !== want ? 'shell command mismatch' : undefined;
+    }
+    case 'read': {
+      const want = param('targetFile');
+      return want !== undefined && decoded.path !== want ? 'read path mismatch: ' + String(decoded.path) + ' != ' + want : undefined;
+    }
+    case 'grep': {
+      const want = param('pattern');
+      if (want !== undefined && decoded.pattern !== want) return 'grep pattern mismatch';
+      const wantPath = param('path');
+      return wantPath !== undefined && decoded.path !== wantPath ? 'grep path mismatch' : undefined;
+    }
+    case 'glob': {
+      const want = param('globPattern');
+      if (want !== undefined && decoded.pattern !== want) return 'glob pattern mismatch';
+      const wantDirectory = param('targetDirectory');
+      return wantDirectory !== undefined && decoded.targetDirectory !== wantDirectory
+        ? 'glob targetDirectory mismatch'
+        : undefined;
+    }
+    case 'ls': {
+      const want = param('targetDirectory');
+      return want !== undefined && decoded.path !== want ? 'ls path mismatch' : undefined;
+    }
+    case 'delete': {
+      const want = param('relativeWorkspacePath');
+      return want !== undefined && decoded.path !== want ? 'delete path mismatch' : undefined;
+    }
+    case 'edit': {
+      const want = param('relativeWorkspacePath');
+      return want !== undefined && decoded.path !== want ? 'edit path mismatch' : undefined;
+    }
   }
 }
 

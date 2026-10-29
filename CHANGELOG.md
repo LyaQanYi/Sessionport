@@ -7,6 +7,24 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
+- **Cursor writer: native tool cards for shell / read / grep / glob / ls / delete.** Tool bubbles now
+  carry `toolFormerData.toolCallBinary` (base64 of `agent.v1.ToolCall`) for every branch Cursor
+  renders natively: `shell_tool_call` (1), `delete_tool_call` (3), `glob_tool_call` (4),
+  `grep_tool_call` (5), `read_tool_call` (8), `edit_tool_call` (12, already shipped) and
+  `ls_tool_call` (13). Encoders write the minimal schema-valid shape — args carry
+  `command`/`path`/`pattern`/`output_mode`, results carry `exit_code`+`stdout`,
+  `total_lines`+`path`, per-file grep hit counts, glob file lists, an `LsDirectoryTreeNode` tree,
+  or the delete success/fileNotFound/error oneof. File bodies are deliberately not written: the app
+  clears `ReadToolSuccess.content` and the edit before/after full contents before storing too, and
+  grep gets counts but not matched line text, so nothing is fabricated. `verifyCursorSession`'s
+  `toolformer-edit-binary` is now `toolformer-tool-call-binary`: every binary must decode, its oneof
+  branch must match the `tool` enum and its key fields must agree with `params`; bubbles without a
+  binary (native imports, edit/write without a diff) stay valid. Real-copy regression: a DSH session
+  (853 bubbles / 461 tool bubbles) pushed into `.tmp/cursor-app-test` yields 321 binaries
+  (shell 183, grep 86, read 52) and 31/31 verify checks PASS. Schema table and boundaries:
+  `research/cursor-toolformer.md` §3.1/§3.2. Desktop card rendering is **not** verified — Cursor has
+  no headless entry.
+
 - **Reproducible verification matrix (`pnpm matrix`).** A script writes each source→target pair into an
   isolated target home and then loads the result with the target itself where an entry point exists:
   `claude --resume` TUI (expect + Ctrl+O capture), DSH headless (`--json --session-id`), and structural +
