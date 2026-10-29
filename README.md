@@ -82,7 +82,7 @@ State lives in `~/.sessionport/registry.json` (`--state <dir>` to override).
 | Agent | Read | Write | Resume verified | Against |
 |---|---|---|---|---|
 | Kimi Code | ✅ `state.json` + `agents/*/wire.jsonl` | — | source only | CLI 2.1.1 / format v2 |
-| Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ new composer + header | ✅ app-visible; edit cards + diff (manual check) | 3.25.9 |
+| Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ new composer + headers | ✅ app-visible; native tool cards incl. read + edit diff (manual check) | 3.25.9 |
 | Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ new transcript file | ✅ Qoder SDK `listSessions/listSubagents` (desktop task list is server-backed) | 1.1.69 |
 | WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | source only | 5.8.3 |
 | Claude Code | — | ✅ JSONL session files | ✅ `claude --resume` TUI (matrix) | CLI 2.1.312 |

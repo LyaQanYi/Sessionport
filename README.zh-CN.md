@@ -81,7 +81,7 @@ node packages/cli/src/index.ts sync "dsh:<session-dir>" --to command-code --regi
 | Agent | 读 | 写 | Resume 验证 | 验证版本 |
 |---|---|---|---|---|
 | Kimi Code | ✅ `state.json` + `agents/*/wire.jsonl` | — | 仅作源 | CLI 2.1.1 / format v2 |
-| Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ 新建 composer + header | ✅ app 内可见；编辑卡片 + diff（人工确认） | 3.25.9 |
+| Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ 新建 composer + headers | ✅ app 内可见；原生工具卡片（含 read）+ 编辑 diff（人工确认） | 3.25.9 |
 | Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ 新建 transcript 文件 | ✅ Qoder SDK `listSessions/listSubagents`（桌面任务列表由服务端驱动） | 1.1.69 |
 | WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | 仅作源 | 5.8.3 |
 | Claude Code | ✅ JSONL 会话文件 | ✅ JSONL 会话文件 | ✅ `claude --resume` TUI（矩阵） | CLI 2.1.312 |
