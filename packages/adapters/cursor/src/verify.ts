@@ -14,12 +14,17 @@ import { execFile } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { validateCursorPrecomputedDiff } from './diff.ts';
+import { isCursorPrecomputedDiff, validateCursorPrecomputedDiff } from './diff.ts';
 import { decodeToolCallBinary } from './toolcall-binary.ts';
 import type { DecodedToolCallBinary } from './toolcall-binary.ts';
 import { cursorLogsDir, cursorUserDataDir, resolveCursorPaths } from './paths.ts';
 import { readCursorSession } from './read.ts';
-import { cursorToolCallKind, isCursorToolStatus } from './toolformer.ts';
+import { CAPABILITY_TOOL_FORMER, CURSOR_TOOL, cursorToolCallKind, isCursorToolStatus } from './toolformer.ts';
+import {
+  cursorToolCallCase,
+  cursorToolDisplayPath,
+  isCursorToolGroupable,
+} from './write.ts';
 import {
   BUBBLE_TYPE_AI,
   BUBBLE_TYPE_HUMAN,
@@ -201,6 +206,227 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
       if (bubble.type !== entry.type) typeMismatch += 1;
     }
     push('bubble-types-match', typeMismatch === 0, 'mismatch=' + String(typeMismatch));
+
+    push(
+      'headers-count',
+      parsedHeaders.length === bubbles,
+      'headers=' + String(parsedHeaders.length) + ' bubbles=' + String(bubbles),
+    );
+
+    let timestampMismatch = 0;
+    for (const entry of parsedHeaders) {
+      const bubble = bubbleMap.get(entry.bubbleId);
+      if (bubble === undefined) continue;
+      if (entry.createdAt !== bubble.createdAt) timestampMismatch += 1;
+    }
+    push('headers-bubble-timestamps', timestampMismatch === 0, 'mismatch=' + String(timestampMismatch));
+
+    // header.grouping 的文本/思考形状必须与 app 从气泡重算（kms）的结果一致；
+    // 缺 hasText/isKeptFinal... 时 app 会把文本行当占位，read 等工具行更容易被折叠掉。
+    let humanGroupingBad = 0;
+    let aiGroupingBad = 0;
+    let thinkingGroupingBad = 0;
+    let firstTextGroupingError = '';
+    for (const entry of parsedHeaders) {
+      const bubble = bubbleMap.get(entry.bubbleId);
+      if (bubble === undefined) continue;
+      const grouping = isRecord(entry.grouping) ? entry.grouping : undefined;
+      const bad = (kind: string, ok: boolean): void => {
+        if (ok) return;
+        if (kind === 'human') humanGroupingBad += 1;
+        else if (kind === 'thinking') thinkingGroupingBad += 1;
+        else aiGroupingBad += 1;
+        if (firstTextGroupingError.length === 0) firstTextGroupingError = kind + ' bubble=' + entry.bubbleId;
+      };
+      if (entry.type === BUBBLE_TYPE_HUMAN) {
+        bad(
+          'human',
+          grouping !== undefined &&
+            grouping.isRenderable === true &&
+            grouping.hasText === true &&
+            grouping.toolFormerTool === undefined &&
+            grouping.toolDisplayComputed === true,
+        );
+        continue;
+      }
+      if (isRecord(bubble.toolFormerData)) continue;
+      if (isRecord(bubble.thinking) || bubble.capabilityType === 30) {
+        bad(
+          'thinking',
+          grouping !== undefined &&
+            grouping.isRenderable === true &&
+            grouping.capabilityType === 30 &&
+            grouping.hasThinking === true &&
+            grouping.toolFormerTool === undefined &&
+            grouping.toolDisplayComputed === true,
+        );
+        continue;
+      }
+      bad(
+        'ai',
+        grouping !== undefined &&
+          grouping.isRenderable === true &&
+          grouping.hasText === true &&
+          grouping.isKeptFinalAiVisibleOutsideWorkedForGroup === true &&
+          grouping.toolFormerTool === undefined &&
+          grouping.toolDisplayComputed === true,
+      );
+    }
+    push(
+      'headers-text-grouping',
+      humanGroupingBad === 0 && aiGroupingBad === 0 && thinkingGroupingBad === 0,
+      'humanBad=' +
+        String(humanGroupingBad) +
+        ' aiBad=' +
+        String(aiGroupingBad) +
+        ' thinkingBad=' +
+        String(thinkingGroupingBad) +
+        (firstTextGroupingError.length > 0 ? ' firstError=' + firstTextGroupingError : ''),
+    );
+
+    // 工具 header：字段必须能从对应 toolFormerData / toolCallBinary 推出来，
+    // 否则 app 打开会话时 rck() 会用重算结果覆盖，read 等卡片会退化成占位行。
+    const TOOL_CASE_BY_BINARY_KIND: Record<string, string> = {
+      shell: 'shellToolCall',
+      read: 'readToolCall',
+      edit: 'editToolCall',
+      grep: 'grepToolCall',
+      glob: 'globToolCall',
+      ls: 'lsToolCall',
+      delete: 'deleteToolCall',
+    };
+    let toolHeaderCount = 0;
+    let headerCapabilityBad = 0;
+    let headerToolBad = 0;
+    let headerStatusBad = 0;
+    let headerCallIdBad = 0;
+    let headerCaseBad = 0;
+    let headerPathBad = 0;
+    let headerGroupableBad = 0;
+    let headerShellStatusBad = 0;
+    let headerEditLinesBad = 0;
+    let firstHeaderToolError = '';
+    for (const entry of parsedHeaders) {
+      const grouping = isRecord(entry.grouping) ? entry.grouping : undefined;
+      if (grouping === undefined || typeof grouping.toolFormerTool !== 'number') continue;
+      toolHeaderCount += 1;
+      const bubble = bubbleMap.get(entry.bubbleId);
+      const tool =
+        bubble !== undefined && isRecord(bubble.toolFormerData)
+          ? (bubble.toolFormerData as CursorToolFormerData)
+          : undefined;
+      if (tool === undefined) {
+        headerToolBad += 1;
+        if (firstHeaderToolError.length === 0) {
+          firstHeaderToolError = 'missing toolFormerData bubble=' + entry.bubbleId;
+        }
+        continue;
+      }
+      const toolNumber = typeof tool.tool === 'number' ? tool.tool : -1;
+      const params = typeof tool.params === 'string' ? tryParseJson(tool.params) : undefined;
+      const note = (kind: string): void => {
+        if (firstHeaderToolError.length === 0) {
+          firstHeaderToolError = kind + ' bubble=' + entry.bubbleId + ' tool=' + String(toolNumber);
+        }
+      };
+      if (grouping.capabilityType !== CAPABILITY_TOOL_FORMER) {
+        headerCapabilityBad += 1;
+        note('capabilityType');
+      }
+      if (grouping.toolFormerTool !== toolNumber) {
+        headerToolBad += 1;
+        note('toolFormerTool');
+      }
+      if (grouping.toolFormerStatus !== tool.status) {
+        headerStatusBad += 1;
+        note('toolFormerStatus');
+      }
+      if (grouping.toolCallId !== tool.toolCallId) {
+        headerCallIdBad += 1;
+        note('toolCallId');
+      }
+      const expectedCase = cursorToolCallCase(toolNumber);
+      if (expectedCase !== undefined && grouping.toolCallCase !== expectedCase) {
+        headerCaseBad += 1;
+        note('toolCallCase');
+      }
+      const expectedPath = cursorToolDisplayPath(toolNumber, params);
+      if (expectedPath !== undefined && grouping.toolDisplayPath !== expectedPath) {
+        headerPathBad += 1;
+        note('toolDisplayPath');
+      }
+      if (isCursorToolGroupable(toolNumber, params) !== (grouping.isToolGroupable === true)) {
+        headerGroupableBad += 1;
+        note('isToolGroupable');
+      }
+      if (toolNumber === CURSOR_TOOL.RUN_TERMINAL_COMMAND_V2) {
+        const shellStatus = isRecord(tool.additionalData) ? tool.additionalData.status : undefined;
+        if (typeof shellStatus === 'string' && grouping.shellStatus !== shellStatus) {
+          headerShellStatusBad += 1;
+          note('shellStatus');
+        }
+      }
+      if (toolNumber === CURSOR_TOOL.EDIT_FILE_V2) {
+        const precomputed = isRecord(tool.additionalData) ? tool.additionalData.precomputedDiff : undefined;
+        if (isCursorPrecomputedDiff(precomputed)) {
+          const added = precomputed.lines.filter((line) => line.type === 'added').length;
+          const removed = precomputed.lines.filter((line) => line.type === 'removed').length;
+          if (grouping.editLinesAdded !== added || grouping.editLinesRemoved !== removed) {
+            headerEditLinesBad += 1;
+            note('editLines');
+          }
+        }
+      }
+      // 独立来源：toolCallBinary 解码出的 oneof/case/path 也必须与 header 一致
+      if (typeof tool.toolCallBinary === 'string') {
+        const decoded = decodeToolCallBinary(tool.toolCallBinary);
+        if (decoded !== undefined) {
+          const binaryCase = TOOL_CASE_BY_BINARY_KIND[decoded.tool];
+          if (binaryCase !== undefined && grouping.toolCallCase !== binaryCase) {
+            headerCaseBad += 1;
+            note('binaryCase');
+          }
+          const binaryPath = (decoded as { path?: unknown }).path;
+          if (typeof binaryPath === 'string' && binaryPath.length > 0 && grouping.toolDisplayPath !== binaryPath) {
+            headerPathBad += 1;
+            note('binaryPath');
+          }
+        }
+      }
+    }
+    push(
+      'headers-tool-grouping',
+      headerCapabilityBad === 0 &&
+        headerToolBad === 0 &&
+        headerStatusBad === 0 &&
+        headerCallIdBad === 0 &&
+        headerCaseBad === 0 &&
+        headerPathBad === 0 &&
+        headerGroupableBad === 0 &&
+        headerShellStatusBad === 0 &&
+        headerEditLinesBad === 0,
+      'tools=' +
+        String(toolHeaderCount) +
+        ' capability=' +
+        String(headerCapabilityBad) +
+        ' tool=' +
+        String(headerToolBad) +
+        ' status=' +
+        String(headerStatusBad) +
+        ' callId=' +
+        String(headerCallIdBad) +
+        ' case=' +
+        String(headerCaseBad) +
+        ' path=' +
+        String(headerPathBad) +
+        ' groupable=' +
+        String(headerGroupableBad) +
+        ' shellStatus=' +
+        String(headerShellStatusBad) +
+        ' editLines=' +
+        String(headerEditLinesBad) +
+        (firstHeaderToolError.length > 0 ? ' firstError=' + firstHeaderToolError : ''),
+    );
 
     // 工具气泡：字段存在、params/result 可解码、callId 配对
     const toolBubbles: Array<{ bubbleId: string; tool: CursorToolFormerData }> = [];
