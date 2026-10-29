@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Reproducible verification matrix (`pnpm matrix`).** A script writes each source→target pair into an
+  isolated target home and then loads the result with the target itself where an entry point exists:
+  `claude --resume` TUI (expect + Ctrl+O capture), DSH headless (`--json --session-id`), and structural +
+  SDK checks for Cursor/Qoder (no headless entry). Latest run covers 7 pairs: all structural PASS, four
+  native loads (Claude ×3, DSH ×1). Results and known boundaries:
+  `research/verification-matrix-2026-10-29.md`.
+
 ## [0.1.7] — 2026-10-28
 
 npm: `sesport@0.1.7` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the
