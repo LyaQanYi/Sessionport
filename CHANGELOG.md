@@ -3,7 +3,10 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
-## [Unreleased]
+## [0.1.9] — 2026-10-30
+
+npm: `sesport@0.1.9` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the
+`v0.1.9` GitHub release.
 
 ### Added
 
@@ -13,6 +16,12 @@ All notable changes to this project are documented here. Format loosely follows
   --json`, accepting the `thread.started` event that arrives before the isolated home's missing
   credentials produce a 401 (so no model spend). All nine pairs pass structurally and six have native
   target loads; notes in `research/verification-matrix-2026-10-29.md`.
+
+### Fixed
+
+- **Desktop: the sidebar no longer shows a hardcoded `v0.0.0`.** The footer now renders the version
+  reported by the main process (`app.getVersion()` via the paths IPC), which tracks
+  `apps/desktop/package.json`, so a packaged build shows its real version.
 
 ## [0.1.8] — 2026-10-29
 
