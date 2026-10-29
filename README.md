@@ -84,12 +84,12 @@ State lives in `~/.sessionport/registry.json` (`--state <dir>` to override).
 | Kimi Code | ✅ `state.json` + `agents/*/wire.jsonl` | — | source only | CLI 2.1.1 / format v2 |
 | Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ new composer + headers | ✅ app-visible; native tool cards incl. read + edit diff (manual check) | 3.25.9 |
 | Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ new transcript file | ✅ Qoder SDK `listSessions/listSubagents` (desktop task list is server-backed) | 1.1.69 |
-| WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | source only | 5.8.3 |
+| WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | source only | 5.9.3 |
 | Claude Code | — | ✅ JSONL session files | ✅ `claude --resume` TUI (matrix) | CLI 2.1.312 |
 | Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + desktop registration | ✅ `cmd -p --session` | 1.82.3 |
-| DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load (matrix) | 5.8.3 (format v4) |
-| Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index registration | ✅ `codex exec resume` | 0.163.0 |
-| opencode | ✅ `opencode export` JSON | ✅ `opencode import` | ✅ `opencode run --session` | 1.19.3 |
+| DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load (matrix) | 0.2.1-rc.3 (format v4) |
+| Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index registration | ✅ `codex exec resume` | 0.165.0 |
+| opencode | ✅ `opencode export` JSON | ✅ `opencode import` | ✅ `opencode run --session` | 1.19.5 |
 
 Sub-agent sessions: pass `--include-children`. DSH and Claude Code keep the native parent/child tree
 (Claude Code writes `<sessionId>/subagents/agent-<id>.jsonl` + `meta.json`); Command Code has no parent
@@ -97,7 +97,13 @@ concept, so children are written as independent sessions (content preserved, rel
 
 Verification is reproducible: `pnpm matrix` writes each pair into an isolated target home and then loads the
 result in the target itself where an entry point exists (`claude --resume` TUI, DSH headless, Cursor/Qoder
-structural + SDK). Latest run: [research/verification-matrix-2026-10-29.md](research/verification-matrix-2026-10-29.md).
+structural + SDK). It records the installed target versions (`versions.json`) so a result can be traced to
+what it was verified against, and a single-pair run merges into the previous results instead of replacing them.
+Latest run: [research/verification-matrix-2026-10-30.md](research/verification-matrix-2026-10-30.md)
+(2026-10-29 baseline: [verification-matrix-2026-10-29.md](research/verification-matrix-2026-10-29.md)).
+The `Against` column is the version each row's claim was last verified against — the 2026-10-30 pass
+re-ran every pair structurally but only re-confirmed the native loads it has an entry point for,
+so Cursor rendering and the Qoder SDK check still carry their older manual version.
 
 ## How fidelity works
 

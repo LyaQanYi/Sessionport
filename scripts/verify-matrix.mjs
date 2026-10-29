@@ -37,11 +37,11 @@ const PAIRS = [
   },
   {
     id: 'dsh-claude',
-    source: 'dsh:session-22e4f5f8-01b0-4c2a-95ba-433914d812d3',
+    source: 'dsh:session-fa31c98c-ca1c-4fd9-9646-c07c8e55928a',
     to: 'claude-code',
     children: true,
-    cwd: '/Users/lyaqanyi/Documents/GitHub/sessionport',
-    expectText: '继续开发对话同步工具',
+    cwd: '/Users/lyaqanyi/Documents/deepseek-harness/default-workspace',
+    expectText: 'dsh-market',
     native: 'claude',
   },
   {
@@ -55,11 +55,11 @@ const PAIRS = [
   },
   {
     id: 'codex-claude',
-    source: 'codex:01a182f9-4c74-7172-bd07-0fdee3f2088b',
+    source: 'codex:01a18820-027c-7da2-98b9-c39e7e57748a',
     to: 'claude-code',
     children: false,
-    cwd: '/Users/lyaqanyi/Documents/GitHub/neko-auth-platform',
-    expectText: 'Review PR #430',
+    cwd: '/Users/lyaqanyi/Documents/Codex/2026-10-29/new-chat',
+    expectText: '求职',
     native: 'claude',
   },
   {
@@ -130,6 +130,32 @@ function parseJson(text) {
 
 function stripAnsi(text) {
   return text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/[^\x20-\x7e\u4e00-\u9fff\n]/g, ' ').replace(/\s+/g, ' ');
+}
+
+/** 目标端各自报的版本号；矩阵结果要能回答“对哪个版本验的” */
+function toolVersions() {
+  const cliVersion = (command) => {
+    const result = run(command, ['--version']);
+    const line = (result.stdout + result.stderr)
+      .split('\n')
+      .map((text) => text.trim())
+      .find((text) => text.length > 0 && !/WARNING/i.test(text));
+    return line;
+  };
+  const appVersion = (appPath) => {
+    const result = run('defaults', ['read', join(appPath, 'Contents', 'Info.plist'), 'CFBundleShortVersionString']);
+    return result.code === 0 ? result.stdout.trim() : undefined;
+  };
+  return {
+    claude: cliVersion('claude'),
+    codex: cliVersion('codex'),
+    opencode: cliVersion('opencode'),
+    cursor: appVersion('/Applications/Cursor.app'),
+    qoder: appVersion('/Applications/Qoder CN.app'),
+    dsh: appVersion('/Applications/DeepSeek Harness.app'),
+    workbuddy: appVersion('/Applications/WorkBuddy.app'),
+    kimi: cliVersion('kimi'),
+  };
 }
 
 /** 隔离的 CLAUDE_CONFIG_DIR 需要最少配置，否则 TUI 停在首启向导 */
@@ -343,13 +369,28 @@ function summarizeVerify(text) {
 const only = process.argv.slice(2);
 const selected = only.length > 0 ? PAIRS.filter((pair) => only.includes(pair.id)) : PAIRS;
 mkdirSync(MATRIX, { recursive: true });
-const results = [];
+const versions = toolVersions();
+writeFileSync(join(MATRIX, 'versions.json'), JSON.stringify(versions, null, 2));
+const previousResults = (() => {
+  try {
+    const parsed = JSON.parse(readFileSync(join(MATRIX, 'results.json'), 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+})();
+const ran = [];
 for (const pair of selected) {
   process.stderr.write('→ ' + pair.id + ' ... ');
   const result = await runPair(pair);
   process.stderr.write(result.structural.status + '/' + result.native.status + '\n');
-  results.push(result);
+  ran.push(result);
 }
+const pairOrder = new Map(PAIRS.map((pair, index) => [pair.id, index]));
+const results = (only.length > 0
+  ? [...previousResults.filter((row) => row?.pair?.id && !ran.some((fresh) => fresh.pair.id === row.pair.id)), ...ran]
+  : ran
+).sort((left, right) => (pairOrder.get(left.pair.id) ?? 99) - (pairOrder.get(right.pair.id) ?? 99));
 writeFileSync(join(MATRIX, 'results.json'), JSON.stringify(results, null, 2));
 
 const rows = results.map((result) => {
@@ -361,6 +402,7 @@ const rows = results.map((result) => {
     native: result.native.status + ' (' + result.native.detail + ')',
   };
 });
+console.log('\n目标端版本: ' + Object.entries(versions).map(([name, version]) => name + '=' + (version ?? '?')).join(', '));
 console.log('\n| pair | events | 结构校验 | 原生加载 |');
 console.log('|---|---|---|---|');
 for (const row of rows) console.log('| ' + row.pair + ' | ' + row.events + ' | ' + row.structural + ' | ' + row.native + ' |');
