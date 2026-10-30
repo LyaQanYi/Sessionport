@@ -7,18 +7,22 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
-- **Verification matrix records target versions.** `pnpm matrix` now captures the installed target
-  versions into `.tmp/matrix/versions.json` and prints them above the result table, and a single-pair
-  run merges into `.tmp/matrix/results.json` instead of replacing the other pairs.
+- **Verification matrix records target versions and absorbs transient TUI failures.** `pnpm matrix`
+  now captures the installed target versions into `.tmp/matrix/versions.json` and prints them above the
+  result table; a single-pair run merges into `.tmp/matrix/results.json` instead of replacing the other
+  pairs; and the Claude TUI check retries once when the host is out of ptys (`expect: no more ptys`)
+  instead of recording an environment failure as a product failure.
 
 ### Changed
 
-- **Matrix re-run against the current targets (2026-10-30).** Nine pairs structurally PASS and six
-  native loads PASS at Claude Code 2.1.312 / Codex 0.165.0 / opencode 1.19.5 / DSH 0.2.1-rc.3 /
-  qodercli 1.1.75-hotfix.1 / Cursor 3.27.22. The Codex sample grew from 14 to 38 events (two tool
-  calls) and the DSH→Claude source was replaced after the old session was cleaned up. Remaining
-  boundaries (Qoder UI server-backed, Cursor manual rendering, Kimi/Command Code not in the matrix,
-  DSH→Claude subagent linking): `research/verification-matrix-2026-10-30.md`.
+- **Matrix re-run against the current targets (2026-10-30).** Eleven pairs structurally PASS and
+  eight native loads PASS at Claude Code 2.1.312 / Codex 0.165.0 / opencode 1.19.5 / DSH 0.2.1-rc.3 /
+  qodercli 1.1.75-hotfix.1 / Cursor 3.27.22 / Kimi Code 2.4.0. Kimi Code joins the matrix as a source
+  (`kimi-claude`, `kimi-dsh` reading a real 2.4.0 session), the Codex sample grew from 14 to 38 events
+  (two tool calls), and the DSH→Claude source was replaced after the old session was cleaned up.
+  Remaining boundaries (Qoder UI server-backed, Cursor manual rendering, Command Code target not
+  covered, DSH→Claude subagent linking, Kimi `changeNotifier.snapshot` unknown event):
+  `research/verification-matrix-2026-10-30.md`.
 
 ## [0.1.9] — 2026-10-30
 

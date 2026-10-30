@@ -95,6 +95,23 @@ const PAIRS = [
     native: 'sdk',
   },
   {
+    id: 'kimi-claude',
+    source: 'kimi:/Users/lyaqanyi/.kimi-code/sessions/wd_lyaqanyi_7b9b29a35e1f/session_708071d1-cdf5-4c8b-99d9-11f040e18417',
+    to: 'claude-code',
+    children: false,
+    cwd: '/Users/lyaqanyi',
+    expectText: '卸载 dsh-TUI',
+    native: 'claude',
+  },
+  {
+    id: 'kimi-dsh',
+    source: 'kimi:/Users/lyaqanyi/.kimi-code/sessions/wd_lyaqanyi_7b9b29a35e1f/session_708071d1-cdf5-4c8b-99d9-11f040e18417',
+    to: 'dsh',
+    children: false,
+    cwd: '/Users/lyaqanyi',
+    native: 'dsh',
+  },
+  {
     id: 'claude-cursor',
     source: 'claude:0beb93b8-5179-4b81-8d54-9ec96de91c13',
     to: 'cursor',
@@ -182,14 +199,21 @@ function seedClaudeHome(homePath, cwd) {
 function nativeClaudeCheck(pair, homePath) {
   const logPath = join(MATRIX, pair.id + '.claude-tui.log');
   const tuiCwd = pair.report.cwd ?? pair.cwd;
-  const captured = run('expect', [
-    join(ROOT, 'scripts', 'claude-tui-capture.exp'),
-    pair.report.sessionId,
-    tuiCwd,
-    logPath,
-  ], { env: { CLAUDE_CONFIG_DIR: homePath } });
+  const capture = () =>
+    run(
+      'expect',
+      [join(ROOT, 'scripts', 'claude-tui-capture.exp'), pair.report.sessionId, tuiCwd, logPath],
+      { env: { CLAUDE_CONFIG_DIR: homePath } },
+    );
+  const readLog = () => (existsSync(logPath) ? readFileSync(logPath, 'utf8') : '');
+  capture();
+  // 系统 pty 被占满时 expect 起不来（"no more ptys"）；这是环境问题，重试一次再判失败
+  if (/no more ptys/i.test(readLog())) {
+    run('sleep', ['1.5']);
+    capture();
+  }
   if (!existsSync(logPath)) return { status: 'fail', detail: 'TUI 日志缺失' };
-  const clean = stripAnsi(readFileSync(logPath, 'utf8'));
+  const clean = stripAnsi(readLog());
   const broken = /No conversation found|Invalid (?:input|session)|Unable to load/i.test(clean);
   const hasContent = clean.length > 400;
   if (broken) return { status: 'fail', detail: 'TUI 报加载错误' };
