@@ -9,21 +9,58 @@
  *      - dsh：Electron headless --json --session-id，看到 {"type":"session"} 即算加载成功
  *      - claude-code：expect 打开 claude --resume，Ctrl+O 抓屏，检查标题且无解析错误
  *      - cursor/qoder：无 headless 入口，标 manual/sdk
+ *      - 系统 pty 耗尽（expect 报 "no more ptys"）是环境问题：等 5 秒重试，最多 3 次；
+ *        仍失败就把该 pair 的 native 标 skip（detail 以 "env: no more ptys" 开头），不算产品失败
+ *
+ * 源会话来源（PAIRS[].source）：
+ *   - 默认用写死的 id/path（pin），行为与旧版一致；
+ *   - pin 的会话被清理/过期（inspect 解析不到）时，自动为该 pair 挑一个「最新且合格」的会话：
+ *       根会话（非子代理）+ 未归档 + updatedAt 在 --max-age-days 天内 + cwd 是存在的目录
+ *       + inspect 可解析且 root 事件数 >= --min-events（claude 源还要求 transcript 落在 cwd 对应的
+ *       project 目录，即 claude --resume 按 id 能找得到）
+ *   - 挑不到就把这对标成 skip 并写明原因，绝不静默失败/误判；
+ *   - 实际使用的 source 与选择理由写进 .tmp/matrix/results.json 每行的 source 字段，
+ *     终端汇总表用 pinned / auto / skip 标出来源模式。
  *
  * 用法:
  *   node scripts/verify-matrix.mjs           # 全部
  *   node scripts/verify-matrix.mjs claude-dsh dsh-claude   # 只跑指定 pair
+ *   node scripts/verify-matrix.mjs --sources-only           # 只解析/打印源选择结果（不 push、不写 results.json）
+ *   node scripts/verify-matrix.mjs --no-auto               # 关掉自动兜底（pin 不可用直接 skip）
+ *   node scripts/verify-matrix.mjs --min-events=20 --max-age-days=30 --max-candidates=10
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const MATRIX = join(ROOT, '.tmp', 'matrix');
 const CLI = join(ROOT, 'packages', 'cli', 'src', 'index.ts');
 const DSH_APP = '/Applications/DeepSeek Harness.app';
 const CURSOR_COPY_HOME = join(ROOT, '.tmp', 'cursor-app-test');
+
+/** 源端前缀 → sessionport list 的 agent 名（见 README 的 Sources 一节） */
+const SOURCE_AGENT_BY_PREFIX = {
+  kimi: 'kimi-code',
+  claude: 'claude-code',
+  commandcode: 'command-code',
+  dsh: 'dsh',
+  codex: 'codex',
+  opencode: 'opencode',
+  cursor: 'cursor',
+  qoder: 'qoder',
+  workbuddy: 'workbuddy',
+};
+
+/** 自动兜底挑选的默认门槛（CLI 可覆盖） */
+const AUTO_DEFAULTS = { auto: true, minEvents: 20, maxAgeDays: 30, maxCandidates: 10, sourcesOnly: false };
+
+/** list 每轮最多取多少条：够覆盖「最近若干天」的候选，也避免一次扫描过重 */
+const LIST_LIMIT = 200;
+
+/** 每个源端的会话列表只跑一次 CLI（同一次矩阵里多对共用） */
+const listCache = new Map();
 
 const PAIRS = [
   {
@@ -127,11 +164,13 @@ function run(command, args, options = {}) {
     encoding: 'utf8',
     env: { ...process.env, ...(options.env ?? {}) },
     maxBuffer: 64 * 1024 * 1024,
+    ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
   });
   return {
     code: result.status ?? -1,
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
+    error: result.error === undefined ? undefined : result.error.message,
   };
 }
 
@@ -147,6 +186,252 @@ function parseJson(text) {
 
 function stripAnsi(text) {
   return text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/[^\x20-\x7e\u4e00-\u9fff\n]/g, ' ').replace(/\s+/g, ' ');
+}
+
+function fail(message) {
+  process.stderr.write('错误: ' + message + '\n');
+  process.exit(1);
+}
+
+/** 解析 CLI：位置参数是 pair id，-- 开头的是自动挑选的调参 */
+function parseCli(argv) {
+  const pairIds = [];
+  const options = { ...AUTO_DEFAULTS };
+  const numberOptions = { '--min-events': 'minEvents', '--max-age-days': 'maxAgeDays', '--max-candidates': 'maxCandidates' };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--no-auto') {
+      options.auto = false;
+      continue;
+    }
+    if (arg === '--sources-only') {
+      options.sourcesOnly = true;
+      continue;
+    }
+    if (arg.startsWith('--')) {
+      const equals = arg.indexOf('=');
+      const name = equals >= 0 ? arg.slice(0, equals) : arg;
+      const key = numberOptions[name];
+      if (key === undefined) fail('未知选项: ' + name + '（支持 --no-auto / --sources-only / --min-events / --max-age-days / --max-candidates）');
+      const raw = equals >= 0 ? arg.slice(equals + 1) : argv[index + 1];
+      if (raw === undefined) fail(name + ' 需要一个正整数');
+      if (equals < 0) index += 1;
+      const parsed = Number(raw);
+      if (!Number.isInteger(parsed) || parsed <= 0) fail(name + ' 需要正整数，收到: ' + raw);
+      options[key] = parsed;
+      continue;
+    }
+    pairIds.push(arg);
+  }
+  return { pairIds, options };
+}
+
+/** 'claude:<路径|id>' → { prefix, agent, key }；无法识别的 source（例如 IR 文件）返回 undefined */
+function parseSourceSpec(spec) {
+  const colon = spec.indexOf(':');
+  if (colon <= 0) return undefined;
+  const prefix = spec.slice(0, colon).toLowerCase();
+  const agent = SOURCE_AGENT_BY_PREFIX[prefix];
+  if (agent === undefined) return undefined;
+  return { prefix, agent, key: spec.slice(colon + 1) };
+}
+
+function firstLine(text) {
+  const line = String(text ?? '').split('\n').map((item) => item.trim()).find((item) => item.length > 0);
+  return line ?? '';
+}
+
+/** cwd 必须是真实存在的绝对目录，否则目标端 native 加载会从错的工作目录启动 */
+function usableCwd(cwd) {
+  if (typeof cwd !== 'string' || !isAbsolute(cwd)) return false;
+  try {
+    return statSync(cwd).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** 与 core 的 claudeProjectSlug 一致：claude --resume 按 <projects>/<slug(cwd)>/<id>.jsonl 查找 */
+function claudeProjectSlug(cwd) {
+  return cwd.replace(/[^a-zA-Z0-9]/gu, '-');
+}
+
+/** claude 源额外校验：transcript 必须落在 cwd 对应的 project 目录，否则 claude --resume 找不到 */
+function claudeResumeLookupOk(nativePath, cwd) {
+  if (typeof nativePath !== 'string' || !existsSync(nativePath)) return false;
+  return basename(dirname(nativePath)) === claudeProjectSlug(cwd);
+}
+
+/** 源端会话列表（按 agent 缓存；失败也只记一次，不阻断其它 pair） */
+function listedSessions(agent) {
+  const cached = listCache.get(agent);
+  if (cached !== undefined) return cached;
+  const result = run(process.execPath, [CLI, 'list', '--agent', agent, '--json', '--limit', String(LIST_LIMIT)], { timeoutMs: 120_000 });
+  const parsed = parseJson(result.stdout);
+  const sessions = Array.isArray(parsed?.sessions) ? parsed.sessions : [];
+  const entry = { sessions, error: undefined };
+  if (!Array.isArray(parsed?.sessions)) {
+    entry.error = 'list 失败（exit ' + result.code + '）：' + (firstLine(result.stderr) || firstLine(result.stdout) || result.error || '无输出');
+  }
+  listCache.set(agent, entry);
+  return entry;
+}
+
+/** 跑一次 inspect，解析 root 事件数 / cwd / 标题；同时保留原始输出（用于匹配 expectText） */
+function inspectSource(source) {
+  const result = run(process.execPath, [CLI, 'inspect', source], { timeoutMs: 180_000 });
+  if (result.code !== 0) {
+    const raw = firstLine(result.stderr) || firstLine(result.stdout) || result.error || 'inspect 失败（exit ' + result.code + '）';
+    return { ok: false, error: raw.replace(/^错误:\s*/u, '') };
+  }
+  const match = /^root\s+(\S+)\s+events=(\d+)(?:\s+cwd=(.*))?$/mu.exec(result.stdout);
+  if (match === undefined) return { ok: false, error: 'inspect 输出无法解析（缺少 root 行）' };
+  const rootId = match[1];
+  const colon = rootId.indexOf(':');
+  const titleMatch = /^ {2}title=(.*)$/mu.exec(result.stdout);
+  const title = titleMatch === undefined ? undefined : titleMatch[1].split('  model=')[0].trim();
+  return {
+    ok: true,
+    rootId,
+    sessionId: colon >= 0 ? rootId.slice(colon + 1) : rootId,
+    events: Number(match[2]),
+    cwd: match[3] === undefined ? undefined : match[3].trim(),
+    title: title === undefined || title.length === 0 ? undefined : title,
+    text: result.stdout,
+  };
+}
+
+/** auto 挑选时怎么把候选写回 source 形式（各家接受的输入不同，见 README Sources） */
+function autoSourceSpec(prefix, session) {
+  // opencode/cursor 只接受会话 id；claude 用 id（与 pin 形式一致，另有 project 目录校验兜底）；
+  // 其余用 nativePath 更精确（codex 的 rollout 文件名 id 与 session_meta id 可能不同，用路径才不会认错会话）
+  if (prefix === 'opencode' || prefix === 'cursor' || prefix === 'claude') {
+    return typeof session.sessionId === 'string' && session.sessionId.length > 0 ? prefix + ':' + session.sessionId : undefined;
+  }
+  if (typeof session.nativePath !== 'string' || session.nativePath.length === 0) return undefined;
+  return prefix + ':' + session.nativePath;
+}
+
+function skippedSource(pair, reason, extra = {}) {
+  return { mode: 'skip', configured: pair.source, used: undefined, reason, ...extra };
+}
+
+/** 表格里只放一句短原因；完整原因在 source.reason / results.json */
+function shortSkipReason(source) {
+  const raw = String(source.reason ?? '').replace(/^skip:\s*/u, '');
+  return raw.length <= 140 ? raw : raw.slice(0, 137) + '…';
+}
+
+/**
+ * 自动挑一个「最新且合格」的源会话（list 已按 updatedAt 倒序，所以第一个合格的就是最新的）。
+ * 合格 = 根会话（非子代理）+ 未归档 + N 天内更新 + cwd 是存在的目录 + inspect 可解析且 root 事件数 >= M；
+ * claude 源额外要求 transcript 在 cwd 对应的 project 目录（claude --resume 能找到）。
+ */
+function pickAutoSource(pair, parsed, pinnedError, options) {
+  const listed = listedSessions(parsed.agent);
+  if (listed.error !== undefined) {
+    return skippedSource(pair, 'skip: 硬编码源不可用（' + pinnedError + '）；auto 也失败：' + listed.error);
+  }
+  const now = Date.now();
+  const maxAgeMs = options.maxAgeDays * 24 * 60 * 60 * 1000;
+  const pool = listed.sessions.filter((session) => session.parentSessionId === undefined && session.archived !== true);
+  const fresh = pool.filter((session) => {
+    const updated = Date.parse(session.updatedAt ?? '');
+    return Number.isFinite(updated) && now - updated <= maxAgeMs;
+  });
+  // 显式按 updatedAt 倒序，不依赖 list 的排序实现：「最新且合格」里的最新必须是本脚本自己算的
+  const withCwd = fresh
+    .filter((session) => usableCwd(session.cwd))
+    .sort((left, right) => Date.parse(right.updatedAt ?? '') - Date.parse(left.updatedAt ?? ''));
+  const candidates = withCwd.slice(0, options.maxCandidates);
+  const diagnostics =
+    '列表 ' + listed.sessions.length + ' 条 → 根会话 ' + pool.length + ' → ' + options.maxAgeDays + ' 天内 ' + fresh.length + ' → cwd 可用 ' + withCwd.length;
+  const rejections = [];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    const spec = autoSourceSpec(parsed.prefix, candidate);
+    if (spec === undefined) {
+      rejections.push(candidate.sessionId + ': 无法构造 source 形式');
+      continue;
+    }
+    const inspected = inspectSource(spec);
+    if (!inspected.ok) {
+      rejections.push(candidate.sessionId + ': inspect 失败（' + inspected.error + '）');
+      continue;
+    }
+    if (inspected.events < options.minEvents) {
+      rejections.push(candidate.sessionId + ': events=' + inspected.events + ' < ' + options.minEvents);
+      continue;
+    }
+    const cwd = inspected.cwd ?? candidate.cwd;
+    if (!usableCwd(cwd)) {
+      rejections.push(candidate.sessionId + ': cwd 不可用（' + String(cwd) + '）');
+      continue;
+    }
+    if (parsed.prefix === 'claude' && !claudeResumeLookupOk(candidate.nativePath, cwd)) {
+      rejections.push(candidate.sessionId + ': transcript 不在 cwd 对应的 project 目录（claude --resume 会找不到）');
+      continue;
+    }
+    const ageDays = Math.floor((now - Date.parse(candidate.updatedAt ?? '')) / (24 * 60 * 60 * 1000));
+    const expectMatched = pair.expectText !== undefined && inspected.text.includes(pair.expectText);
+    const reason =
+      'auto: newest ' + parsed.prefix + ' session with >=' + options.minEvents + ' events, ' + String(candidate.updatedAt ?? '').slice(0, 10) +
+      '（events=' + inspected.events + ', age=' + ageDays + 'd, 候选 ' + (index + 1) + '/' + candidates.length + '）' +
+      (expectMatched ? '; 标题命中 expectText "' + pair.expectText + '"' : '');
+    return {
+      mode: 'auto',
+      configured: pair.source,
+      used: spec,
+      sourceAgent: parsed.agent,
+      sessionId: candidate.sessionId,
+      nativePath: candidate.nativePath,
+      events: inspected.events,
+      updatedAt: candidate.updatedAt,
+      title: candidate.title ?? inspected.title,
+      pinnedError,
+      reason,
+      inspected: rejections.slice(),
+    };
+  }
+  const detail =
+    rejections.length === 0
+      ? '没有可检查的候选'
+      : '检查 ' + rejections.length + ' 个均不合格：' + rejections.slice(0, 4).join('；') + (rejections.length > 4 ? ' …' : '');
+  return skippedSource(pair, 'skip: 硬编码源不可用（' + pinnedError + '）；auto 未找到合格 ' + parsed.prefix + ' 会话 [' + diagnostics + '；' + detail + ']', {
+    inspected: rejections.slice(),
+  });
+}
+
+/** 解析每对实际使用的 source：pin 优先；pin 不可用才自动挑；都拿不到就 skip（带原因） */
+function resolvePairSource(pair, options) {
+  const configured = pair.source;
+  const parsed = parseSourceSpec(configured);
+  const pinned = inspectSource(configured);
+  if (pinned.ok) {
+    const below = pinned.events < options.minEvents;
+    return {
+      mode: 'pinned',
+      configured,
+      used: configured,
+      sourceAgent: parsed === undefined ? undefined : parsed.agent,
+      sessionId: pinned.sessionId,
+      nativePath: undefined,
+      events: pinned.events,
+      updatedAt: undefined,
+      title: pinned.title,
+      reason:
+        'pinned: 硬编码源存在，直接使用（events=' + pinned.events + '）' +
+        (below ? '（低于 auto 阈值 ' + options.minEvents + '，但 pin 优先）' : ''),
+    };
+  }
+  const pinnedError = pinned.error;
+  if (!options.auto) {
+    return skippedSource(pair, 'skip: 硬编码源不可用（' + pinnedError + '），且 --no-auto 禁止自动挑选');
+  }
+  if (parsed === undefined) {
+    return skippedSource(pair, 'skip: 硬编码源不可用（' + pinnedError + '），且 source 形式无法识别源端 agent，不能自动挑选');
+  }
+  return pickAutoSource(pair, parsed, pinnedError, options);
 }
 
 /** 目标端各自报的版本号；矩阵结果要能回答“对哪个版本验的” */
@@ -199,29 +484,47 @@ function seedClaudeHome(homePath, cwd) {
 function nativeClaudeCheck(pair, homePath) {
   const logPath = join(MATRIX, pair.id + '.claude-tui.log');
   const tuiCwd = pair.report.cwd ?? pair.cwd;
-  const capture = () =>
-    run(
+  const capture = () => {
+    // 先删掉上一轮残留：否则 expect 起不来时会拿旧日志当本轮结果（既可能误判 pass，也认不出 pty 耗尽）
+    rmSync(logPath, { force: true });
+    const result = run(
       'expect',
       [join(ROOT, 'scripts', 'claude-tui-capture.exp'), pair.report.sessionId, tuiCwd, logPath],
       { env: { CLAUDE_CONFIG_DIR: homePath } },
     );
-  const readLog = () => (existsSync(logPath) ? readFileSync(logPath, 'utf8') : '');
-  capture();
-  // 系统 pty 被占满时 expect 起不来（"no more ptys"）；这是环境问题，重试一次再判失败
-  if (/no more ptys/i.test(readLog())) {
-    run('sleep', ['1.5']);
-    capture();
+    return {
+      stderr: result.stderr ?? '',
+      logText: existsSync(logPath) ? readFileSync(logPath, 'utf8') : '',
+    };
+  };
+  // 系统 pty 被占满时 expect 起不来（"no more ptys"）。这是环境问题而非产品失败：
+  // 等 5 秒重试，最多 3 次；仍失败就把 native 标 skip（detail 以 "env: no more ptys" 开头），不判 fail。
+  const PTY_RETRIES = 3;
+  const PTY_WAIT_SECONDS = 5;
+  let attempt = capture();
+  let ptyFailures = 0;
+  while (/no more ptys/i.test(attempt.stderr + attempt.logText)) {
+    ptyFailures += 1;
+    if (ptyFailures > PTY_RETRIES) {
+      return { status: 'skip', detail: 'env: no more ptys（系统 pty 耗尽，重试 ' + PTY_RETRIES + ' 次仍失败；非产品失败）' };
+    }
+    run('sleep', [String(PTY_WAIT_SECONDS)]);
+    attempt = capture();
   }
-  if (!existsSync(logPath)) return { status: 'fail', detail: 'TUI 日志缺失' };
-  const clean = stripAnsi(readLog());
+  if (attempt.logText.length === 0) {
+    const hint = firstLine(attempt.stderr);
+    return { status: 'fail', detail: 'TUI 日志缺失' + (hint.length > 0 ? '（expect: ' + hint.slice(0, 120) + '）' : '') };
+  }
+  const clean = stripAnsi(attempt.logText);
   const broken = /No conversation found|Invalid (?:input|session)|Unable to load/i.test(clean);
   const hasContent = clean.length > 400;
   if (broken) return { status: 'fail', detail: 'TUI 报加载错误' };
   if (!hasContent) return { status: 'fail', detail: 'TUI 没有显示会话内容' };
   const signature = pair.expectText !== undefined && clean.includes(pair.expectText);
+  const autoNote = pair.sourceSelection?.mode === 'auto' ? '（auto 源：expectText 绑在 pin 源上，此处不作断言）' : '';
   return {
     status: 'pass',
-    detail: signature ? 'claude --resume 打开并显示预期内容' : 'claude --resume 打开并显示会话内容（标题未出现在抓屏区域）',
+    detail: (signature ? 'claude --resume 打开并显示预期内容' : 'claude --resume 打开并显示会话内容（标题未出现在抓屏区域）') + autoNote,
   };
 }
 
@@ -230,7 +533,7 @@ function nativeDshCheck(pair, homePath) {
   const bin = join(DSH_APP, 'Contents', 'MacOS', 'DeepSeek Harness');
   const logPath = join(MATRIX, pair.id + '.dsh-load.log');
   const child = spawn(bin, ['--expose-internals', cli, 'headless', '--json', '--session-id', pair.report.sessionId, 'hi'], {
-    cwd: pair.cwd,
+    cwd: pair.report?.cwd ?? pair.cwd,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: homePath },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -265,7 +568,7 @@ function nativeDshCheck(pair, homePath) {
 function nativeOpencodeCheck(pair, homePath) {
   const exported = run('opencode', ['export', pair.report.sessionId], {
     env: { XDG_DATA_HOME: homePath },
-    cwd: pair.cwd,
+    cwd: pair.report?.cwd ?? pair.cwd,
   });
   const start = exported.stdout.indexOf('{');
   if (start < 0) return { status: 'fail', detail: 'opencode export 没有 JSON 输出' };
@@ -287,7 +590,7 @@ function nativeCodexCheck(pair, homePath) {
   const sid = pair.report.sessionId;
   return new Promise((resolvePromise) => {
     const child = spawn('codex', ['exec', 'resume', '--skip-git-repo-check', sid, '--json', 'hi'], {
-      cwd: pair.cwd,
+      cwd: pair.report?.cwd ?? pair.cwd,
       env: { ...process.env, CODEX_HOME: homePath },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -327,12 +630,23 @@ function nativeCodexCheck(pair, homePath) {
   });
 }
 
-async function runPair(pair) {
+async function runPair(pair, options) {
+  // 源会话：pin 优先；pin 被清理/过期时自动挑最新合格会话；挑不到就 skip（不 push、不误判）
+  const source = resolvePairSource(pair, options);
+  if (source.mode === 'skip') {
+    return {
+      pair,
+      source,
+      written: undefined,
+      structural: { status: 'skip', detail: shortSkipReason(source) },
+      native: { status: 'skip', detail: '源会话不可用，未执行原生加载' },
+    };
+  }
   const homePath = join(MATRIX, pair.id + '-home');
   rmSync(homePath, { recursive: true, force: true });
   mkdirSync(homePath, { recursive: true });
   const targetHome = pair.to === 'cursor' ? CURSOR_COPY_HOME : homePath;
-  const pushArgs = [CLI, 'push', pair.source, '--to', pair.to, '--json'];
+  const pushArgs = [CLI, 'push', source.used, '--to', pair.to, '--json'];
   if (pair.to === 'dsh') pushArgs.push('--home', targetHome, '--register', '--compact');
   else if (pair.to === 'claude-code') pushArgs.push('--config-dir', targetHome);
   else if (pair.to === 'qoder') pushArgs.push('--home', targetHome);
@@ -343,7 +657,7 @@ async function runPair(pair) {
   const pushed = run(process.execPath, pushArgs);
   const report = parseJson(pushed.stdout + pushed.stderr);
   if (pushed.code !== 0 || report === undefined) {
-    return { pair, written: undefined, structural: { status: 'fail', detail: 'push 失败' }, native: { status: 'skip', detail: pushed.stderr.slice(0, 200) } };
+    return { pair, source, written: undefined, structural: { status: 'fail', detail: 'push 失败' }, native: { status: 'skip', detail: pushed.stderr.slice(0, 200) } };
   }
 
   let structural;
@@ -373,15 +687,15 @@ async function runPair(pair) {
   let native;
   if (pair.native === 'claude') {
     seedClaudeHome(homePath, report.cwd ?? pair.cwd);
-    native = nativeClaudeCheck({ ...pair, report }, homePath);
+    native = nativeClaudeCheck({ ...pair, report, sourceSelection: source }, homePath);
   }
-  else if (pair.native === 'dsh') native = await nativeDshCheck({ ...pair, report }, homePath);
-  else if (pair.native === 'opencode') native = nativeOpencodeCheck({ ...pair, report }, homePath);
-  else if (pair.native === 'codex') native = await nativeCodexCheck({ ...pair, report }, homePath);
+  else if (pair.native === 'dsh') native = await nativeDshCheck({ ...pair, report, sourceSelection: source }, homePath);
+  else if (pair.native === 'opencode') native = nativeOpencodeCheck({ ...pair, report, sourceSelection: source }, homePath);
+  else if (pair.native === 'codex') native = await nativeCodexCheck({ ...pair, report, sourceSelection: source }, homePath);
   else if (pair.native === 'sdk') native = { status: 'manual', detail: 'Qoder 桌面无本地入口；SDK listSubagents/getSubagentMessages 已单独验证' };
   else native = { status: 'manual', detail: 'Cursor 无 headless；diff 卡片已人工验证' };
 
-  return { pair, report, written: report.written, structural, native };
+  return { pair, source, report, written: report.written, structural, native };
 }
 
 function summarizeVerify(text) {
@@ -390,9 +704,26 @@ function summarizeVerify(text) {
   return { status: fail === 0 && pass > 0 ? 'pass' : 'fail', detail: pass + ' PASS / ' + fail + ' FAIL' };
 }
 
-const only = process.argv.slice(2);
+const cli = parseCli(process.argv.slice(2));
+const only = cli.pairIds;
+const options = cli.options;
 const selected = only.length > 0 ? PAIRS.filter((pair) => only.includes(pair.id)) : PAIRS;
+if (only.length > 0 && selected.length === 0) {
+  fail('未知 pair: ' + only.join(', ') + '（可选 ' + PAIRS.map((pair) => pair.id).join(' / ') + '）');
+}
 mkdirSync(MATRIX, { recursive: true });
+if (options.sourcesOnly) {
+  console.log('源选择预演（只读；pin 优先，pin 不可用时 auto，不合格标 skip）：');
+  for (const pair of selected) {
+    const source = resolvePairSource(pair, options);
+    console.log('\n- ' + pair.id + '  [' + source.mode + ']');
+    console.log('  configured: ' + pair.source);
+    console.log('  used      : ' + (source.used ?? '-'));
+    console.log('  reason    : ' + source.reason);
+    for (const rejection of source.inspected ?? []) console.log('  拒选: ' + rejection);
+  }
+  process.exit(0);
+}
 const versions = toolVersions();
 writeFileSync(join(MATRIX, 'versions.json'), JSON.stringify(versions, null, 2));
 const previousResults = (() => {
@@ -406,8 +737,10 @@ const previousResults = (() => {
 const ran = [];
 for (const pair of selected) {
   process.stderr.write('→ ' + pair.id + ' ... ');
-  const result = await runPair(pair);
-  process.stderr.write(result.structural.status + '/' + result.native.status + '\n');
+  const result = await runPair(pair, options);
+  process.stderr.write(result.structural.status + '/' + result.native.status + ' (' + (result.source?.mode ?? '?') + ')\n');
+  if (result.source?.mode === 'auto') process.stderr.write('   auto 源: ' + result.source.used + ' — ' + result.source.reason + '\n');
+  if (result.source?.mode === 'skip') process.stderr.write('   skip 原因: ' + result.source.reason + '\n');
   ran.push(result);
 }
 const pairOrder = new Map(PAIRS.map((pair, index) => [pair.id, index]));
@@ -421,12 +754,36 @@ const rows = results.map((result) => {
   const written = result.report?.written;
   return {
     pair: result.pair.id,
+    source: result.source?.mode ?? '-',
     events: written?.events ?? 0,
     structural: result.structural.status + ' (' + result.structural.detail + ')',
     native: result.native.status + ' (' + result.native.detail + ')',
   };
 });
 console.log('\n目标端版本: ' + Object.entries(versions).map(([name, version]) => name + '=' + (version ?? '?')).join(', '));
-console.log('\n| pair | events | 结构校验 | 原生加载 |');
-console.log('|---|---|---|---|');
-for (const row of rows) console.log('| ' + row.pair + ' | ' + row.events + ' | ' + row.structural + ' | ' + row.native + ' |');
+console.log('\n| pair | 源 | events | 结构校验 | 原生加载 |');
+console.log('|---|---|---|---|---|');
+for (const row of rows) console.log('| ' + row.pair + ' | ' + row.source + ' | ' + row.events + ' | ' + row.structural + ' | ' + row.native + ' |');
+
+const skipped = results.filter((result) => result.source?.mode === 'skip' || result.structural?.status === 'skip');
+if (skipped.length > 0) {
+  console.log('\n⚠️ 跳过 ' + skipped.length + ' 对（pin 不可用且 auto 没挑到合格会话）：' + skipped.map((result) => result.pair.id).join(', '));
+}
+const envSkipped = results.filter(
+  (result) => result.native?.status === 'skip' && /no more ptys/i.test(String(result.native?.detail ?? '')),
+);
+if (envSkipped.length > 0) {
+  console.log(
+    '\n⚠️ env 跳过原生加载 ' + envSkipped.length + ' 对（系统 pty 耗尽，不是产品失败，可空闲后重跑）：' +
+    envSkipped.map((result) => result.pair.id).join(', '),
+  );
+}
+console.log('\n源选择（与 .tmp/matrix/results.json 每行的 source 字段一致）：');
+for (const result of results) {
+  const source = result.source ?? {};
+  console.log(
+    '- ' + result.pair.id + ': ' + (source.mode ?? '-') +
+    ' | source=' + (source.used ?? result.pair.source ?? '-') +
+    ' | ' + (source.reason ?? '历史结果（无 source 记录）'),
+  );
+}

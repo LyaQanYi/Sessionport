@@ -89,9 +89,35 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 ```bash
 node scripts/verify-matrix.mjs            # 全量（当前 11 对）
 node scripts/verify-matrix.mjs claude-dsh # 单对（合并进 results.json）
-cat .tmp/matrix/results.json              # 机器可读结果
+node scripts/verify-matrix.mjs --sources-only   # 只预演源选择，不 push、不写 results.json
+node scripts/verify-matrix.mjs --no-auto        # pin 不可用直接 skip，不做自动兜底
+cat .tmp/matrix/results.json              # 机器可读结果（每行带 source 字段）
 cat .tmp/matrix/versions.json             # 本次运行的目标端版本
 ```
 
 前置条件：macOS 上装有 Claude Code / DeepSeek Harness / Cursor CN / Qoder CN / opencode / codex；
-`expect` 可用；源会话仍在本地（矩阵里的 session id 会随清理失效，需换成当时存在的会话）。
+`expect` 可用；源会话仍在本地。
+
+## 源会话：pin → auto → skip（2026-10-30 补）
+
+矩阵原来把源会话 id 写死在 `PAIRS` 里，会话被清理后整对失败（本轮就换过 dsh / codex 两个样本）。现在
+`resolvePairSource` 分三段：
+
+1. **pin**：写死的 id/path 能 `inspect` 就原样使用，行为与旧版一致（即使事件数低于 auto 阈值也优先 pin）。
+2. **auto**：pin 不可用时，用 `list --agent <源端> --json --limit 200` 取候选，
+   过滤「根会话 + 未归档 + `--max-age-days`（默认 30）内 + cwd 是存在的绝对目录」，
+   按 `updatedAt` 倒序取前 `--max-candidates`（默认 10），逐个 `inspect` 要求 root events ≥
+   `--min-events`（默认 20），第一个合格即用。源形式：claude 用 id（并校验 transcript 在
+   cwd 对应的 project 目录，否则 `claude --resume` 找不到）；kimi/codex/workbuddy/qoder/commandcode
+   用 `nativePath`（codex 的 rollout 文件名 id 与文件内 `session_meta` id 可能不同）；
+   opencode/cursor 用 sessionId。
+3. **skip**：都拿不到就不 push，结构校验与原生加载都标 `skip`，reason 写明 pin 报错 + 候选漏斗 + 拒选原因。
+
+实际用的源与理由记录在 `results.json` 每行的 `source`（mode/used/sessionId/nativePath/events/reason/…），
+终端表多一列「源」并单列 auto / skip / env-skip 清单。
+
+**env skip（pty 耗尽）**：`expect` 起不来时 system 报 `no more ptys`，这不是产品失败。脚本现在每次 capture
+前清旧日志、同时检测 `expect` 的 stderr 与日志、等 5s 重试最多 3 次，仍失败就把 native 标成
+`env: no more ptys` 的 skip。2026-10-30 下午本机 pty 被占满时，全量跑为
+**11/11 结构 PASS、native 4 PASS + 4 env skip + 3 manual、0 真 fail**；当天上午 pty 正常时同一脚本跑出
+**8 native PASS**。环境恢复后重跑即可回到 8 PASS。
