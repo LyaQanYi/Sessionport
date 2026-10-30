@@ -51,6 +51,7 @@ const USAGE = [
   '  --force                sync: 目标端有新增时仍然覆盖（会丢目标端新内容）',
   '  --confirm-real         写 Cursor 真实库时必须显式确认（先用 --dry-run 看计划）',
   '  --include-children     子代理会话一并导出（dsh / claude-code / command-code / qoder 支持；其余记入损失清单）',
+  '  --synthesize-agent-calls  源端缺触发子代理的调用时，补一对合成的 Agent 调用（claude-code；默认关，会记一条 info 损失）',
   '  --keep-injected        保留源端注入消息（默认在支持的目标上丢弃并记损失）',
   '  --slim                 dsh 目标精简导入：截断 tool_result/参数、丢弃较早 reasoning（日志也损）',
   '  --compact              dsh 目标压缩导入：保留全部事件日志，写 DSH 原生 compaction（摘要+最近 step）',
@@ -224,6 +225,7 @@ function commonTargetOptions(values: Record<string, string | boolean | undefined
     register: Boolean(values.register),
     keepInjected: Boolean(values['keep-injected']),
     includeChildren: Boolean(values['include-children']),
+    synthesizeAgentCalls: Boolean(values['synthesize-agent-calls']),
     userDataDir: typeof values['user-data-dir'] === 'string' ? values['user-data-dir'] : undefined,
     dryRun: Boolean(values['dry-run']),
     confirmReal: Boolean(values['confirm-real']),
@@ -289,6 +291,7 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
       version: typeof values.version === 'string' ? values.version : undefined,
       keepThinking: Boolean(values['keep-thinking']),
       includeChildren: opts.includeChildren === true,
+      synthesizeAgentCalls: opts.synthesizeAgentCalls === true,
       dryRun: Boolean(values['dry-run']),
     });
   } else if (to === 'command-code') {
@@ -813,6 +816,7 @@ async function main(): Promise<void> {
       'keep-thinking': { type: 'boolean' },
       'keep-injected': { type: 'boolean' },
       'include-children': { type: 'boolean' },
+      'synthesize-agent-calls': { type: 'boolean' },
       'dry-run': { type: 'boolean' },
       register: { type: 'boolean' },
       'user-data-dir': { type: 'string' },

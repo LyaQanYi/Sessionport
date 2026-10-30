@@ -3,7 +3,16 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { LossCollector, assistantMessageId, contentToText, randomUuid } from '@sessionport/core';
-import type { ExportCaps, IrBundle, IrChildSession, IrSession, LossEntry, WriteReport } from '@sessionport/core';
+import type {
+  ExportCaps,
+  IrBundle,
+  IrChildSession,
+  IrSession,
+  IrToolCallEvent,
+  IrToolResultEvent,
+  LossEntry,
+  WriteReport,
+} from '@sessionport/core';
 
 import { claudeConfigDir, sessionFilePath, subagentFilePath, subagentMetaPath, subagentsDirPath } from './paths.ts';
 import { buildAssistantRow, buildUserRow, textBlock, toolResultBlock, toolUseBlock } from './rows.ts';
@@ -43,6 +52,11 @@ export interface WriteClaudeOptions {
   dryRun?: boolean;
   /** 是否把 bundle.children 写成 Claude 原生 subagents transcript（默认否） */
   includeChildren?: boolean;
+  /**
+   * 源端子代理缺 viaToolCallId 时，在父会话里补一对合成的 Agent tool_use/tool_result，
+   * 让 Claude 能把 subagents transcript 挂到父会话的调用下（默认否，会记一条 info 损失）。
+   */
+  synthesizeAgentCalls?: boolean;
 }
 
 /** 子代理 meta.json 内容（字段对齐真实 Claude Code 2.1.303） */
@@ -255,6 +269,102 @@ function serializeRows(rows: ClaudeRow[]): string {
   return rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
 }
 
+interface AgentCallSynthesis {
+  session: IrSession;
+  children: IrChildSession[];
+  synthesized: number;
+}
+
+/**
+ * 源端没有 viaToolCallId 时，在父会话里补一对合成的 Agent tool_use / tool_result。
+ *
+ * Claude 靠主会话里的 tool_use + tool_result(`toolUseResult.agentId`) 把
+ * `subagents/agent-*.jsonl` 挂到父会话；只写 sidecar 文件、没有这对调用时，UI 不会展示。
+ * 这里按子代理 meta 生成调用（description/subagent_type 取自 title/label/profile），
+ * 并在父会话链上按子代理的 createdAt 插入，随后重新串 parentId。
+ */
+function synthesizeAgentCalls(
+  session: IrSession,
+  children: IrChildSession[],
+  losses: LossCollector,
+): AgentCallSynthesis {
+  const events = session.events.map((event) => ({ ...event }));
+  const updated = children.slice();
+  const usedCallIds = new Set(events.flatMap((event) => (event.kind === 'tool_call' ? [event.callId] : [])));
+  const hasCall = (callId: string | undefined): boolean =>
+    callId !== undefined && events.some((event) => event.kind === 'tool_call' && event.callId === callId);
+  const missing = children.filter((child) => !hasCall(nonEmptyText(child.viaToolCallId)));
+  if (missing.length === 0) return { session, children, synthesized: 0 };
+
+  const firstAt = events[0]?.at;
+  const lastAt = events[events.length - 1]?.at;
+  let synthesized = 0;
+
+  for (const [index, child] of children.entries()) {
+    const declared = nonEmptyText(child.viaToolCallId);
+    if (hasCall(declared)) continue;
+    const base = child.session.id.replace(/[^A-Za-z0-9]/gu, '').slice(-24) || String(index);
+    let callId = declared ?? 'toolu_synthesized_' + base;
+    while (usedCallIds.has(callId)) callId += 'x';
+    usedCallIds.add(callId);
+
+    let at =
+      child.session.meta.createdAt ??
+      child.session.events[0]?.at ??
+      lastAt ??
+      firstAt ??
+      new Date(0).toISOString();
+    if (firstAt !== undefined && at < firstAt) at = firstAt;
+    if (lastAt !== undefined && at > lastAt) at = lastAt;
+    let insertAt = 0;
+    for (let cursor = events.length - 1; cursor >= 0; cursor -= 1) {
+      if (events[cursor]!.at <= at) {
+        insertAt = cursor + 1;
+        break;
+      }
+    }
+
+    const title = nonEmptyText(child.session.meta.title) ?? nonEmptyText(child.label) ?? 'subagent';
+    const call: IrToolCallEvent = {
+      kind: 'tool_call',
+      id: 'synthetic-agent-call-' + base,
+      parentId: null,
+      at,
+      callId,
+      name: 'Agent',
+      input: {
+        description: title,
+        subagent_type: nonEmptyText(child.session.meta.profile) ?? CLAUDE_DEFAULT_SUBAGENT_TYPE,
+        prompt: title,
+      },
+    };
+    const result: IrToolResultEvent = {
+      kind: 'tool_result',
+      id: 'synthetic-agent-result-' + base,
+      parentId: null,
+      at,
+      callId,
+      content: [],
+    };
+    events.splice(insertAt, 0, call, result);
+    updated[index] = declared === undefined ? { ...child, viaToolCallId: callId } : child;
+    synthesized += 1;
+  }
+
+  let previous: string | null = null;
+  for (const event of events) {
+    event.parentId = previous;
+    previous = event.id;
+  }
+
+  losses.add(
+    'claude.subagent-agent-call-synthesized',
+    '源端子代理缺少触发它的工具调用（viaToolCallId 缺失，或父会话里没有该 tool_use）；已在父会话里补一对合成的 Agent tool_use/tool_result（description/subagent_type 取自子代理 title/profile），让 Claude 把 subagents transcript 挂到调用下。这对调用在源端并不存在',
+    { count: synthesized, severity: 'info' },
+  );
+  return { session: { ...session, events, head: previous }, children: updated, synthesized };
+}
+
 function buildChunks(session: IrSession, opts: WriteClaudeOptions, losses: LossCollector): BuiltChunks {
   const counts = { messages: 0, toolCalls: 0, toolResults: 0, reasoning: 0 };
   const chunks: Chunk[] = [];
@@ -428,8 +538,14 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
   const model = options.model ?? session.meta.model ?? 'claude-sonnet-5';
 
   const losses = new LossCollector();
+  const agentCalls =
+    options.includeChildren === true && options.synthesizeAgentCalls === true
+      ? synthesizeAgentCalls(session, bundle.children, losses)
+      : { session, children: bundle.children, synthesized: 0 };
+  const effectiveSession = agentCalls.session;
+  const children = agentCalls.children;
   const ctx: RowContext = { cwd, sessionId, version, gitBranch };
-  const built = buildChunks(session, options, losses);
+  const built = buildChunks(effectiveSession, options, losses);
   const chunks = repairToolPairs(built.chunks, losses);
   const rows = materialize(chunks, ctx, model);
 
@@ -441,10 +557,10 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
       severity: 'info',
     });
   }
-  if (bundle.children.length > 0 && !options.includeChildren) {
-    const childEvents = bundle.children.reduce((n, c) => n + c.session.events.length, 0);
+  if (children.length > 0 && !options.includeChildren) {
+    const childEvents = children.reduce((n, c) => n + c.session.events.length, 0);
     losses.add('claude.subagent-dropped', '子代理会话未导出（includeChildren=false，未写入 Claude 原生 subagents transcript）', {
-      count: bundle.children.length,
+      count: children.length,
       severity: 'warning',
     });
     losses.add('claude.subagent-events-dropped', '子代理会话的事件未导出', { count: childEvents, severity: 'warning' });
@@ -465,9 +581,9 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
     durationMs: number;
     estimatedTokens: number;
   }> = [];
-  if (options.includeChildren === true && bundle.children.length > 0) {
+  if (options.includeChildren === true && children.length > 0) {
     const usedAgentIds = new Set<string>();
-    for (const child of bundle.children) {
+    for (const child of children) {
       const agentId = normalizeAgentId(child, usedAgentIds);
       const childCwd = nonEmptyText(child.session.meta.cwd) ?? cwd;
       const childCtx: RowContext = { cwd: childCwd, sessionId, version, gitBranch };

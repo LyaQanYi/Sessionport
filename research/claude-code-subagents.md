@@ -85,6 +85,20 @@
   （`meta.title` > `label`）、`requestShape: 'foreground'`、`requestNonInteractive: true`、
   `spawnDepth: 1`；有 `viaToolCallId` 时写 `toolUseId`。
 - 主会话文件保持原有事件结构，不追加 sidechain 镜像行（reader 优先磁盘 transcript，不会重复）。
+- **源端没有触发调用时（`--synthesize-agent-calls`，默认关）**：DSH 这类把子代理存成独立会话的源端，
+  IR child 没有 `viaToolCallId`，主会话里也没有 Agent tool_use，Claude UI 不会展示 sidecar。打开该选项后
+  writer 会为每个「没有匹配调用」的 child 在父会话里插一对合成事件：
+  `{"name":"Agent","input":{description, subagent_type, prompt}}` + 对应 `tool_result`，
+  位置按 child 的 `meta.createdAt`（缺省取首事件时间）插入并重串 `parentId`；
+  `callId` 沿用源端已有的 `viaToolCallId`（若只是父会话缺这条调用），否则生成
+  `toolu_synthesized_<child id 尾段>`。随后正常走 `attachSubagentToolUseResults`，写出
+  `toolUseResult.agentId`，UI 即可把 sidecar 挂到该 Agent 调用下。
+  这一对调用**在源端并不存在**，导出时记 `claude.subagent-agent-call-synthesized`（info，含条数）；
+  未开该选项时仍按原行为记 `claude.subagent-unlinked`（warning）。
+- 实测（2026-10-30）：DSH 会话 `session-e5f0de1a…`（2 个子代理，均无 `viaToolCallId`）
+  → `.tmp/e2e-synth-on`：主会话出现 2 个 `Agent` tool_use、2 行带 `toolUseResult.agentId` 的
+  tool_result、2 份 sidecar；`verify` 全 PASS，读回 2 个 child 的 `viaToolCallId` 与 meta 一致。
+  未开选项时同源导出为 `claude.subagent-unlinked x2`，主会话无 Agent 调用。
 - `CAPS.subagents` 现在为 `true`。仍有限制，导出时记一条 **info** 损失
   `claude.subagent-native-writeback`：Claude Code app/CLI 是否在 UI 中展示这些子代理未验证；
   IR 只建模一层子代理，子代理自己的子代理不会写回；`toolUseId` 是否被 UI 关联回主会话的 Task/Workflow
