@@ -223,3 +223,40 @@ edit 带 `toolDisplayPath` 与 `editLinesAdded/editLinesRemoved`，不带 `isToo
   `bubble-count` 对导入/测试会话按“一一对应”校验。
 - `toolDisplayPath` 目前不写 glob（原生 GlobArgs 无 path）；如果 Cursor 后续给 GlobArgs 加 path，
   需要同步扩展。
+
+## 8. Cursor 3.27 的 header 迁移（2026-10-30）
+
+3.27.22 首次打开一个 sessionport 写入的 composer 时，会把 legacy header **迁移成分块存储**：
+
+| 迁移前 | 迁移后 |
+|---|---|
+| `composerData.fullConversationHeadersOnly` = 229 条（84829 B） | `[]`，composerData 缩到 ~3304 B |
+| — | `composerData.headerLog = {chunkSize:256, chunkCount:1, count:229, generation:…}` |
+| — | key `composerConvHeaders:<composerId>:000000`（6 位序号，76699 B JSON 数组） |
+| — | `composerRootWriterDiagnostic:<composerId>` |
+
+数据不丢（229 条 header 内容完整），但**按旧字段读回会得到 0 条**。实测后果（修复前）：
+
+```
+FAIL  conversation-headers  (0 条)
+FAIL  no-orphan-bubbles     (orphan=229)
+FAIL  bubble-count          (db=229 headers=0)
+```
+
+修复：
+
+- `wire.ts` 新增 `readMigratedConversationHeaders(db, composerId, data)`：按 `headerLog.chunkCount`
+  逐块读 `composerConvHeaders:<id>:<6 位>`，拼回 header 数组；缺块/坏 JSON 返回 `undefined`
+  让调用方退回旧逻辑。
+- `verify.ts` 的 `conversation-headers`：legacy 数组为空时改用迁移后的 header，detail 标
+  `（3.27 分块迁移）`。
+- `read.ts` 的 `conversationHeaders()`：同样先读迁移块，再退回 createdAt 排序兜底。
+- 回归测试：`headers.test.ts` 新增一条，把 9 条 header 拆成 4/4/1 三块模拟 3.27 迁移，
+  断言 verify 全绿、headers-count=229 对应、读回 tool_call=6。
+
+修复后同一个库：`conversation-headers (229 条（3.27 分块迁移）)`，
+`headers-count (headers=229 bubbles=229)`，结构化校验通过。
+
+另一个 3.27 行为（不是 sessionport 的问题，但会影响测试环境）：`AgentStores` 的写入路径写死在
+真实库 `~/Library/Application Support/Cursor/AgentStores`，`--user-data-dir` 不隔离。
+用副本库做回归前要先备份该目录。

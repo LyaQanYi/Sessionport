@@ -17,12 +17,24 @@ All notable changes to this project are documented here. Format loosely follows
 
 - **Matrix re-run against the current targets (2026-10-30).** Eleven pairs structurally PASS and
   eight native loads PASS at Claude Code 2.1.312 / Codex 0.165.0 / opencode 1.19.5 / DSH 0.2.1-rc.3 /
-  qodercli 1.1.75-hotfix.1 / Cursor 3.27.22 / Kimi Code 2.4.0. Kimi Code joins the matrix as a source
-  (`kimi-claude`, `kimi-dsh` reading a real 2.4.0 session), the Codex sample grew from 14 to 38 events
-  (two tool calls), and the DSH→Claude source was replaced after the old session was cleaned up.
-  Remaining boundaries (Qoder UI server-backed, Cursor manual rendering, Command Code target not
-  covered, DSH→Claude subagent linking, Kimi `changeNotifier.snapshot` unknown event):
-  `research/verification-matrix-2026-10-30.md`.
+  qodercli 1.1.75-hotfix.1 / Kimi Code 2.4.0, and Cursor 3.27.22's desktop rendering was confirmed
+  through a CDP-driven copy of the app (human/assistant text, shell cards, read rows, edit diffs,
+  turn summaries; the default "Worked for" folding is native 3.27 behaviour). Kimi Code joins the
+  matrix as a source (`kimi-claude`, `kimi-dsh` reading a real 2.4.0 session), the Codex sample grew
+  from 14 to 38 events (two tool calls), and the DSH→Claude source was replaced after the old session
+  was cleaned up. Remaining boundaries (Qoder UI server-backed, Cursor fine-grained UI actions
+  untested, Command Code target not covered, DSH→Claude subagent linking, Kimi
+  `changeNotifier.snapshot` unknown event): `research/verification-matrix-2026-10-30.md`.
+
+### Fixed
+
+- **Cursor: verify and read handle 3.27's chunked header migration.** Cursor 3.27 moves
+  `fullConversationHeadersOnly` into `headerLog` + `composerConvHeaders:<id>:<6-digit>` chunks the first
+  time it opens a composer, so `verify --agent cursor` reported `conversation-headers (0 条)`,
+  `no-orphan-bubbles (orphan=229)` and `bubble-count (db=229 headers=0)` on every session the app had
+  opened. `readMigratedConversationHeaders()` now reassembles the chunks and both the verifier and the
+  reader fall back to them; a regression test simulates a 4/4/1 split. Evidence and the full field
+  table: `research/cursor-headers.md` §8.
 
 ## [0.1.9] — 2026-10-30
 
