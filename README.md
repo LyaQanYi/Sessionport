@@ -106,6 +106,9 @@ Verification is reproducible: `pnpm matrix` writes each pair into an isolated ta
 result in the target itself where an entry point exists (`claude --resume` TUI, DSH headless, Cursor/Qoder
 structural + SDK). It records the installed target versions (`versions.json`) so a result can be traced to
 what it was verified against, and a single-pair run merges into the previous results instead of replacing them.
+Each pair pins a source session; when that session has been cleaned up the script picks the newest qualifying
+one (root session, unarchived, recent, real cwd, `>= 20` events) and records `mode: auto` plus the reason in
+`results.json`, or reports the pair as `skip` when nothing qualifies. `--sources-only` previews that choice.
 Latest run: [research/verification-matrix-2026-10-30.md](research/verification-matrix-2026-10-30.md)
 (2026-10-29 baseline: [verification-matrix-2026-10-29.md](research/verification-matrix-2026-10-29.md)).
 The latest run covers eleven pairs — nine targets plus Kimi Code as a source.

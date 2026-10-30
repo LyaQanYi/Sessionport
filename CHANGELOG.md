@@ -16,6 +16,13 @@ All notable changes to this project are documented here. Format loosely follows
   `claude.subagent-unlinked` warning. Covered by a children test and a real DSH session with two
   sub-agents (verify PASS, readback `viaToolCallId` matches the meta); desktop rendering of the linked
   sidecar is still a manual check.
+- **Matrix auto-selects a source session when the pinned one is gone.** Each pair still pins a source
+  session, but when it has been cleaned up the script now picks the newest qualifying session (root,
+  unarchived, within `--max-age-days`, real cwd, `>= --min-events` events), records `mode: auto` plus the
+  reason in `results.json`, and reports `skip` with a full rejection trail when nothing qualifies.
+  `--sources-only` previews the choice and `--no-auto` disables the fallback. The Claude TUI check no
+  longer treats a host out of ptys as a product failure: it clears the stale log, detects the `expect`
+  stderr, retries 5s × 3, then records `env: no more ptys` as a skip.
 - **Verification matrix records target versions and absorbs transient TUI failures.** `pnpm matrix`
   now captures the installed target versions into `.tmp/matrix/versions.json` and prints them above the
   result table; a single-pair run merges into `.tmp/matrix/results.json` instead of replacing the other
