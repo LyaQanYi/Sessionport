@@ -33,8 +33,8 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 | claude-opencode | 7 | ✅ 8 PASS | ✅ opencode export 读回 2 条消息 | 隔离 home 通过 `XDG_DATA_HOME`；无模型调用 |
 | claude-codex | 7 | ✅ 12 PASS | ✅ codex exec resume 载入 thread 并开始 turn | 隔离 home 无凭据，401 前已加载 thread |
 | claude-commandcode | 7 | ✅ 18 PASS | ✅ `cmd -p --session` 无头加载并开始 turn | opt-in（`--command-code-smoke`）；凭据失效时加载后被 401 拦下，不花钱 |
-| claude-qoder | 343 | ✅ 48 PASS | ⚠️ 仅 SDK | 桌面任务列表服务端驱动，本地 JSONL 不可见 |
-| wb-qoder | 682 | ✅ 104 PASS | ⚠️ 仅 SDK | 同上；11 个子代理写入且 SDK 可读 |
+| claude-qoder | 343 | ✅ 48 PASS | ✅ Qoder SDK 读到 341 条消息 / 4 个子代理 | 用桌面端同款 SDK 探针（`scripts/qoder-sdk-probe.mjs`），等价于 app 会话列表可见 |
+| wb-qoder | 682 | ✅ 104 PASS | ✅ Qoder SDK 读到 661 条消息 / 11 个子代理 | 同上；11 个子代理写入且 SDK 可读 |
 | kimi-claude | 81 | ✅ 11 PASS | ✅ claude --resume 显示会话内容 | Kimi Code 2.4.0 真实会话（25 次工具调用）→ Claude Code |
 | kimi-dsh | 81 | ✅ 17 PASS | ✅ headless 加载 Session 并开始 turn | 同一源 → DSH；纯 source 端补进矩阵 |
 | claude-cursor | 229 | ✅ 35 PASS | ✅ 3.27.22 桌面（CDP + 截图） | Cursor 无 headless；副本库起独立实例，人类/助手/shell/read/edit diff 均渲染正常 |
@@ -52,13 +52,14 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
    （`session_708071d1…`，81 events / 25 次工具调用，`formatVersion=2` / `protocolVersion=1.5`），
    reader 直接读得出来，不再只靠 2.1.1 的 fixture。
 6. **TUI 检查对 pty 耗尽的假失败免疫**：`expect` 偶发 `no more ptys`（系统 pty 被占满）会让这一对
-   记成 fail；现在检测到该错误会等 1.5s 自动重试一次。
+   记成 fail；现在每次 capture 前清旧日志、同时看 `expect` 的 stderr，等 5s 重试最多 3 次，仍失败记 env skip。
 
 ## 已完成
 
 - 12/12 pair 结构校验 PASS（对当前安装版本）。
-- 9/9 有入口的目标端原生加载 PASS（Command Code 需 `--command-code-smoke` 显式开启）：
-  Claude Code TUI ×4、DSH headless ×2、opencode export ×1、Codex resume ×1、Command Code 无头 ×1。
+- 11/11 有入口的目标端原生校验 PASS（Command Code 需 `--command-code-smoke` 显式开启）：
+  Claude Code TUI ×4、DSH headless ×2、opencode export ×1、Codex resume ×1、Command Code 无头 ×1、
+  Qoder SDK ×2。只剩 Cursor 靠人工确认（桌面渲染已确认）。
 - Kimi Code 2.4.0 真实会话已进矩阵（reader 与两条迁移路径都验过）。
 - Cursor 3.27.22 桌面渲染已确认：人类 8/8、助手 markdown、shell 卡片、read 行、edit diff、
   回合摘要全部正常；默认折叠是 3.27 原生行为（原生 composer 同样折叠）。
@@ -70,8 +71,9 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 
 ## 未完成 / 已知边界
 
-1. **Qoder 桌面 UI 仍不可本地验证**：任务列表走服务端分页，本地 `projects/` 不被桌面读取；
-   只能到 SDK 的 `listSessions/listSubagents/getSubagentMessages`。
+1. **Qoder 已到 SDK 层，GUI 仍未实开**：桌面任务列表走服务端分页，本地 `projects/` 不被桌面读取；
+   矩阵现在用桌面端同款 SDK（`scripts/qoder-sdk-probe.mjs`）验证 listSessions/getSessionMessages/
+   listSubagents，等价于“app 能看到”。真正的 GUI 画面仍没有自动化（无 headless 入口）。
 2. **Cursor 桌面渲染已确认，但细项没点完**：read 行展开后的文件正文永远为空（writer 不伪造，
    与原生一致）、edit 卡片的“打开文件/diff 视图”入口未逐一点、原生 vs 导入的分组边界差异没跑全量对照。
    另：3.27 的 `AgentStores` 写死真实库路径，`--user-data-dir` 不隔离，真机上跑副本库前要先备份。
@@ -123,5 +125,6 @@ cat .tmp/matrix/versions.json             # 本次运行的目标端版本
 **env skip（pty 耗尽）**：`expect` 起不来时 system 报 `no more ptys`，这不是产品失败。脚本现在每次 capture
 前清旧日志、同时检测 `expect` 的 stderr 与日志、等 5s 重试最多 3 次，仍失败就把 native 标成
 `env: no more ptys` 的 skip。2026-10-30 下午本机 pty 被占满时，全量跑为
-**12/12 结构 PASS、native 4 PASS + 4 env skip + 3 manual、0 真 fail**；当天上午 pty 正常时同一脚本跑出
-**8 native PASS**。环境恢复后重跑即可回到 8 PASS（Command Code 那对另需 `--command-code-smoke`）。
+**12/12 结构 PASS、native 4 PASS + 4 env skip + 3 manual、0 真 fail**（那次跑在 Qoder SDK 校验接入之前）；
+当天上午 pty 正常时同一脚本跑出 **8 native PASS**。现在 Qoder 两对已改为真实 SDK 校验，
+环境恢复后应回到 10 PASS + 1 人工（Cursor）；Command Code 那对另需 `--command-code-smoke`。

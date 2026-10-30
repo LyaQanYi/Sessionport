@@ -653,6 +653,70 @@ function nativeCommandCodeCheck(pair, options) {
   });
 }
 
+const QODER_BIN = '/Applications/Qoder CN.app/Contents/MacOS/Qoder CN';
+
+/**
+ * Qoder 原生校验：桌面端没有 headless 入口，但桌面主进程用的就是 Qoder SDK。
+ * 用 Qoder 自带的 Electron Node 跑探针（SDK 在 app.asar 里），读隔离 home 里的会话：
+ * listSessions 能找到 + getSessionMessages 有内容 = 桌面 app 的会话列表能看见。
+ */
+function nativeQoderCheck(pair, homePath) {
+  if (!existsSync(QODER_BIN)) return { status: 'skip', detail: 'Qoder 未安装（没有 /Applications/Qoder CN.app）' };
+  const sessionId = pair.report?.sessionId;
+  if (typeof sessionId !== 'string') return { status: 'fail', detail: 'push 报告里没有 sessionId' };
+  const probe = join(ROOT, 'scripts', 'qoder-sdk-probe.mjs');
+  return new Promise((resolvePromise) => {
+    const child = spawn(QODER_BIN, [probe, homePath, sessionId], {
+      cwd: ROOT,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      const line = stdout.split('\n').map((item) => item.trim()).filter((item) => item.startsWith('{')).pop();
+      let parsed;
+      try {
+        parsed = line === undefined ? undefined : JSON.parse(line);
+      } catch {
+        parsed = undefined;
+      }
+      if (parsed === undefined) {
+        const hint = (stderr.split('\n').find((item) => item.trim().length > 0) ?? '').slice(0, 160);
+        resolvePromise({ status: 'fail', detail: 'SDK 探针没有输出 JSON' + (hint.length > 0 ? '（' + hint + '）' : '') });
+        return;
+      }
+      if (parsed.found === true && parsed.messages > 0) {
+        resolvePromise({
+          status: 'pass',
+          detail: 'Qoder SDK 读到 ' + parsed.messages + ' 条消息、' + parsed.subagents + ' 个子代理（桌面端同款 SDK）',
+        });
+        return;
+      }
+      resolvePromise({
+        status: 'fail',
+        detail: 'SDK 没找到该会话（found=' + String(parsed.found) + ' messages=' + String(parsed.messages) + '）',
+      });
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish();
+    }, 120_000);
+    child.on('exit', finish);
+    child.on('error', finish);
+  });
+}
+
 function nativeOpencodeCheck(pair, homePath) {
   const exported = run('opencode', ['export', pair.report.sessionId], {
     env: { XDG_DATA_HOME: homePath },
@@ -786,7 +850,7 @@ async function runPair(pair, options) {
   else if (pair.native === 'opencode') native = nativeOpencodeCheck({ ...pair, report, sourceSelection: source }, homePath);
   else if (pair.native === 'codex') native = await nativeCodexCheck({ ...pair, report, sourceSelection: source }, homePath);
   else if (pair.native === 'commandcode') native = await nativeCommandCodeCheck({ ...pair, report, sourceSelection: source }, options);
-  else if (pair.native === 'sdk') native = { status: 'manual', detail: 'Qoder 桌面无本地入口；SDK listSubagents/getSubagentMessages 已单独验证' };
+  else if (pair.native === 'sdk') native = await nativeQoderCheck({ ...pair, report, sourceSelection: source }, homePath);
   else native = { status: 'manual', detail: 'Cursor 无 headless；diff 卡片已人工验证' };
 
   return { pair, source, report, written: report.written, structural, native };
