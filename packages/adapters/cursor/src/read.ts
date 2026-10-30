@@ -52,6 +52,7 @@ import {
   readComposerDataRaw,
   readHeaderRow,
   readHeaderRows,
+  readMigratedConversationHeaders,
   tryParseJson,
 } from './wire.ts';
 import type {
@@ -649,6 +650,18 @@ function conversationHeaders(
       out.push({ ...(item as CursorConversationHeaderEntry), bubbleId, type });
     }
     return out;
+  }
+  // Cursor 3.27+ 打开过的会话：headers 被迁移到 composerConvHeaders 分块，按迁移后的读
+  const migrated = readMigratedConversationHeaders(db, composerId, data);
+  if (migrated !== undefined && migrated.length > 0) {
+    const out: CursorConversationHeaderEntry[] = [];
+    for (const item of migrated) {
+      const bubbleId = typeof item.bubbleId === 'string' ? item.bubbleId : undefined;
+      const type = typeof item.type === 'number' ? item.type : undefined;
+      if (bubbleId === undefined || type === undefined) continue;
+      out.push({ ...item, bubbleId, type });
+    }
+    if (out.length > 0) return out;
   }
   counters.noHeadersFallback += 1;
   const all = readAllBubbles(db, composerId);

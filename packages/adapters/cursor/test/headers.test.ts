@@ -282,3 +282,63 @@ test('verify 能发现 human/AI 文本 header 形状退化', async () => {
     fixture.cleanup();
   }
 });
+
+test('Cursor 3.27 迁移到 composerConvHeaders 分块的 header 仍能通过 verify 与读回', async () => {
+  const fixture = createCursorFixture({ composers: [] });
+  try {
+    await writeCursorSession(headerBundle(fixture.cwd), {
+      home: fixture.home,
+      composerId: HEADER_ID,
+      backupDir: fixture.home + '/backup',
+    });
+    const db = openCursorDb(fixture.dbPath);
+    try {
+      const raw = readDiskKvValue(db, 'composerData:' + HEADER_ID);
+      assert.ok(raw !== undefined);
+      const data = JSON.parse(raw) as { fullConversationHeadersOnly: HeaderLike[]; headerLog?: unknown };
+      const headers = data.fullConversationHeadersOnly;
+      assert.equal(headers.length, 9);
+      // 模拟 3.27 首次打开：legacy 数组清空，header 搬到 composerConvHeaders:<id>:<6 位序号>
+      const chunkSize = 4;
+      const chunks: HeaderLike[][] = [];
+      for (let index = 0; index < headers.length; index += chunkSize) {
+        chunks.push(headers.slice(index, index + chunkSize));
+      }
+      chunks.forEach((chunk, index) => {
+        db.prepare('INSERT OR REPLACE INTO cursorDiskKV (key, value) VALUES (?, ?)').run(
+          'composerConvHeaders:' + HEADER_ID + ':' + String(index).padStart(6, '0'),
+          JSON.stringify(chunk),
+        );
+      });
+      data.fullConversationHeadersOnly = [];
+      data.headerLog = { chunkSize, chunkCount: chunks.length, count: headers.length, generation: 'test' };
+      db.prepare('UPDATE cursorDiskKV SET value = ? WHERE key = ?').run(
+        JSON.stringify(data),
+        'composerData:' + HEADER_ID,
+      );
+    } finally {
+      closeCursorDb(db);
+    }
+
+    const report = await verifyCursorSession({ home: fixture.home, sessionId: HEADER_ID, skipReadback: true });
+    assert.equal(
+      report.ok,
+      true,
+      report.checks
+        .filter((check) => !check.ok)
+        .map((check) => check.name)
+        .join(','),
+    );
+    const headerCheck = report.checks.find((check) => check.name === 'conversation-headers');
+    assert.ok(headerCheck !== undefined && headerCheck.ok);
+    assert.ok(headerCheck.detail?.includes('3.27'), headerCheck.detail);
+    const countCheck = report.checks.find((check) => check.name === 'headers-count');
+    assert.ok(countCheck?.ok, countCheck?.detail);
+
+    // 读回也要走迁移后的 header，而不是退回 createdAt 排序
+    const readback = await readCursorSession(HEADER_ID, { home: fixture.home, includeChildren: false });
+    assert.equal(readback.root.events.filter((event) => event.kind === 'tool_call').length, 6);
+  } finally {
+    fixture.cleanup();
+  }
+});

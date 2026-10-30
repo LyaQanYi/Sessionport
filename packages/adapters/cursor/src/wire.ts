@@ -182,6 +182,8 @@ export interface CursorComposerData {
   modelConfig?: CursorModelConfig;
   workspaceIdentifier?: CursorWorkspaceIdentifierLike;
   fullConversationHeadersOnly?: CursorConversationHeaderEntry[];
+  /** Cursor 3.27+ 首次打开会话时把 legacy headers 迁移成分块存储（见 headerLog） */
+  headerLog?: CursorHeaderLog;
   conversationMap?: Record<string, unknown>;
   capabilities?: CursorCapability[];
   subComposerIds?: string[];
@@ -456,6 +458,55 @@ export function readComposerDataObject(db: DatabaseSync, composerId: string): Cu
   const raw = readComposerDataRaw(db, composerId);
   if (raw === undefined) return undefined;
   return parseJsonRecord(raw) as CursorComposerData | undefined;
+}
+
+/**
+ * Cursor 3.27+ 首次打开会话时会把 `fullConversationHeadersOnly` 迁移成
+ * `headerLog` + 分块 key `composerConvHeaders:<composerId>:<6 位序号>`。
+ * 迁移后 composerData 里只剩空数组，旧字段读回会得到 0 条——这里统一兜底。
+ */
+export const HEADER_CHUNK_KEY_PREFIX = 'composerConvHeaders:';
+
+export interface CursorHeaderLog {
+  chunkSize?: number;
+  chunkCount?: number;
+  count?: number;
+  generation?: string;
+  [key: string]: unknown;
+}
+
+export function headerChunkKey(composerId: string, index: number): string {
+  return HEADER_CHUNK_KEY_PREFIX + composerId + ':' + String(index).padStart(6, '0');
+}
+
+export function readMigratedConversationHeaders(
+  db: DatabaseSync,
+  composerId: string,
+  data: CursorComposerData,
+): CursorConversationHeaderEntry[] | undefined {
+  const log = isRecord(data.headerLog) ? (data.headerLog as CursorHeaderLog) : undefined;
+  const chunkCount = typeof log?.chunkCount === 'number' ? log.chunkCount : 0;
+  if (chunkCount <= 0) return undefined;
+  const out: CursorConversationHeaderEntry[] = [];
+  for (let index = 0; index < chunkCount; index += 1) {
+    const raw = readDiskKvValue(db, headerChunkKey(composerId, index));
+    if (raw === undefined) return undefined;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+    if (!Array.isArray(parsed)) return undefined;
+    for (const item of parsed) {
+      if (!isRecord(item)) return undefined;
+      const bubbleId = typeof item.bubbleId === 'string' ? item.bubbleId : undefined;
+      const type = typeof item.type === 'number' ? item.type : undefined;
+      if (bubbleId === undefined || type === undefined) return undefined;
+      out.push(item as CursorConversationHeaderEntry);
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

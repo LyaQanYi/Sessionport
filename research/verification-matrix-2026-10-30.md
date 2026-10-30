@@ -36,7 +36,7 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 | wb-qoder | 682 | ✅ 104 PASS | ⚠️ 仅 SDK | 同上；11 个子代理写入且 SDK 可读 |
 | kimi-claude | 81 | ✅ 11 PASS | ✅ claude --resume 显示会话内容 | Kimi Code 2.4.0 真实会话（25 次工具调用）→ Claude Code |
 | kimi-dsh | 81 | ✅ 17 PASS | ✅ headless 加载 Session 并开始 turn | 同一源 → DSH；纯 source 端补进矩阵 |
-| claude-cursor | 229 | ✅ 35 PASS | ⚠️ 仅人工 | Cursor 无 headless；结构校验在 3.27.22 副本库上通过 |
+| claude-cursor | 229 | ✅ 35 PASS | ✅ 3.27.22 桌面（CDP + 截图） | Cursor 无 headless；副本库起独立实例，人类/助手/shell/read/edit diff 均渲染正常 |
 
 ## 这一轮的改动
 
@@ -59,6 +59,11 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 - 8/8 有入口的目标端原生加载 PASS：Claude Code TUI ×4、DSH headless ×2、opencode export ×1、
   Codex resume ×1。
 - Kimi Code 2.4.0 真实会话已进矩阵（reader 与两条迁移路径都验过）。
+- Cursor 3.27.22 桌面渲染已确认：人类 8/8、助手 markdown、shell 卡片、read 行、edit diff、
+  回合摘要全部正常；默认折叠是 3.27 原生行为（原生 composer 同样折叠）。
+  证据：`research/cursor-ui-2026-10-30.md` + `.tmp/cursor-ui/`。
+- 顺带修掉 3.27 header 迁移导致的 verify 误报（`conversation-headers` / `no-orphan-bubbles`），
+  见 `research/cursor-headers.md` §8。
 - codex 的小样本问题已处理（38 events、含工具调用）。
 - 矩阵结果可追溯到具体目标端版本。
 
@@ -66,10 +71,13 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 
 1. **Qoder 桌面 UI 仍不可本地验证**：任务列表走服务端分页，本地 `projects/` 不被桌面读取；
    只能到 SDK 的 `listSessions/listSubagents/getSubagentMessages`。
-2. **Cursor 桌面渲染只能人工确认**：没有 headless 入口；最近一次人工确认是 3.25.9，
-   当前 app 已 3.27.22，需要一次人工重启检查（本轮只做了结构校验）。
-3. **Command Code 作为目标端未进矩阵**：`cmd` CLI 不在 PATH（只剩 `Command Code.app` 0.1.57），
-   `verify --resume` 的冒烟路径无法在本机复现。
+2. **Cursor 桌面渲染已确认，但细项没点完**：read 行展开后的文件正文永远为空（writer 不伪造，
+   与原生一致）、edit 卡片的“打开文件/diff 视图”入口未逐一点、原生 vs 导入的分组边界差异没跑全量对照。
+   另：3.27 的 `AgentStores` 写死真实库路径，`--user-data-dir` 不隔离，真机上跑副本库前要先备份。
+3. **Command Code 作为目标端未进矩阵**：CLI 没在 PATH，但打包在
+   `/Applications/Command Code.app/Contents/Resources/app/node_modules/command-code/dist/index.mjs`
+   （首次运行自动 1.82.3 → **1.86.1**）。跑它会写 `~/.commandcode`（沙箱拒绝：EPERM
+   `updates.json`），且 `verify --resume` 冒烟按设计会**真实调用一次模型**，所以仍不进矩阵。
 4. **DSH → Claude 子代理仍无法关联**：writer 继续记 `claude.subagent-unlinked`（缺 `viaToolCallId`）。
 5. **源会话是硬编码的，会随清理失效**：本轮就有两对因为源被删而换样本；
    长期应改成“自动挑选最近可用的合格会话”或固定的 fixture。

@@ -41,6 +41,7 @@ import {
   readDiskKvEntries,
   readDiskKvValue,
   readHeaderRow,
+  readMigratedConversationHeaders,
   tableExists,
   tryParseJson,
 } from './wire.ts';
@@ -161,10 +162,20 @@ export async function verifyCursorSession(options: VerifyCursorOptions): Promise
     const version = data?._v;
     push('composer-version', typeof version === 'number' && version >= 16, '_v=' + String(version ?? '?'));
 
-    const headers = Array.isArray(data?.fullConversationHeadersOnly)
-      ? data.fullConversationHeadersOnly
-      : undefined;
-    push('conversation-headers', headers !== undefined && headers.length > 0, String(headers?.length ?? 0) + ' 条');
+    const legacyHeaders =
+      Array.isArray(data?.fullConversationHeadersOnly) && data.fullConversationHeadersOnly.length > 0
+        ? data.fullConversationHeadersOnly
+        : undefined;
+    const migratedHeaders =
+      legacyHeaders === undefined && data !== undefined
+        ? readMigratedConversationHeaders(db, options.sessionId, data)
+        : undefined;
+    const headers = legacyHeaders ?? migratedHeaders;
+    push(
+      'conversation-headers',
+      headers !== undefined && headers.length > 0,
+      String(headers?.length ?? 0) + ' 条' + (migratedHeaders !== undefined ? '（3.27 分块迁移）' : ''),
+    );
 
     const parsedHeaders: CursorConversationHeaderEntry[] = [];
     let badShape = 0;
