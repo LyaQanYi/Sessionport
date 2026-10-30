@@ -350,3 +350,73 @@ test('verify：meta.json 缺失或与 child 不一致时 FAIL', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('synthesizeAgentCalls：父会话缺 Agent 调用时补一对合成调用，读回可关联', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sessionport-claude-children-synth-'));
+  try {
+    const bundle = makeBundle();
+    const report = await writeClaudeSession(bundle, {
+      configDir: dir,
+      cwd: TEST_CWD,
+      sessionId: SESSION_ID,
+      includeChildren: true,
+      synthesizeAgentCalls: true,
+    });
+
+    // 只有子代理二缺父会话调用：合成 1 对，且不再记 unlinked
+    const synthLoss = report.losses.find((loss) => loss.code === 'claude.subagent-agent-call-synthesized');
+    assert.equal(synthLoss?.severity, 'info');
+    assert.equal(synthLoss?.count, 1);
+    assert.equal(report.losses.some((loss) => loss.code === 'claude.subagent-unlinked'), false);
+    // 根会话 4 行 + 合成调用并入最后一条 assistant 行 + 一条 tool_result 行
+    assert.equal(report.rows.length, 5);
+
+    const mainRows = await readRows(report.filePath);
+    const secondChild = report.children[1]!;
+    const toolUseId = secondChild.meta.toolUseId;
+    assert.ok(toolUseId !== undefined);
+
+    const toolUseRow = mainRows.find((row) => {
+      const message = row.message as { content?: Array<{ type?: string; id?: string; name?: string; input?: Record<string, unknown> }> } | undefined;
+      return Array.isArray(message?.content) && message.content.some((block) => block.type === 'tool_use' && block.id === toolUseId);
+    });
+    assert.ok(toolUseRow, '缺少合成出来的 Agent tool_use 行');
+    const message = toolUseRow.message as { content: Array<{ type?: string; id?: string; name?: string; input?: Record<string, unknown> }> };
+    const block = message.content.find((candidate) => candidate.type === 'tool_use' && candidate.id === toolUseId);
+    assert.equal(block?.name, 'Agent');
+    assert.equal(block?.input?.description, '写文档');
+    assert.equal(block?.input?.subagent_type, 'general-purpose');
+
+    const resultRow = mainRows.find((row) => {
+      const content = (row.message as { content?: Array<{ type?: string; tool_use_id?: string }> } | undefined)?.content;
+      return Array.isArray(content) && content.some((candidate) => candidate.type === 'tool_result' && candidate.tool_use_id === toolUseId);
+    });
+    assert.ok(resultRow, '缺少合成调用的 tool_result 行');
+    const toolUseResult = resultRow.toolUseResult as Record<string, unknown>;
+    assert.equal(toolUseResult.agentId, secondChild.agentId);
+    assert.equal(toolUseResult.agentType, secondChild.meta.agentType);
+
+    // 读回：两个子代理都能通过 viaToolCallId 关联回父会话
+    const readback = await readClaudeSession(report.filePath, { configDir: dir });
+    assert.equal(readback.children.length, 2);
+    const secondReadback = readback.children.find((child) => child.session.meta.title === '写文档');
+    assert.equal(secondReadback?.viaToolCallId, toolUseId);
+
+    const verified = await verifyClaudeSession({
+      configDir: dir,
+      cwd: TEST_CWD,
+      sessionId: SESSION_ID,
+      expectedChildren: expectations(report),
+    });
+    assert.equal(
+      verified.ok,
+      true,
+      verified.checks
+        .filter((check) => !check.ok)
+        .map((check) => check.name)
+        .join(','),
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

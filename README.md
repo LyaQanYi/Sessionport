@@ -95,6 +95,13 @@ Sub-agent sessions: pass `--include-children`. DSH and Claude Code keep the nati
 (Claude Code writes `<sessionId>/subagents/agent-<id>.jsonl` + `meta.json`); Command Code has no parent
 concept, so children are written as independent sessions (content preserved, relationship reported as lost).
 
+Some sources store a sub-agent as a standalone session with no tool call in the parent (DSH does). Claude
+Code's UI only shows a sidecar transcript under the `Agent` call that spawned it, so such children would be
+written but invisible. `--synthesize-agent-calls` (claude-code target, off by default) inserts one synthetic
+`Agent` tool_use/tool_result pair per unlinked child at the child's start time so the sidecar is reachable in
+the UI; the pair does not exist in the source and is reported as an info loss
+(`claude.subagent-agent-call-synthesized`).
+
 Verification is reproducible: `pnpm matrix` writes each pair into an isolated target home and then loads the
 result in the target itself where an entry point exists (`claude --resume` TUI, DSH headless, Cursor/Qoder
 structural + SDK). It records the installed target versions (`versions.json`) so a result can be traced to

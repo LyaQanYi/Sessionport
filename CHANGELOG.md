@@ -7,6 +7,15 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
+- **`--synthesize-agent-calls` for the claude-code target.** Sources that store a sub-agent as an
+  independent session (DSH does) have no tool call in the parent, so the sidecar transcript was written
+  but stayed invisible in Claude Code's UI. With `--include-children --synthesize-agent-calls` (off by
+  default) the writer inserts one synthetic `Agent` tool_use/tool_result pair per unlinked child at the
+  child's start time, which gives the row the `toolUseResult.agentId` Claude links the sidecar by. The
+  fabricated pair is reported as `claude.subagent-agent-call-synthesized` (info) instead of the old
+  `claude.subagent-unlinked` warning. Covered by a children test and a real DSH session with two
+  sub-agents (verify PASS, readback `viaToolCallId` matches the meta); desktop rendering of the linked
+  sidecar is still a manual check.
 - **Verification matrix records target versions and absorbs transient TUI failures.** `pnpm matrix`
   now captures the installed target versions into `.tmp/matrix/versions.json` and prints them above the
   result table; a single-pair run merges into `.tmp/matrix/results.json` instead of replacing the other
