@@ -86,7 +86,7 @@ State lives in `~/.sessionport/registry.json` (`--state <dir>` to override).
 | Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ new transcript file | ✅ Qoder SDK `listSessions/listSubagents` (desktop task list is server-backed) | 1.1.69 |
 | WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | source only | 5.9.3 |
 | Claude Code | — | ✅ JSONL session files | ✅ `claude --resume` TUI (matrix) | CLI 2.1.312 |
-| Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + desktop registration | ✅ `cmd -p --session` | 1.82.3 |
+| Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + desktop registration | ✅ `cmd -p --session` (matrix, opt-in smoke) | 1.86.1 |
 | DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load (matrix) | 0.2.1-rc.3 (format v4) |
 | Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index registration | ✅ `codex exec resume` | 0.165.0 |
 | opencode | ✅ `opencode export` JSON | ✅ `opencode import` | ✅ `opencode run --session` | 1.19.5 |
@@ -111,7 +111,7 @@ one (root session, unarchived, recent, real cwd, `>= 20` events) and records `mo
 `results.json`, or reports the pair as `skip` when nothing qualifies. `--sources-only` previews that choice.
 Latest run: [research/verification-matrix-2026-10-30.md](research/verification-matrix-2026-10-30.md)
 (2026-10-29 baseline: [verification-matrix-2026-10-29.md](research/verification-matrix-2026-10-29.md)).
-The latest run covers eleven pairs — nine targets plus Kimi Code as a source.
+The latest run covers twelve pairs — seven targets across five source agents, with Kimi Code as a source.
 The `Against` column is the version each row's claim was last verified against — the 2026-10-30 pass
 re-ran every pair structurally, re-confirmed the native loads it has an entry point for, and re-checked
 Cursor's desktop rendering on 3.27.22 through a CDP-driven copy of the app; only the Qoder SDK check
