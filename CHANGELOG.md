@@ -16,6 +16,12 @@ All notable changes to this project are documented here. Format loosely follows
   `claude.subagent-unlinked` warning. Covered by a children test and a real DSH session with two
   sub-agents (verify PASS, readback `viaToolCallId` matches the meta); desktop rendering of the linked
   sidecar is still a manual check.
+- **Matrix covers the Command Code target (opt-in).** `claude-commandcode` writes a transcript into an
+  isolated home, verifies it structurally (18 PASS) and — only with `--command-code-smoke` — resumes it
+  with the CLI bundled in the desktop app (1.86.1). The check copies the real `~/.commandcode`
+  credentials into `.tmp/matrix/commandcode-home` so the CLI never writes the user's directory, and
+  treats an authentication rejection as a load success: with the expired credential the transcript
+  loads, the turn starts and the model call stops at 401 with zero tokens.
 - **Matrix auto-selects a source session when the pinned one is gone.** Each pair still pins a source
   session, but when it has been cleaned up the script now picks the newest qualifying session (root,
   unarchived, within `--max-age-days`, real cwd, `>= --min-events` events), records `mode: auto` plus the

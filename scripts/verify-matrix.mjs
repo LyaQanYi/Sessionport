@@ -28,6 +28,7 @@
  *   node scripts/verify-matrix.mjs --sources-only           # 只解析/打印源选择结果（不 push、不写 results.json）
  *   node scripts/verify-matrix.mjs --no-auto               # 关掉自动兜底（pin 不可用直接 skip）
  *   node scripts/verify-matrix.mjs --min-events=20 --max-age-days=30 --max-candidates=10
+ *   node scripts/verify-matrix.mjs claude-commandcode --command-code-smoke   # 会真实调用一次模型（Command Code）
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -54,7 +55,7 @@ const SOURCE_AGENT_BY_PREFIX = {
 };
 
 /** 自动兜底挑选的默认门槛（CLI 可覆盖） */
-const AUTO_DEFAULTS = { auto: true, minEvents: 20, maxAgeDays: 30, maxCandidates: 10, sourcesOnly: false };
+const AUTO_DEFAULTS = { auto: true, minEvents: 20, maxAgeDays: 30, maxCandidates: 10, sourcesOnly: false, commandCodeSmoke: false };
 
 /** list 每轮最多取多少条：够覆盖「最近若干天」的候选，也避免一次扫描过重 */
 const LIST_LIMIT = 200;
@@ -114,6 +115,14 @@ const PAIRS = [
     children: false,
     cwd: '/Users/lyaqanyi/Documents/Coding/LyaQanYi.com',
     native: 'codex',
+  },
+  {
+    id: 'claude-commandcode',
+    source: 'claude:4402912c-5c81-4696-a2c6-3743e09914c8',
+    to: 'command-code',
+    children: false,
+    cwd: '/Users/lyaqanyi/Documents/Coding/LyaQanYi.com',
+    native: 'commandcode',
   },
   {
     id: 'claude-qoder',
@@ -208,11 +217,15 @@ function parseCli(argv) {
       options.sourcesOnly = true;
       continue;
     }
+    if (arg === '--command-code-smoke') {
+      options.commandCodeSmoke = true;
+      continue;
+    }
     if (arg.startsWith('--')) {
       const equals = arg.indexOf('=');
       const name = equals >= 0 ? arg.slice(0, equals) : arg;
       const key = numberOptions[name];
-      if (key === undefined) fail('未知选项: ' + name + '（支持 --no-auto / --sources-only / --min-events / --max-age-days / --max-candidates）');
+      if (key === undefined) fail('未知选项: ' + name + '（支持 --no-auto / --sources-only / --command-code-smoke / --min-events / --max-age-days / --max-candidates）');
       const raw = equals >= 0 ? arg.slice(equals + 1) : argv[index + 1];
       if (raw === undefined) fail(name + ' 需要一个正整数');
       if (equals < 0) index += 1;
@@ -565,6 +578,81 @@ function nativeDshCheck(pair, homePath) {
   });
 }
 
+const COMMAND_CODE_APP = '/Applications/Command Code.app';
+const COMMAND_CODE_CLI = join(COMMAND_CODE_APP, 'Contents', 'Resources', 'app', 'node_modules', 'command-code', 'dist', 'index.mjs');
+const COMMAND_CODE_STORE = join(homedir(), '.commandcode');
+/** CLI 只认 ~/.commandcode：把真实凭据复制进 .tmp 的隔离 HOME，避免写用户目录（沙箱也会拦） */
+const COMMAND_CODE_HOME_FILES = ['auth.json', 'config.json', 'models-cache.json', 'telemetry-install-id', 'zero-data-retention.json'];
+
+/**
+ * Command Code 原生加载：让打包在桌面端里的 CLI 用无头模式 resume 这份 transcript。
+ *
+ * 和 codex 一样，隔离 home 没有凭据时它会在**加载前**就拒绝（Not authenticated），
+ * 所以这里复制真实凭据到 .tmp；若凭据有效会真实调用一次模型，因此默认关闭，
+ * 只有 --command-code-smoke 才跑。看到 run_start / turn_start 即算加载成功。
+ */
+function nativeCommandCodeCheck(pair, options) {
+  if (options.commandCodeSmoke !== true) {
+    return { status: 'skip', detail: '未启用（冒烟会真实调用一次模型；用 --command-code-smoke 开启）' };
+  }
+  if (!existsSync(COMMAND_CODE_CLI)) {
+    return { status: 'skip', detail: 'Command Code CLI 不存在（未安装桌面端）' };
+  }
+  const file = pair.report?.filePath ?? pair.report?.paths?.[0];
+  if (typeof file !== 'string' || !existsSync(file)) {
+    return { status: 'fail', detail: '缺少 transcript 路径' };
+  }
+  const ccHome = join(MATRIX, 'commandcode-home');
+  rmSync(ccHome, { recursive: true, force: true });
+  mkdirSync(join(ccHome, '.commandcode'), { recursive: true });
+  let copied = 0;
+  for (const name of COMMAND_CODE_HOME_FILES) {
+    const from = join(COMMAND_CODE_STORE, name);
+    if (existsSync(from)) {
+      copyFileSync(from, join(ccHome, '.commandcode', name));
+      copied += 1;
+    }
+  }
+  if (copied === 0) return { status: 'skip', detail: '没有可复制的 Command Code 凭据（先运行一次 cmd login）' };
+  return new Promise((resolvePromise) => {
+    const child = spawn(
+      process.execPath,
+      [COMMAND_CODE_CLI, '-p', '--session', file, '--output-format', 'json', '-t', '--skip-onboarding', '--yolo', 'Reply with exactly: RESUME_OK'],
+      { cwd: pair.report?.cwd ?? pair.cwd, env: { ...process.env, HOME: ccHome }, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let output = '';
+    child.stdout.on('data', (chunk) => {
+      output += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      output += chunk.toString();
+    });
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      const started = /"type":"run_start"/.test(output) || /"type":"turn_start"/.test(output);
+      const authBlocked = /401|api key|Authentication failed|Not authenticated/i.test(output);
+      if (started) {
+        resolvePromise({
+          status: 'pass',
+          detail: 'command code 无头加载 transcript 并开始 turn' + (authBlocked ? '（凭据失效，模型调用被 401 拦下）' : ''),
+        });
+      } else {
+        const hint = (output.match(/"(?:error|message)":"([^"]{0,160})"/) ?? [])[1] ?? output.slice(0, 160);
+        resolvePromise({ status: 'fail', detail: '未出现 run_start/turn_start：' + hint });
+      }
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish();
+    }, 120_000);
+    child.on('exit', finish);
+    child.on('error', finish);
+  });
+}
+
 function nativeOpencodeCheck(pair, homePath) {
   const exported = run('opencode', ['export', pair.report.sessionId], {
     env: { XDG_DATA_HOME: homePath },
@@ -652,6 +740,7 @@ async function runPair(pair, options) {
   else if (pair.to === 'qoder') pushArgs.push('--home', targetHome);
   else if (pair.to === 'opencode') pushArgs.push('--home', targetHome);
   else if (pair.to === 'codex') pushArgs.push('--home', targetHome);
+  else if (pair.to === 'command-code') pushArgs.push('--home', targetHome);
   else if (pair.to === 'cursor') pushArgs.push('--home', targetHome, '--confirm-real', '--title', '[sessionport 矩阵] ' + pair.id);
   if (pair.children) pushArgs.push('--include-children');
   const pushed = run(process.execPath, pushArgs);
@@ -679,6 +768,10 @@ async function runPair(pair, options) {
     const file = report.filePath || report.paths?.[0];
     const verified = run(process.execPath, [CLI, 'verify', '--agent', 'codex', '--file', file]);
     structural = summarizeVerify(verified.stdout);
+  } else if (pair.to === 'command-code') {
+    const file = report.filePath || report.paths?.[0];
+    const verified = run(process.execPath, [CLI, 'verify', '--agent', 'command-code', '--file', file]);
+    structural = summarizeVerify(verified.stdout);
   } else {
     const verified = run(process.execPath, [CLI, 'verify', '--agent', 'cursor', '--home', targetHome, '--id', report.composerId]);
     structural = summarizeVerify(verified.stdout);
@@ -692,6 +785,7 @@ async function runPair(pair, options) {
   else if (pair.native === 'dsh') native = await nativeDshCheck({ ...pair, report, sourceSelection: source }, homePath);
   else if (pair.native === 'opencode') native = nativeOpencodeCheck({ ...pair, report, sourceSelection: source }, homePath);
   else if (pair.native === 'codex') native = await nativeCodexCheck({ ...pair, report, sourceSelection: source }, homePath);
+  else if (pair.native === 'commandcode') native = await nativeCommandCodeCheck({ ...pair, report, sourceSelection: source }, options);
   else if (pair.native === 'sdk') native = { status: 'manual', detail: 'Qoder 桌面无本地入口；SDK listSubagents/getSubagentMessages 已单独验证' };
   else native = { status: 'manual', detail: 'Cursor 无 headless；diff 卡片已人工验证' };
 

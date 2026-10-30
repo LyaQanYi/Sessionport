@@ -32,6 +32,7 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 | codex-claude | 38 | ✅ 11 PASS | ✅ claude --resume 显示会话内容 | 样本从 14 events 换到 38 events（2 次工具调用） |
 | claude-opencode | 7 | ✅ 8 PASS | ✅ opencode export 读回 2 条消息 | 隔离 home 通过 `XDG_DATA_HOME`；无模型调用 |
 | claude-codex | 7 | ✅ 12 PASS | ✅ codex exec resume 载入 thread 并开始 turn | 隔离 home 无凭据，401 前已加载 thread |
+| claude-commandcode | 7 | ✅ 18 PASS | ✅ `cmd -p --session` 无头加载并开始 turn | opt-in（`--command-code-smoke`）；凭据失效时加载后被 401 拦下，不花钱 |
 | claude-qoder | 343 | ✅ 48 PASS | ⚠️ 仅 SDK | 桌面任务列表服务端驱动，本地 JSONL 不可见 |
 | wb-qoder | 682 | ✅ 104 PASS | ⚠️ 仅 SDK | 同上；11 个子代理写入且 SDK 可读 |
 | kimi-claude | 81 | ✅ 11 PASS | ✅ claude --resume 显示会话内容 | Kimi Code 2.4.0 真实会话（25 次工具调用）→ Claude Code |
@@ -55,9 +56,9 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 
 ## 已完成
 
-- 11/11 pair 结构校验 PASS（对当前安装版本）。
-- 8/8 有入口的目标端原生加载 PASS：Claude Code TUI ×4、DSH headless ×2、opencode export ×1、
-  Codex resume ×1。
+- 12/12 pair 结构校验 PASS（对当前安装版本）。
+- 9/9 有入口的目标端原生加载 PASS（Command Code 需 `--command-code-smoke` 显式开启）：
+  Claude Code TUI ×4、DSH headless ×2、opencode export ×1、Codex resume ×1、Command Code 无头 ×1。
 - Kimi Code 2.4.0 真实会话已进矩阵（reader 与两条迁移路径都验过）。
 - Cursor 3.27.22 桌面渲染已确认：人类 8/8、助手 markdown、shell 卡片、read 行、edit diff、
   回合摘要全部正常；默认折叠是 3.27 原生行为（原生 composer 同样折叠）。
@@ -74,10 +75,13 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 2. **Cursor 桌面渲染已确认，但细项没点完**：read 行展开后的文件正文永远为空（writer 不伪造，
    与原生一致）、edit 卡片的“打开文件/diff 视图”入口未逐一点、原生 vs 导入的分组边界差异没跑全量对照。
    另：3.27 的 `AgentStores` 写死真实库路径，`--user-data-dir` 不隔离，真机上跑副本库前要先备份。
-3. **Command Code 作为目标端未进矩阵**：CLI 没在 PATH，但打包在
+3. **Command Code 冒烟按设计会真实调用一次模型**：CLI 打包在
    `/Applications/Command Code.app/Contents/Resources/app/node_modules/command-code/dist/index.mjs`
-   （首次运行自动 1.82.3 → **1.86.1**）。跑它会写 `~/.commandcode`（沙箱拒绝：EPERM
-   `updates.json`），且 `verify --resume` 冒烟按设计会**真实调用一次模型**，所以仍不进矩阵。
+   （首次运行自动 1.82.3 → **1.86.1**），运行时只认 `~/.commandcode`。矩阵把它做成 opt-in：
+   `--command-code-smoke` 会把真实凭据复制进 `.tmp/matrix/commandcode-home`（不写用户目录），
+   再跑无头 resume；默认不开，避免每次跑矩阵都产生一次模型调用。
+   2026-10-30 实测（凭据已过期）：CLI 正常载入 transcript 并开始 turn，模型调用在 401 处被拦下，
+   token 消耗为 0。
 4. **DSH → Claude 子代理仍无法关联**：writer 继续记 `claude.subagent-unlinked`（缺 `viaToolCallId`）。
 5. **源会话是硬编码的，会随清理失效**：本轮就有两对因为源被删而换样本；
    长期应改成“自动挑选最近可用的合格会话”或固定的 fixture。
@@ -87,7 +91,7 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 ## 复现
 
 ```bash
-node scripts/verify-matrix.mjs            # 全量（当前 11 对）
+node scripts/verify-matrix.mjs            # 全量（当前 12 对）
 node scripts/verify-matrix.mjs claude-dsh # 单对（合并进 results.json）
 node scripts/verify-matrix.mjs --sources-only   # 只预演源选择，不 push、不写 results.json
 node scripts/verify-matrix.mjs --no-auto        # pin 不可用直接 skip，不做自动兜底
@@ -119,5 +123,5 @@ cat .tmp/matrix/versions.json             # 本次运行的目标端版本
 **env skip（pty 耗尽）**：`expect` 起不来时 system 报 `no more ptys`，这不是产品失败。脚本现在每次 capture
 前清旧日志、同时检测 `expect` 的 stderr 与日志、等 5s 重试最多 3 次，仍失败就把 native 标成
 `env: no more ptys` 的 skip。2026-10-30 下午本机 pty 被占满时，全量跑为
-**11/11 结构 PASS、native 4 PASS + 4 env skip + 3 manual、0 真 fail**；当天上午 pty 正常时同一脚本跑出
-**8 native PASS**。环境恢复后重跑即可回到 8 PASS。
+**12/12 结构 PASS、native 4 PASS + 4 env skip + 3 manual、0 真 fail**；当天上午 pty 正常时同一脚本跑出
+**8 native PASS**。环境恢复后重跑即可回到 8 PASS（Command Code 那对另需 `--command-code-smoke`）。
