@@ -16,6 +16,11 @@ All notable changes to this project are documented here. Format loosely follows
   `claude.subagent-unlinked` warning. Covered by a children test and a real DSH session with two
   sub-agents (verify PASS, readback `viaToolCallId` matches the meta); desktop rendering of the linked
   sidecar is still a manual check.
+- **Matrix verifies the Qoder target through the real SDK.** Qoder's desktop has no headless entry, so the
+  matrix used to report it as manual. `scripts/qoder-sdk-probe.mjs` runs under Qoder's own Electron Node (the
+  SDK lives in `app.asar`) against the isolated home and reports `listSessions`/`getSessionMessages`/
+  `listSubagents` counts — the same API the desktop main process calls, so a pass means the app can list the
+  session and its sub-agents. Both pairs now pass: 341 messages / 4 subagents and 661 messages / 11 subagents.
 - **Matrix covers the Command Code target (opt-in).** `claude-commandcode` writes a transcript into an
   isolated home, verifies it structurally (18 PASS) and — only with `--command-code-smoke` — resumes it
   with the CLI bundled in the desktop app (1.86.1). The check copies the real `~/.commandcode`
