@@ -20,7 +20,7 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 | Qoder（app） | `0.4.11`；内置 qodercli `1.1.75-hotfix.1` | qodercli 1.1.69 → 1.1.75-hotfix.1 |
 | DeepSeek Harness（app） | `0.2.1-rc.3` | 0.2.1-rc.2 / 底层 5.8.3 |
 | WorkBuddy（app） | `5.9.3` | 5.8.3 → 5.9.3 |
-| Kimi Code CLI | `2.4.0` | 2.1.1 → 2.4.0（未进矩阵） |
+| Kimi Code CLI | `2.4.0` | 2.1.1 → 2.4.0（本轮加入矩阵） |
 
 ## 结果（2026-10-30 全量跑通）
 
@@ -34,6 +34,8 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
 | claude-codex | 7 | ✅ 12 PASS | ✅ codex exec resume 载入 thread 并开始 turn | 隔离 home 无凭据，401 前已加载 thread |
 | claude-qoder | 343 | ✅ 48 PASS | ⚠️ 仅 SDK | 桌面任务列表服务端驱动，本地 JSONL 不可见 |
 | wb-qoder | 682 | ✅ 104 PASS | ⚠️ 仅 SDK | 同上；11 个子代理写入且 SDK 可读 |
+| kimi-claude | 81 | ✅ 11 PASS | ✅ claude --resume 显示会话内容 | Kimi Code 2.4.0 真实会话（25 次工具调用）→ Claude Code |
+| kimi-dsh | 81 | ✅ 17 PASS | ✅ headless 加载 Session 并开始 turn | 同一源 → DSH；纯 source 端补进矩阵 |
 | claude-cursor | 229 | ✅ 35 PASS | ⚠️ 仅人工 | Cursor 无 headless；结构校验在 3.27.22 副本库上通过 |
 
 ## 这一轮的改动
@@ -45,12 +47,18 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
    4.0 MB rollout），对应 2026-10-29 记录里的“样本偏小”待办。
 4. **dsh 源样本替换**：旧的 `session-22e4f5f8…` 已随会话清理消失；换成
    `dsh:session-fa31c98c…`（76 events / 26 次工具调用）。
+5. **Kimi Code 进矩阵**：新增 `kimi-claude` / `kimi-dsh` 两对，源是本机 2.4.0 CLI 自己写出的真实会话
+   （`session_708071d1…`，81 events / 25 次工具调用，`formatVersion=2` / `protocolVersion=1.5`），
+   reader 直接读得出来，不再只靠 2.1.1 的 fixture。
+6. **TUI 检查对 pty 耗尽的假失败免疫**：`expect` 偶发 `no more ptys`（系统 pty 被占满）会让这一对
+   记成 fail；现在检测到该错误会等 1.5s 自动重试一次。
 
 ## 已完成
 
-- 9/9 pair 结构校验 PASS（对当前安装版本）。
-- 6/6 有入口的目标端原生加载 PASS：Claude Code TUI ×3、DSH headless ×1、opencode export ×1、
+- 11/11 pair 结构校验 PASS（对当前安装版本）。
+- 8/8 有入口的目标端原生加载 PASS：Claude Code TUI ×4、DSH headless ×2、opencode export ×1、
   Codex resume ×1。
+- Kimi Code 2.4.0 真实会话已进矩阵（reader 与两条迁移路径都验过）。
 - codex 的小样本问题已处理（38 events、含工具调用）。
 - 矩阵结果可追溯到具体目标端版本。
 
@@ -60,18 +68,18 @@ Cursor 例外：写 `.tmp/cursor-app-test` 的副本库（需要 `--confirm-real
    只能到 SDK 的 `listSessions/listSubagents/getSubagentMessages`。
 2. **Cursor 桌面渲染只能人工确认**：没有 headless 入口；最近一次人工确认是 3.25.9，
    当前 app 已 3.27.22，需要一次人工重启检查（本轮只做了结构校验）。
-3. **Kimi Code 未进矩阵**：CLI 已到 2.4.0，但仓库里没有 2.4.0 的真实会话样本，
-   reader 仍以 2.1.1 的 fixture 为准；作为纯 source 端，没有目标端可加载。
-4. **Command Code 作为目标端未进矩阵**：`cmd` CLI 不在 PATH（只剩 `Command Code.app` 0.1.57），
+3. **Command Code 作为目标端未进矩阵**：`cmd` CLI 不在 PATH（只剩 `Command Code.app` 0.1.57），
    `verify --resume` 的冒烟路径无法在本机复现。
-5. **DSH → Claude 子代理仍无法关联**：writer 继续记 `claude.subagent-unlinked`（缺 `viaToolCallId`）。
-6. **源会话是硬编码的，会随清理失效**：本轮就有两对因为源被删而换样本；
+4. **DSH → Claude 子代理仍无法关联**：writer 继续记 `claude.subagent-unlinked`（缺 `viaToolCallId`）。
+5. **源会话是硬编码的，会随清理失效**：本轮就有两对因为源被删而换样本；
    长期应改成“自动挑选最近可用的合格会话”或固定的 fixture。
+6. **Kimi 2.4.0 有一个未识别的 wire 事件**：`changeNotifier.snapshot` 只记 warning
+   （`kimi.unknown-event`），不影响对话内容，但说明 wire 协议又多了一种事件类型。
 
 ## 复现
 
 ```bash
-node scripts/verify-matrix.mjs            # 全量
+node scripts/verify-matrix.mjs            # 全量（当前 11 对）
 node scripts/verify-matrix.mjs claude-dsh # 单对（合并进 results.json）
 cat .tmp/matrix/results.json              # 机器可读结果
 cat .tmp/matrix/versions.json             # 本次运行的目标端版本
