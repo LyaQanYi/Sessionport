@@ -87,8 +87,8 @@ State lives in `~/.sessionport/registry.json` (`--state <dir>` to override).
 | WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | source only | 5.9.3 |
 | Claude Code | — | ✅ JSONL session files | ✅ `claude --resume` TUI (matrix) | CLI 2.1.312 |
 | Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + desktop registration | ✅ `cmd -p --session` (matrix, opt-in smoke) | 1.86.1 |
-| DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load (matrix) | 0.2.1-rc.3 (format v4) |
-| Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index registration | ✅ `codex exec resume` | 0.165.0 |
+| DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load (matrix) | 0.2.2-rc.1 (format v4) |
+| Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index registration | ✅ `codex exec resume` | 0.167.0 |
 | opencode | ✅ `opencode export` JSON | ✅ `opencode import` | ✅ `opencode run --session` | 1.19.5 |
 
 Sub-agent sessions: pass `--include-children`. DSH and Claude Code keep the native parent/child tree
@@ -109,13 +109,14 @@ what it was verified against, and a single-pair run merges into the previous res
 Each pair pins a source session; when that session has been cleaned up the script picks the newest qualifying
 one (root session, unarchived, recent, real cwd, `>= 20` events) and records `mode: auto` plus the reason in
 `results.json`, or reports the pair as `skip` when nothing qualifies. `--sources-only` previews that choice.
-Latest run: [research/verification-matrix-2026-10-30.md](research/verification-matrix-2026-10-30.md)
-(2026-10-29 baseline: [verification-matrix-2026-10-29.md](research/verification-matrix-2026-10-29.md)).
+Latest run: [research/verification-matrix-2026-11-09.md](research/verification-matrix-2026-11-09.md)
+(2026-10-30 baseline: [verification-matrix-2026-10-30.md](research/verification-matrix-2026-10-30.md)).
 The latest run covers twelve pairs — seven targets across five source agents, with Kimi Code as a source.
-The `Against` column is the version each row's claim was last verified against — the 2026-10-30 pass
-re-ran every pair structurally, re-confirmed the native loads it has an entry point for, and re-checked
-Cursor's desktop rendering on 3.27.22 through a CDP-driven copy of the app; only the Qoder SDK check
-still carries its older manual version.
+The `Against` column is the version each row's claim was last verified against. The 2026-11-09 pass
+re-ran every pair structurally; native loads were re-confirmed where the host allowed them (Claude's
+TUI checks could not allocate a pty, and Qoder is no longer installed, so those pairs report a skip
+rather than a failure). Codex 0.167 needs a `config.toml` in the isolated home — the matrix copies the
+real one (without credentials) — and Cursor's rendering has not been re-checked since 3.27.22.
 
 ## How fidelity works
 

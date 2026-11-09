@@ -740,6 +740,12 @@ function nativeOpencodeCheck(pair, homePath) {
 
 function nativeCodexCheck(pair, homePath) {
   const sid = pair.report.sessionId;
+  // codex 0.167 起 resume 走 app-server，会校验 transcript 里记录的 model_provider；
+  // 隔离 home 没有 config.toml 时直接报 modelProviderNotConfigured（连 thread 都不建）。
+  // 只复制 config（不带 auth），加载成功后模型调用仍会被 401 拦下，不消耗额度。
+  const realConfig = join(homedir(), '.codex', 'config.toml');
+  const targetConfig = join(homePath, 'config.toml');
+  if (!existsSync(targetConfig) && existsSync(realConfig)) copyFileSync(realConfig, targetConfig);
   return new Promise((resolvePromise) => {
     const child = spawn('codex', ['exec', 'resume', '--skip-git-repo-check', sid, '--json', 'hi'], {
       cwd: pair.report?.cwd ?? pair.cwd,
