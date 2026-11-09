@@ -3,7 +3,10 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
-## [Unreleased]
+## [0.1.10] — 2026-11-09
+
+npm: `sesport@0.1.10` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the
+`v0.1.10` GitHub release.
 
 ### Added
 
@@ -27,31 +30,28 @@ All notable changes to this project are documented here. Format loosely follows
   credentials into `.tmp/matrix/commandcode-home` so the CLI never writes the user's directory, and
   treats an authentication rejection as a load success: with the expired credential the transcript
   loads, the turn starts and the model call stops at 401 with zero tokens.
-- **Matrix auto-selects a source session when the pinned one is gone.** Each pair still pins a source
-  session, but when it has been cleaned up the script now picks the newest qualifying session (root,
-  unarchived, within `--max-age-days`, real cwd, `>= --min-events` events), records `mode: auto` plus the
-  reason in `results.json`, and reports `skip` with a full rejection trail when nothing qualifies.
+- **Matrix is self-describing and survives stale inputs.** It captures the installed target versions
+  into `.tmp/matrix/versions.json` and prints them above the result table, a single-pair run merges into
+  `.tmp/matrix/results.json` instead of replacing the other pairs, and each pair pins its source session
+  while auto-picking the newest qualifying one when that session has been cleaned up (root, unarchived,
+  within `--max-age-days`, real cwd, `>= --min-events` events; `mode: auto` and the reason are written to
+  `results.json`, and a pair with nothing usable is reported as `skip` with a full rejection trail).
   `--sources-only` previews the choice and `--no-auto` disables the fallback. The Claude TUI check no
   longer treats a host out of ptys as a product failure: it clears the stale log, detects the `expect`
   stderr, retries 5s × 3, then records `env: no more ptys` as a skip.
-- **Verification matrix records target versions and absorbs transient TUI failures.** `pnpm matrix`
-  now captures the installed target versions into `.tmp/matrix/versions.json` and prints them above the
-  result table; a single-pair run merges into `.tmp/matrix/results.json` instead of replacing the other
-  pairs; and the Claude TUI check retries once when the host is out of ptys (`expect: no more ptys`)
-  instead of recording an environment failure as a product failure.
 
 ### Changed
 
-- **Matrix re-run against the current targets (2026-10-30).** Eleven pairs structurally PASS and
-  eight native loads PASS at Claude Code 2.1.312 / Codex 0.165.0 / opencode 1.19.5 / DSH 0.2.1-rc.3 /
-  qodercli 1.1.75-hotfix.1 / Kimi Code 2.4.0, and Cursor 3.27.22's desktop rendering was confirmed
-  through a CDP-driven copy of the app (human/assistant text, shell cards, read rows, edit diffs,
-  turn summaries; the default "Worked for" folding is native 3.27 behaviour). Kimi Code joins the
-  matrix as a source (`kimi-claude`, `kimi-dsh` reading a real 2.4.0 session), the Codex sample grew
-  from 14 to 38 events (two tool calls), and the DSH→Claude source was replaced after the old session
-  was cleaned up. Remaining boundaries (Qoder UI server-backed, Cursor fine-grained UI actions
-  untested, Command Code target not covered, DSH→Claude subagent linking, Kimi
-  `changeNotifier.snapshot` unknown event): `research/verification-matrix-2026-10-30.md`.
+- **Matrix re-run against the current targets (2026-10-30).** Twelve pairs: all structurally PASS and
+  eleven native checks PASS at Claude Code 2.1.312 / Codex 0.165.0 / opencode 1.19.5 / DSH 0.2.1-rc.3 /
+  qodercli 1.1.75-hotfix.1 / Kimi Code 2.4.0 (Command Code needs `--command-code-smoke`; only Cursor
+  stays manual). Cursor 3.27.22's desktop rendering was confirmed through a CDP-driven copy of the app
+  (human/assistant text, shell cards, read rows, edit diffs, turn summaries; the default "Worked for"
+  folding is native 3.27 behaviour). Kimi Code joins the matrix as a source (`kimi-claude`, `kimi-dsh`
+  reading a real 2.4.0 session), the Codex sample grew from 14 to 38 events (two tool calls), and the
+  DSH→Claude source was replaced after the old session was cleaned up. Remaining boundaries (Qoder GUI
+  not opened, Cursor fine-grained UI actions untested, DSH→Claude sidecar rendering in the Claude UI,
+  Kimi `changeNotifier.snapshot` unknown event): `research/verification-matrix-2026-10-30.md`.
 
 ### Fixed
 
