@@ -3,6 +3,26 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Changed
+
+- **Matrix re-run against the current targets (2026-11-09).** Twelve pairs: all structurally PASS.
+  Native loads re-confirmed for DSH (0.2.2-rc.1), opencode (1.19.5), Codex (0.167.0) and Kimi → DSH;
+  the Qoder pairs report a clean skip (app no longer installed) instead of failing, the Claude TUI
+  checks report an environment skip (the host cannot allocate a pty), and Cursor stays manual (last
+  rendering check 3.27.22, current app 3.29.9). The auto source picker fired for real: the pinned
+  Codex session had been cleaned up, so pair `codex-claude` ran against a fresh 46-event session.
+  Notes: `research/verification-matrix-2026-11-09.md`.
+
+### Fixed
+
+- **Codex 0.167 resume compatibility in the matrix.** `codex exec resume` now goes through an
+  app-server that validates the transcript's `model_provider` against `config.toml`. An isolated
+  `CODEX_HOME` without one fails with `modelProviderNotConfigured` before `thread.started`, so the
+  check copied the real `~/.codex/config.toml` in (without credentials) and the thread loads again;
+  the model call is still stopped by a 401 and costs nothing.
+
 ## [0.1.10] — 2026-11-09
 
 npm: `sesport@0.1.10` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the
