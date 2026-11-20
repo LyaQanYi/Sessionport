@@ -17,6 +17,20 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Fixed
 
+- **opencode 2.x compatibility (`2.2.7`) while keeping 1.x support.** Upgrading from opencode 1.19.x
+  to 2.2.x changed three things at once: (1) CLI commands moved under `session` (`opencode session
+  export` / `opencode session import`, no `--pure`), and require `--standalone` so isolated
+  `XDG_DATA_HOME`/`OPENCODE_DB` calls do not collide with the managed background service on port
+  49374; (2) export/import JSON switched from `{ info: { directory, version }, messages: [{ info,
+  parts }] }` to a flat v2 event shape (`info.location.directory`, typed `messages[]` with
+  `assistant.content[]`, object-only `tool.state.input`, and `completed`/`error` tool states —
+  `running`/`pending` are rejected with 400); (3) sessions moved from table `session` to
+  `session_v2`. The adapter now locates OpenCode.app's bundled `opencode-cli` on macOS when
+  `opencode` is not on `PATH`, detects CLI major version (with v2 → v1 fallback if `--version` is
+  unavailable), reads/writes/verifies both v1 and v2 export JSON, omits `info.model` on v2 unless
+  explicitly specified (matching the "do not migrate model binding" policy), lists both `session_v2`
+  and `session`, and passes `claude-opencode` in `verify-matrix.mjs` plus real 343-event import and
+  `opencode run --standalone --session` load verification.
 - **Codex 0.167 resume compatibility in the matrix.** `codex exec resume` now goes through an
   app-server that validates the transcript's `model_provider` against `config.toml`. An isolated
   `CODEX_HOME` without one fails with `modelProviderNotConfigured` before `thread.started`, so the

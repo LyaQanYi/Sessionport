@@ -119,3 +119,91 @@ test('opencode list: limit 生效，dbPath 可直接指定', async () => {
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+const SESSION_V2_SCHEMA = `CREATE TABLE session_v2 (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL DEFAULT '',
+  parent_id TEXT,
+  slug TEXT NOT NULL DEFAULT '',
+  directory TEXT NOT NULL DEFAULT '',
+  title TEXT,
+  version TEXT NOT NULL DEFAULT '2.2.7',
+  time_created INTEGER NOT NULL DEFAULT 0,
+  time_updated INTEGER NOT NULL DEFAULT 0,
+  time_archived INTEGER
+)`;
+
+test('opencode list: 纯 2.x 数据库（只有 session_v2 表）正常列出', async () => {
+  const home = makeHome();
+  try {
+    const db = createDb(home);
+    db.exec(SESSION_V2_SCHEMA);
+    db.prepare('INSERT INTO session_v2 (id, title, directory, time_created, time_updated, parent_id, time_archived) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      'ses_v2000000000000000000001',
+      '2.x 会话',
+      '/tmp/oc-v2',
+      1794000000000,
+      1794000005000,
+      null,
+      null,
+    );
+    db.close();
+    const sessions = await listOpencodeSessions({ home });
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]!.sessionId, 'ses_v2000000000000000000001');
+    assert.equal(sessions[0]!.title, '2.x 会话');
+    assert.equal(sessions[0]!.cwd, '/tmp/oc-v2');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('opencode list: 混合库（session_v2 + session 共存）合并列出并按 id 去重（session_v2 优先）', async () => {
+  const home = makeHome();
+  try {
+    const db = createDb(home);
+    db.exec(SESSION_SCHEMA);
+    db.exec(SESSION_V2_SCHEMA);
+    insertSession(db, {
+      id: 'ses_v1only000000000000000001',
+      title: '旧版会话',
+      directory: '/tmp/oc-v1',
+      created: 1700000000000,
+      updated: 1700000001000,
+    });
+    insertSession(db, {
+      id: 'ses_dup00000000000000000001',
+      title: '旧表重复标题',
+      directory: '/tmp/oc-v1',
+      created: 1700000002000,
+      updated: 1700000003000,
+    });
+    db.prepare('INSERT INTO session_v2 (id, title, directory, time_created, time_updated) VALUES (?, ?, ?, ?, ?)').run(
+      'ses_dup00000000000000000001',
+      'v2 表优先标题',
+      '/tmp/oc-v2',
+      1794000000000,
+      1794000002000,
+    );
+    db.prepare('INSERT INTO session_v2 (id, title, directory, time_created, time_updated) VALUES (?, ?, ?, ?, ?)').run(
+      'ses_v2only000000000000000002',
+      '纯 v2 会话',
+      '/tmp/oc-v2',
+      1794000003000,
+      1794000004000,
+    );
+    db.close();
+
+    const sessions = await listOpencodeSessions({ home });
+    assert.deepEqual(
+      sessions.map((s) => [s.sessionId, s.title]),
+      [
+        ['ses_v2only000000000000000002', '纯 v2 会话'],
+        ['ses_dup00000000000000000001', 'v2 表优先标题'],
+        ['ses_v1only000000000000000001', '旧版会话'],
+      ],
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

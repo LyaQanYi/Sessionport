@@ -98,4 +98,36 @@ OPENCODE_DB=<库> opencode run --session <id> --format json -m opencode-go/glm-5
 - 隔离 recipe（可复现）：`OPENCODE_DB` + `XDG_DATA_HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME` 四件套 +
   复制 `auth.json` + `sqlite3 .backup` 复制真实库；只给空库会因 credential/account 表为空导致 provider 401。
 
-> 完整逐字段契约见 [opencode-spec.md](./opencode-spec.md)。
+## 8. opencode 2.x 实测变更（2026-11-20，opencode v2.2.7）
+
+> 实测环境：macOS arm64，OpenCode.app 内置 CLI `/Applications/OpenCode.app/Contents/Resources/opencode-cli`（`opencode v2.2.7`）。
+
+### 8.1 CLI 路径、子命令与 `--standalone`
+
+- macOS 桌面端把 CLI 打包在 `/Applications/OpenCode.app/Contents/Resources/opencode-cli`，不一定在 `PATH` 或 `~/.opencode/bin/opencode`；adapter 的 `opencodeCliBinary()` 按 `explicit > $OPENCODE_BIN > ~/.opencode/bin/opencode > PATH > OpenCode.app` 顺序解析。
+- 子命令迁移到 `session` 下，且移除了 `--pure`：
+  - `opencode session export --standalone <id>`
+  - `opencode session import --standalone --directory <dir> <file>`
+  - `opencode session list --standalone --format json`
+  - `opencode run --standalone --session <id> --format json "<prompt>"`
+- **`--standalone` 必须显式传入**：2.x 默认连接或拉起后台服务（`serve --service`，固定占用端口 49374）。在 `XDG_DATA_HOME` / `OPENCODE_DB` 隔离环境下不加 `--standalone` 会与用户已运行的后台服务冲突并报 `Managed service port 49374 on 127.0.0.1 is already in use`；加 `--standalone` 走私有 stdio server，隔离稳定且不留后台进程。
+- `--directory <dir>` 必须是真实存在的目录（不存在报 `LocationNotFoundError`），且会覆盖写入 `session_v2.directory`。
+- 重复导入同 id 返回 exit 0 并输出 `Session already exists`；2.2.7 对 2.29MB 导出实测无管道截断（adapter 仍统一写临时文件 fd 兼容 1.x）。
+
+### 8.2 数据库与导出 JSON v2 契约
+
+- 新建库只有 `session_v2` / `session_message` / `session_part`（不再创建旧表 `session`）；混合库里 2.x CLI 只读写 `session_v2`（对旧表 `session` id 报 `Session not found`）。`listOpencodeSessions` 优先读 `session_v2` 再合并 `session` 按 id 去重。
+- 导出/导入 JSON 改为**扁平事件消息结构**（与 1.x 的 `{ info, parts }` 不兼容，1.x JSON 传入 2.x import 直接 400 Bad Request）：
+  - `info` 必需：`id`（`ses_` 前缀）、`projectID`、`cost`、`tokens`、`time{created,updated}`、`location{directory}`；可选：`agent`、`model`（**跨端导入时省略，让 opencode 用自身默认模型**）、`title`、`permissions`、`parentID`（指向已存在的父会话）。没有 `info.version` / `info.directory`。
+  - `messages[]` 按 `type` 区分：`user` / `assistant` / `synthetic` / `system` / `idle` / `model-switched` / `agent-switched`。
+    - `user` 必需：`id`、`type: "user"`、`time{created}`、`text`；可选：`files`、`agents`。
+    - `assistant` 必需：`id`、`type: "assistant"`、`time{created}`、`agent`、`model{id,providerID}`、`content[]`；可选：`finish`、`cost`、`tokens`、`time.completed`。
+  - `assistant.content[]` 块类型：
+    - `text`：`{ type: "text", text }`
+    - `reasoning`：`{ type: "reasoning", text, state?: { signature }, time?: { created, completed } }`
+    - `tool`：`{ type: "tool", id, name, executed?, state, time }`
+      - **`state.input` 必须是 JSON 对象**（字符串/数组被 400 拒绝）。
+      - **`state.status` 只接受 `completed`（带 `content: [{type:"text", text}]`）或 `error`（带 `error: { type, message }` 对象，字符串被拒绝）**；`running` / `pending` 在 import 时均被 400 拒绝 → 未完成调用在 v2 导出为 `status: "error", error: { type: "aborted", ... }` 并记 `opencode.tool-without-result` warning。
+- 实测验证：343 events（108 工具调用）真实 Claude 会话 push 到隔离 opencode 2.2.7 后，`session list` + `session export` 8/8 结构 PASS，且 `opencode run --standalone --session <id> --format json` 成功载入会话、使用默认模型触发 `step_start` 并追加新消息（15 → 19 条）。
+
+> 完整 1.x 逐字段契约见 [opencode-spec.md](./opencode-spec.md)。

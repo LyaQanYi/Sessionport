@@ -447,6 +447,17 @@ function resolvePairSource(pair, options) {
   return pickAutoSource(pair, parsed, pinnedError, options);
 }
 
+function opencodeBin() {
+  if (process.env.OPENCODE_BIN) return process.env.OPENCODE_BIN;
+  const standalone = join(homedir(), '.opencode', 'bin', 'opencode');
+  if (existsSync(standalone)) return standalone;
+  const which = run('which', ['opencode']);
+  if (which.code === 0 && which.stdout.trim().length > 0) return which.stdout.trim().split('\n')[0];
+  const appCli = '/Applications/OpenCode.app/Contents/Resources/opencode-cli';
+  if (existsSync(appCli)) return appCli;
+  return 'opencode';
+}
+
 /** 目标端各自报的版本号；矩阵结果要能回答“对哪个版本验的” */
 function toolVersions() {
   const cliVersion = (command) => {
@@ -464,7 +475,7 @@ function toolVersions() {
   return {
     claude: cliVersion('claude'),
     codex: cliVersion('codex'),
-    opencode: cliVersion('opencode'),
+    opencode: cliVersion(opencodeBin()),
     cursor: appVersion('/Applications/Cursor.app'),
     qoder: appVersion('/Applications/Qoder CN.app'),
     dsh: appVersion('/Applications/DeepSeek Harness.app'),
@@ -718,11 +729,28 @@ function nativeQoderCheck(pair, homePath) {
 }
 
 function nativeOpencodeCheck(pair, homePath) {
-  const exported = run('opencode', ['export', pair.report.sessionId], {
-    env: { XDG_DATA_HOME: homePath },
-    cwd: pair.report?.cwd ?? pair.cwd,
-  });
-  const start = exported.stdout.indexOf('{');
+  const bin = opencodeBin();
+  const cwd = pair.report?.cwd ?? pair.cwd;
+  const env = { XDG_DATA_HOME: homePath };
+  const verOut = run(bin, ['--version']);
+  const verMatch = /\bv?(\d+)\.\d+/.exec(verOut.stdout + '\n' + verOut.stderr);
+  const major = verMatch ? Number(verMatch[1]) : undefined;
+  const attempts =
+    major !== undefined
+      ? [major >= 2 ? ['session', 'export', '--standalone', pair.report.sessionId] : ['export', pair.report.sessionId, '--pure']]
+      : [
+          ['session', 'export', '--standalone', pair.report.sessionId],
+          ['export', pair.report.sessionId, '--pure'],
+        ];
+
+  let exported;
+  let usedV2 = false;
+  for (const args of attempts) {
+    exported = run(bin, args, { env, cwd });
+    usedV2 = args[0] === 'session';
+    if (exported.code === 0 && exported.stdout.includes('{')) break;
+  }
+  const start = (exported?.stdout ?? '').indexOf('{');
   if (start < 0) return { status: 'fail', detail: 'opencode export 没有 JSON 输出' };
   let parsed;
   try {
@@ -732,10 +760,26 @@ function nativeOpencodeCheck(pair, homePath) {
   }
   const infoId = parsed?.info?.id;
   const messages = Array.isArray(parsed?.messages) ? parsed.messages.length : 0;
-  if (infoId === pair.report.sessionId && messages > 0) {
-    return { status: 'pass', detail: 'opencode export 读回 ' + messages + ' 条消息' };
+  if (infoId !== pair.report.sessionId || messages === 0) {
+    return { status: 'fail', detail: 'export 内容不匹配（id=' + String(infoId) + ' messages=' + messages + '）' };
   }
-  return { status: 'fail', detail: 'export 内容不匹配（id=' + String(infoId) + ' messages=' + messages + '）' };
+  if (usedV2) {
+    const listed = run(bin, ['session', 'list', '--standalone', '--format', 'json'], { env, cwd });
+    const listStart = listed.stdout.indexOf('[');
+    let foundInList = false;
+    if (listStart >= 0) {
+      try {
+        const items = JSON.parse(listed.stdout.slice(listStart));
+        foundInList = Array.isArray(items) && items.some((item) => item?.id === pair.report.sessionId);
+      } catch {
+        foundInList = false;
+      }
+    }
+    return foundInList
+      ? { status: 'pass', detail: 'opencode session list + export 读回 ' + messages + ' 条消息' }
+      : { status: 'pass', detail: 'opencode session export 读回 ' + messages + ' 条消息' };
+  }
+  return { status: 'pass', detail: 'opencode export 读回 ' + messages + ' 条消息' };
 }
 
 function nativeCodexCheck(pair, homePath) {

@@ -127,14 +127,15 @@ export const enLossMessages: Record<string, string> = {
   'dsh.workspace-register-failed': 'Failed to register workspace.json (does not affect session files)',
 
   'opencode.injected-message-dropped': 'Target-injected messages (runtime context/skill listings, etc.) were dropped',
+  'opencode.image-part-flattened': 'Image parts keep only an [image: ref] text reference; no inline image data',
+  'opencode.model-not-migrated': 'Source model binding was not migrated by design; opencode will use its own default model',
   'opencode.opaque-reasoning-dropped': 'Source reasoning is encrypted and was dropped',
   'opencode.orphan-tool-result': 'Orphan tool_result (no matching call) was dropped',
   'opencode.boundary-dropped': 'Conversation boundary events were not mapped into the opencode export format',
-  'opencode.tool-without-result': 'Tool calls have no result and are exported with a running status',
+  'opencode.tool-without-result': 'Tool calls have no result and were exported without a completed output',
   'opencode.cross-agent-import':
     "The session came from another agent; message/tool semantics are approximated to opencode's export format",
-  'opencode.subagent-dropped':
-    'opencode subagents are an agent column on the session (not standalone sessions); subagent sessions were not exported',
+  'opencode.subagent-dropped': 'Subagent sessions were not exported into opencode',
   'opencode.subagent-events-dropped': 'Subagent session events were not exported',
   'opencode.import-failed': 'opencode import failed',
 
@@ -258,8 +259,11 @@ export const enNoticeMessages: Record<string, string> = {
   'kimi.version-ambiguous':
     'Version information is ambiguous: bundle manifest, session format, and wire protocol report different versions; the CLI version must be probed separately',
 
+  'opencode.assistant-error-skipped': 'Empty assistant error turns (e.g. upstream quota/rate-limit errors) were skipped',
   'opencode.file-parts-skipped': 'file parts (attachments/snapshots) were not mapped into the IR',
+  'opencode.runtime-messages-skipped': 'idle / model-switched / agent-switched are runtime status messages, not conversation content; skipped',
   'opencode.step-parts-skipped': 'step-start/step-finish are streaming placeholders, not conversation content; skipped',
+  'opencode.synthetic-message': 'Runtime-injected synthetic/system messages were marked synthetic',
   'opencode.tool-without-output':
     'Tool calls have no completed output (in progress or interrupted); only the call was kept',
   'opencode.unknown-message-role': 'Messages with roles other than user/assistant were skipped',

@@ -373,7 +373,14 @@ async function writeTarget(
   }
   if (target === 'opencode') {
     const mod = await import('@sessionport/adapter-opencode');
-    const report = await mod.writeOpencodeSession(bundle, { ...(opts as object), id, dryRun, runCwd: typeof opts.cwd === 'string' ? opts.cwd : undefined });
+    const opencodeHome = typeof opts.home === 'string' ? opts.home : undefined;
+    const report = await mod.writeOpencodeSession(bundle, {
+      ...(opts as object),
+      id,
+      dryRun,
+      runCwd: typeof opts.cwd === 'string' ? opts.cwd : undefined,
+      ...(opencodeHome !== undefined ? { env: { XDG_DATA_HOME: opencodeHome } } : {}),
+    });
     return { target, targetId: report.sessionId, paths: report.jsonPath ? [report.jsonPath] : [], unit: 'rows', units: report.exportData.messages?.length ?? 0, report };
   }
   if (target === 'codex') {
@@ -410,8 +417,11 @@ async function countTarget(target: string, outcome: WriteOutcome, opts: Record<s
   if (target === 'opencode') {
     try {
       const mod = await import('@sessionport/adapter-opencode');
+      const opencodeHome = typeof opts.home === 'string' ? opts.home : undefined;
       // 目标端不落 JSON 文件（import 后临时文件会清理），通过 export 数消息
-      const raw = await mod.exportOpencodeSession(outcome.targetId);
+      const raw = await mod.exportOpencodeSession(outcome.targetId, {
+        ...(opencodeHome !== undefined ? { env: { XDG_DATA_HOME: opencodeHome } } : {}),
+      });
       return mod.countOpencodeTarget(raw);
     } catch {
       return { exists: false, units: 0 };
@@ -718,8 +728,14 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
       const mod = await import('@sessionport/adapter-opencode');
       const id = typeof opts.id === 'string' ? opts.id : undefined;
       if (!id) fail('opencode resume 冒烟需要 --id <ses_…>');
+      const opencodeHome = typeof values.home === 'string' ? values.home : undefined;
       process.stdout.write('\n无头 resume 冒烟测试…\n');
-      const smoke = await mod.resumeSmokeOpencode({ sessionId: id, cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined, model: typeof opts.model === 'string' ? opts.model : undefined });
+      const smoke = await mod.resumeSmokeOpencode({
+        sessionId: id,
+        cwd: typeof opts.cwd === 'string' ? opts.cwd : undefined,
+        model: typeof opts.model === 'string' ? opts.model : undefined,
+        ...(opencodeHome !== undefined ? { env: { XDG_DATA_HOME: opencodeHome } } : {}),
+      });
       process.stdout.write('command: ' + smoke.command + '\n');
       process.stdout.write('exit=' + String(smoke.exitCode) + ' timedOut=' + String(smoke.timedOut) + '\n');
       if (smoke.stdout) process.stdout.write('stdout: ' + String(smoke.stdout).slice(-1200) + '\n');
