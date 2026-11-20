@@ -4,7 +4,7 @@ import { IR_VERSION } from '@sessionport/core';
 import type { IrBundle, IrEvent, IrEventInput, IrMessageEvent, IrNotice, IrPart, IrSession } from '@sessionport/core';
 
 import type { CodexContentBlock, CodexIndexEntry, CodexLine, CodexSessionMeta } from './wire.ts';
-import { codexHome, listRolloutFiles, readRollout, readSessionIndex, sessionIdFromRolloutPath } from './wire.ts';
+import { codexHome, isCodexInjectedUserText, listRolloutFiles, readRollout, readSessionIndex, sessionIdFromRolloutPath } from './wire.ts';
 
 export interface ReadCodexOptions {
   /** Codex 数据根目录，默认 $CODEX_HOME 或 ~/.codex */
@@ -13,9 +13,6 @@ export interface ReadCodexOptions {
   title?: string;
 }
 
-/** Codex 会把 AGENTS.md / 环境上下文伪装成 user 消息注入，导出时按 synthetic 处理 */
-const INJECTED_USER_PREFIXES = ['# AGENTS.md instructions for ', '<environment_context>', '<skills_instructions>', '<user_instructions>'];
-
 interface Counters {
   eventMsg: number;
   systemLines: number;
@@ -23,10 +20,19 @@ interface Counters {
   unknownLines: Map<string, number>;
   opaqueReasoning: number;
   badToolArgs: number;
+  orphanToolResults: number;
 }
 
 function emptyCounters(): Counters {
-  return { eventMsg: 0, systemLines: 0, developerMessages: 0, unknownLines: new Map(), opaqueReasoning: 0, badToolArgs: 0 };
+  return {
+    eventMsg: 0,
+    systemLines: 0,
+    developerMessages: 0,
+    unknownLines: new Map(),
+    opaqueReasoning: 0,
+    badToolArgs: 0,
+    orphanToolResults: 0,
+  };
 }
 
 function textFromBlocks(blocks: unknown, allowed: Set<string>): string {
@@ -103,6 +109,7 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
   if (title === undefined) title = firstUserText(lines);
 
   const events: IrEvent[] = [];
+  const pendingCalls = new Map<string, number>();
   let index = 0;
   let model: string | undefined;
   let provider: string | undefined;
@@ -151,7 +158,7 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
         if (role === 'user') {
           const text = textFromBlocks(payload.content, new Set(['input_text', 'text']));
           if (text.length > 0) {
-            const synthetic = INJECTED_USER_PREFIXES.some((prefix) => text.startsWith(prefix));
+            const synthetic = isCodexInjectedUserText(text);
             const event: IrEventInput = { kind: 'message', at, role: 'user', parts: [{ type: 'text', text }] };
             if (synthetic) event.synthetic = true;
             push(event);
@@ -189,6 +196,7 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
             counters.badToolArgs += 1;
           }
         }
+        pendingCalls.set(callId, (pendingCalls.get(callId) ?? 0) + 1);
         push({
           kind: 'tool_call',
           at,
@@ -200,6 +208,10 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
       }
       if (itemType === 'function_call_output') {
         const callId = String(payload.call_id ?? '');
+        const pending = pendingCalls.get(callId) ?? 0;
+        if (pending > 1) pendingCalls.set(callId, pending - 1);
+        else if (pending === 1) pendingCalls.delete(callId);
+        else counters.orphanToolResults += 1;
         const output = payload.output;
         push({
           kind: 'tool_result',
@@ -256,6 +268,24 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
       severity: 'warning',
     });
   }
+  let unmatchedToolCalls = 0;
+  for (const count of pendingCalls.values()) unmatchedToolCalls += count;
+  if (unmatchedToolCalls > 0) {
+    notices.push({
+      code: 'codex.tool-without-output',
+      message: '部分 function_call 没有对应的 function_call_output（可能因中断或子代理分叉产生），仅保留了调用',
+      count: unmatchedToolCalls,
+      severity: 'warning',
+    });
+  }
+  if (counters.orphanToolResults > 0) {
+    notices.push({
+      code: 'codex.orphan-tool-result',
+      message: '部分 function_call_output 找不到对应的 function_call，已按原样保留',
+      count: counters.orphanToolResults,
+      severity: 'warning',
+    });
+  }
   for (const [key, count] of counters.unknownLines) {
     notices.push({ code: 'codex.unknown-line', message: '未识别的 rollout 结构 ' + key, count, severity: 'warning' });
   }
@@ -295,7 +325,7 @@ function firstUserText(lines: CodexLine[]): string | undefined {
     const payload = (line.payload ?? {}) as Record<string, unknown>;
     if (payload.type !== 'message' || payload.role !== 'user') continue;
     const text = textFromBlocks(payload.content, new Set(['input_text', 'text'])).trim();
-    if (text.length > 0) return text.slice(0, 60);
+    if (text.length > 0 && !isCodexInjectedUserText(text)) return text.slice(0, 60);
   }
   return undefined;
 }

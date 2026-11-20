@@ -150,3 +150,17 @@ export function codexRolloutPath(home: string, sessionId: string, at: Date): str
   const dateDir = join(sessionsRoot(home), String(at.getFullYear()), pad(at.getMonth() + 1), pad(at.getDate()));
   return join(dateDir, 'rollout-' + rolloutTimestamp(at) + '-' + sessionId + '.jsonl');
 }
+
+const INJECTED_USER_PREFIXES = ['<environment_context>', '<skills_instructions>', '<user_instructions>'];
+/**
+ * Codex 会把 AGENTS.md / 环境上下文伪装成 user 消息注入：
+ * - 0.163: `# AGENTS.md instructions for <dir>`
+ * - 0.169+: `# AGENTS.md instructions\n\n<INSTRUCTIONS>...`（list 折叠空白后为 `# AGENTS.md instructions <INSTRUCTIONS>`）
+ */
+const AGENTS_MD_INJECTED_RE = /^# AGENTS\.md instructions(?:\s+for\s+|\s*\n|\s+<INSTRUCTIONS>)/;
+
+export function isCodexInjectedUserText(text: string): boolean {
+  const trimmed = text.trimStart();
+  if (AGENTS_MD_INJECTED_RE.test(trimmed)) return true;
+  return INJECTED_USER_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}

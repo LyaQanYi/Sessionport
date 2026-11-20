@@ -25,10 +25,14 @@ const RUNTIME_EVENT_TYPES = new Set<string>([
   'runtime.set_binding',
   'mcp.tools_discovered',
   'permission.set_mode',
+  'permission.record_approval_result',
   'profile.bind',
   'config.update',
+  'environment.set_binding',
   'plugin.session_start',
   'llm.tools_snapshot',
+  'tool_select.initialized',
+  'tools.update_store',
   'llm.request',
   'usage.record',
   'token_counting.measured',
@@ -41,12 +45,17 @@ const RUNTIME_EVENT_TYPES = new Set<string>([
   'prompt.steered',
   'file_history.tracked',
   'file_history.checkpoint',
+  'changeNotifier.snapshot',
   'interaction.request',
   'interaction.resolved',
   'subagent.spawned',
   'subagent.started',
   'subagent.completed',
+  'task.started',
+  'task.terminated',
+  'task.waitDelivered',
   'turn.step.interrupted',
+  'turn.step.retrying',
   'context.undo',
 ]);
 
@@ -99,6 +108,12 @@ function scanPass(lines: KimiWireLine[], ctx: AgentContext): void {
         const promptId = line.promptId;
         const turnId = line.turnId;
         if (typeof promptId === 'string' && typeof turnId === 'number') ctx.promptTurn.set(promptId, turnId);
+        break;
+      }
+      case 'turn.steer': {
+        const messageId = line.messageId;
+        const turnId = line.turnId;
+        if (typeof messageId === 'string' && typeof turnId === 'number') ctx.promptTurn.set(messageId, turnId);
         break;
       }
       case 'context.undone': {
@@ -362,7 +377,7 @@ async function readAgent(
       bump(ctx, 'uiMirror');
       continue;
     }
-    if (type === 'turn.prompt') {
+    if (type === 'turn.prompt' || type === 'turn.steer') {
       bump(ctx, 'promptEcho');
       continue;
     }
@@ -421,7 +436,7 @@ async function readAgent(
   if (promptEcho > 0) {
     notices.push({
       code: 'kimi.prompt-echo-dropped',
-      message: 'turn.prompt 与 context.append_message 重复，已跳过',
+      message: 'turn.prompt / turn.steer 与 context.append_message 重复，已跳过',
       count: promptEcho,
       severity: 'info',
     });

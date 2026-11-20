@@ -183,9 +183,12 @@ export const enNoticeMessages: Record<string, string> = {
     'developer/system messages are runtime-injected instructions (skills, environment notes, etc.); the target generates its own, so they were skipped',
   'codex.event-msg-skipped': 'event_msg is a UI mirror duplicating response_item; skipped',
   'codex.opaque-reasoning': 'Reasoning only has encrypted content; kept as opaque reasoning',
+  'codex.orphan-tool-result': 'Some function_call_output entries had no matching function_call; kept as-is',
   'codex.system-lines-skipped':
     'Runtime snapshots such as token_usage_record / world_state are not conversation content; skipped',
   'codex.tool-arguments-not-json': 'Some function_call arguments were not valid JSON; kept as raw strings',
+  'codex.tool-without-output':
+    'Some function_call entries had no matching function_call_output (e.g. interrupted turn or forked subagent); only the call was kept',
   'codex.unknown-line': 'Unknown rollout structure was skipped',
 
   'command-code.bad-lines': 'There are unparseable JSON lines (the loader discards them as corrupted)',
@@ -251,7 +254,7 @@ export const enNoticeMessages: Record<string, string> = {
 
   'kimi.bad-wire-lines': 'wire.jsonl contains unparseable lines',
   'kimi.missing-subagent-wire': 'A subagent has no wire.jsonl',
-  'kimi.prompt-echo-dropped': 'turn.prompt duplicated context.append_message; skipped',
+  'kimi.prompt-echo-dropped': 'turn.prompt / turn.steer duplicated context.append_message; skipped',
   'kimi.runtime-events-dropped': 'Runtime/config/usage/step events are not conversation content; skipped',
   'kimi.ui-mirror-dropped': 'agent.message.appended is a UI mirror of the context event stream; skipped',
   'kimi.undone-turns-dropped': 'Turns undone at the source were removed from the IR (the undo boundary event is kept)',

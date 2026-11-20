@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
+import { validateIrBundle } from '@sessionport/core';
 import { readKimiBundle } from '../src/index.ts';
 
 const BUNDLE = process.env.SESSIONPORT_KIMI_BUNDLE
@@ -51,4 +53,57 @@ test('undo 回滚的轮次默认被裁掉，可关闭', { skip: hasBundle ? fals
 
 test('非 Kimi 目录会明确报错', async () => {
   await assert.rejects(() => readKimiBundle(resolve('/tmp')), /不是 Kimi 会话目录/);
+});
+
+test('fixture: Kimi 2.6.x 运行时事件与 turn.steer 归入 info，不误报 unknown-event', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sessionport-kimi-26-'));
+  try {
+    mkdirSync(join(dir, 'agents', 'main'), { recursive: true });
+    writeFileSync(
+      join(dir, 'state.json'),
+      JSON.stringify({
+        id: 'session_kimi26_fixture',
+        version: 2,
+        cwd: '/tmp/kimi-26',
+        title: 'Kimi 2.6 fixture',
+        createdAt: 1795000000000,
+        updatedAt: 1795000010000,
+        agents: { main: { type: 'main', homedir: join(dir, 'agents', 'main') } },
+      }),
+      'utf8',
+    );
+    const wire = [
+      { type: 'metadata', protocol_version: '1.5', time: 1795000000000 },
+      { type: 'environment.set_binding', environmentId: 'env_1', agentId: 'main', time: 1795000000100 },
+      { type: 'tool_select.initialized', agentId: 'main', tools: [], time: 1795000000200 },
+      { type: 'tools.update_store', agentId: 'main', key: 'k', value: [], time: 1795000000250 },
+      { type: 'changeNotifier.snapshot', agentId: 'main', time: 1795000000300 },
+      { type: 'turn.prompt', promptId: 'msg_1', turnId: 1, time: 1795000001000 },
+      { type: 'context.append_message', message: { id: 'msg_1', role: 'user', content: [{ type: 'text', text: '查一下状态' }] }, time: 1795000001001 },
+      { type: 'permission.record_approval_result', turnId: 1, toolCallId: 'tc_1', toolName: 'shell', result: { decision: 'allow' }, time: 1795000001500 },
+      { type: 'task.started', agentId: 'main', info: { taskId: 't_1' }, time: 1795000001600 },
+      { type: 'task.terminated', agentId: 'main', info: { taskId: 't_1' }, time: 1795000001700 },
+      { type: 'task.waitDelivered', agentId: 'main', keys: ['t_1'], time: 1795000001800 },
+      { type: 'turn.step.retrying', agentId: 'main', turnId: 1, step: 1, time: 1795000001900 },
+      { type: 'context.append_message', message: { id: 'msg_steer', role: 'user', content: [{ type: 'text', text: '顺便看日志' }] }, time: 1795000002000 },
+      { type: 'turn.steer', agentId: 'main', messageId: 'msg_steer', turnId: 1, input: [{ type: 'text', text: '顺便看日志' }], time: 1795000002001 },
+      { type: 'context.append_loop_event', event: { type: 'content.part', turnId: 1, part: { type: 'text', text: '已完成检查' } }, time: 1795000003000 },
+    ];
+    writeFileSync(join(dir, 'agents', 'main', 'wire.jsonl'), wire.map((line) => JSON.stringify(line)).join('\n') + '\n', 'utf8');
+
+    const bundle = await readKimiBundle(dir);
+    assert.deepEqual(validateIrBundle(bundle), []);
+    assert.equal(bundle.root.events.length, 3);
+    assert.equal(bundle.root.source.formatVersion, '2');
+    assert.equal(bundle.root.source.protocolVersion, '1.5');
+    assert.equal(bundle.root.notices.filter((n) => n.code === 'kimi.unknown-event').length, 0);
+    const echo = bundle.root.notices.find((n) => n.code === 'kimi.prompt-echo-dropped');
+    assert.equal(echo?.severity, 'info');
+    assert.equal(echo?.count, 2);
+    const runtime = bundle.root.notices.find((n) => n.code === 'kimi.runtime-events-dropped');
+    assert.equal(runtime?.severity, 'info');
+    assert.equal(runtime?.count, 10);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

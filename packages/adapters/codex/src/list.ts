@@ -15,7 +15,7 @@ import { finalizeSessionList } from '@sessionport/core';
 import type { ListSessionsOptions, SessionSummary } from '@sessionport/core';
 
 import type { CodexIndexEntry, CodexLine, CodexSessionMeta } from './wire.ts';
-import { codexHome, listRolloutFiles, readSessionIndex, sessionIdFromRolloutPath } from './wire.ts';
+import { codexHome, isCodexInjectedUserText, listRolloutFiles, readSessionIndex, sessionIdFromRolloutPath } from './wire.ts';
 
 /** 首页大小：session_meta 在第一行，首条 user 文本通常也在前面 */
 const HEAD_BYTES = 128 * 1024;
@@ -73,9 +73,6 @@ function safeIndex(home: string): Map<string, CodexIndexEntry> {
   return map;
 }
 
-/** Codex 会把 AGENTS.md / 环境上下文伪装成 user 消息注入，不作为标题 */
-const INJECTED_USER_PREFIXES = ['# AGENTS.md instructions for ', '<environment_context>', '<skills_instructions>', '<user_instructions>'];
-
 function firstUserText(lines: CodexLine[]): string | undefined {
   for (const line of lines) {
     if (line.type !== 'response_item') continue;
@@ -91,7 +88,7 @@ function firstUserText(lines: CodexLine[]): string | undefined {
     }
     const joined = texts.join('\n').replace(/\s+/gu, ' ').trim();
     if (joined.length === 0) continue;
-    if (INJECTED_USER_PREFIXES.some((prefix) => joined.startsWith(prefix))) continue;
+    if (isCodexInjectedUserText(joined)) continue;
     return joined.length > 100 ? joined.slice(0, 100) + '…' : joined;
   }
   return undefined;

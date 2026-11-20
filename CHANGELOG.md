@@ -31,6 +31,19 @@ All notable changes to this project are documented here. Format loosely follows
   explicitly specified (matching the "do not migrate model binding" policy), lists both `session_v2`
   and `session`, and passes `claude-opencode` in `verify-matrix.mjs` plus real 343-event import and
   `opencode run --standalone --session` load verification.
+- **Codex 0.169+ reader compatibility & tool-pairing notices.** Codex 0.169+ dropped the `" for <dir>"`
+  suffix from injected AGENTS.md user messages (`# AGENTS.md instructions\n\n<INSTRUCTIONS>`), which
+  caused both `read` and `list` to miss `synthetic` detection; both now share
+  `isCodexInjectedUserText()`. `readCodexSession()` also now reports unmatched `function_call`
+  entries (`codex.tool-without-output`, warning — common in interrupted turns and forked subagent
+  rollouts) and orphan `function_call_output` entries (`codex.orphan-tool-result`, warning), and
+  `codex/test/read.test.ts` adds offline fixtures plus exact balance assertions on real rollouts.
+- **Kimi Code 2.6.x wire event coverage.** Added Kimi 2.5/2.6 runtime events
+  (`permission.record_approval_result`, `task.started`, `task.terminated`, `task.waitDelivered`,
+  `changeNotifier.snapshot`, `turn.step.retrying`, `environment.set_binding`,
+  `tool_select.initialized`, `tools.update_store`) to the runtime-event skip list and treated
+  `turn.steer` as a prompt echo (with undo turn tracking), eliminating false `kimi.unknown-event`
+  warnings on 2.6.3 sessions; updated the matrix Kimi sample to a 2.6.3 session (867 events).
 - **Codex 0.167 resume compatibility in the matrix.** `codex exec resume` now goes through an
   app-server that validates the transcript's `model_provider` against `config.toml`. An isolated
   `CODEX_HOME` without one fails with `modelProviderNotConfigured` before `thread.started`, so the
