@@ -1,4 +1,4 @@
-# sessionport 交接说明（2026-11-20）
+# sessionport 交接说明（2026-11-21）
 
 给接手者（Antigravity / 其他 agent）的完整上下文。读完这份 + `README.md` + `DESIGN.md` 就能继续干活。
 
@@ -21,14 +21,13 @@
 
 ---
 
-## 2. 当前状态（截至 2026-11-20）
+## 2. 当前状态（截至 2026-11-21）
 
 | 项 | 值 |
 |---|---|
-| 分支 | `main`，与 `origin/main` 同步，工作树干净 |
-| 最新提交 | `504792e test(matrix): refresh against 2026-11 targets and fix codex 0.167 resume` |
-| 最新发布 | **v0.1.10**（npm `sesport@0.1.10` + GitHub Release 4 个产物） |
-| 测试 | 227 tests / 219 pass / **1 fail** / 7 skip（失败项见 §7） |
+| 分支 | `main`（含本地 opencode 2.x / Codex 0.169+ / Kimi 2.6.3 修复及 `v0.1.11` 准备提交，具体见 `git log -n 5`） |
+| 发布版本 | **v0.1.11**（已本地打 tag 准备就绪，待 `git push origin main --tags` 后由 CI 发 npm `sesport@0.1.11` + GitHub Release） |
+| 测试 | 241 tests / 234 pass / **0 fail** / 7 skip；桌面端 `apps/desktop/test/*.test.ts` **33/33 pass** |
 | 适配器 | 9 个：claude-code / codex / command-code / cursor / dsh / kimi-code / opencode / qoder / workbuddy |
 
 ### 可读可写矩阵
@@ -39,10 +38,10 @@
 | Cursor | ✅ | ✅ | 写 `state.vscdb`，需 `--confirm-real` |
 | Qoder | ✅ | ✅ | 桌面任务列表服务端驱动 |
 | DeepSeek Harness | ✅ | ✅ | 多帧 zstd 事件日志 |
-| Codex | ✅ | ✅ | 含 threads/index 注册 |
-| opencode | ✅ | ✅ | **CLI 2.x 改了子命令，当前坏了**，见 §7 |
+| Codex | ✅ | ✅ | 含 threads/index 注册；兼容 0.169+ 注入格式与未配对工具调用 notice |
+| opencode | ✅ | ✅ | 兼容 1.x 与 2.x（2.2.7 实测通过，自动探测 CLI 与 v1/v2 格式） |
 | Command Code | ✅ | ✅ | 含桌面端注册 |
-| Kimi Code | ✅ | — | 纯 source |
+| Kimi Code | ✅ | — | 纯 source（已覆盖 2.6.x wire 事件） |
 | WorkBuddy | ✅ | — | 纯 source |
 
 ---
@@ -135,40 +134,22 @@ pty 耗尽时 `expect` 起不来，脚本记 `env: no more ptys` 并标 skip，*
 
 ---
 
-## 7. 已知未完成 / 待修（按优先级）
+## 7. 已知状态与待办（按优先级）
 
-### P0：opencode 2.x 完全不工作
+### 已在 v0.1.11 解决
 
-**现象**：`claude-opencode` 这一对 fail/fail，`opencode export 没有 JSON 输出`。
-
-**根因**：opencode 从 1.19.5 升到 **2.2.7**，CLI 把子命令改了：
-- 旧（adapter 现在用的）：`opencode export <id> --pure` / `opencode import <file> --pure`
-- 新：`opencode session export <id>` / `opencode session import <file>`
-
-**要改的地方**：`packages/adapters/opencode/src/read.ts:49`、`packages/adapters/opencode/src/write.ts:273`。
-建议做法：探测版本或先试新写法、失败回退旧写法，两边都保留。
-
-### P1：Codex 测试失败（数据问题，非代码 bug）
-
-`packages/adapters/codex/test/read.test.ts` 的「读取真实 Codex 会话」失败：
-`actual: 9, expected: 8` — 有 1 个 `function_call` 没有对应的 `function_call_output`
-（`call_d30a175244c64e36b244968f0ce76e32`）。
-
-这是**真实样本数据不完整**（模型调用被中断），不是 reader 逻辑错。两个选择：
-1. 放宽断言：允许少量未配对（记录成 notice）
-2. 换一个配对完整的样本
-
-**建议选 1**，因为真实世界就是会有中断的调用，reader 应该容忍并如实报告。
+- **opencode 2.x 支持（原 P0）**：已兼容 CLI 2.x（`session export`/`import` + `--standalone` + OpenCode.app 内置 CLI 探测 + v2 JSON + `session_v2` 表）并保留 1.x；在 `opencode v2.2.7` 上 `claude-opencode` 矩阵、343-event 导入与 `run --standalone` 实测通过（详见 `research/opencode-format.md` §8）。
+- **Codex 真实样本测试与 0.169+ 兼容（原 P1）**：`codex/src/read.ts` 已追踪未配对 `function_call`（`codex.tool-without-output` warning）与孤立 `function_call_output`（`codex.orphan-tool-result` warning），补了离线 fixture 并改为精确账平断言；同时修复了 Codex 0.169+ 去掉 `AGENTS.md instructions for <dir>` 中 `for <dir>` 后缀导致的 `synthetic` 漏标。
+- **Kimi 2.6.3 兼容与矩阵样本更新（原 P3）**：已将 Kimi 2.5/2.6 运行时事件与 `turn.steer` 纳入处理（0 warning），`verify-matrix.mjs` 的 Kimi 样本已切换到 2.6.3 会话（867 events），`kimi-claude` 与 `kimi-dsh` 双原生通过。
 
 ### P2：Cursor 3.31.11 桌面渲染未复核
 
 上次确认是 3.27.22（CDP + 截图，见 `research/cursor-ui-2026-10-30.md`），现在 app 已到 3.31.11。
-结构校验通过，但 GUI 渲染需要再跑一次。CDP 方法在报告里有完整记录，可以复用。
+结构校验通过（35/35 PASS），但 GUI 渲染需要再跑一次。CDP 方法在报告里有完整记录，可以复用。
 
-### P3：Kimi 2.6.3 兼容性
-
-好消息：实测 2.6.3 写出的会话**能正常读**（867 events，`formatVersion=2` / `protocolVersion=1.5` 没变）。
-待办：把矩阵里的 Kimi 样本换成 2.6.x 写出的会话，确认无回归。
+⚠️ **隔离陷阱（必读）**：`research/cursor-ui-2026-10-30.md` 已实测 Cursor 3.27+ 的 `AgentStores` 路径写死在真实库
+`~/Library/Application Support/Cursor/AgentStores/cursor_agent_stores/`，**不走 `--user-data-dir`**。
+上次是靠 DSH 沙箱 `EPERM` 才没写入真实库；在无沙箱环境下用副本库启动 Cursor 3.31.11 **必须先做 `HOME` 或 `sandbox-exec` 隔离**，否则会反向污染真实库。
 
 ### P4：其他
 
@@ -178,9 +159,9 @@ pty 耗尽时 `expect` 起不来，脚本记 `env: no more ptys` 并标 skip，*
 
 ---
 
-## 8. 未发布内容
+## 8. 发版状态
 
-`CHANGELOG.md` 的 `[Unreleased]` 有两项（矩阵 11-09 复跑 + Codex 0.167 修复），可以并进下一个版本。
+`v0.1.11` 已完成本地发版准备（版本号、CHANGELOG、构建与离线验证），待确认 `git push origin main --tags` 触发 CI 发 npm 与构建 dmg。
 
 发版流程见 `RELEASING.md`：改三处 `package.json` → 挪 CHANGELOG → commit + tag → `git push origin main --tags` → CI 自动发 npm + 构建 dmg。
 
@@ -202,11 +183,9 @@ pty 耗尽时 `expect` 起不来，脚本记 `env: no more ptys` 并标 skip，*
 
 ## 10. 接手后的建议顺序
 
-1. **修 opencode 2.x**（P0，唯一"完全不能用"的功能）
-2. **修 Codex 测试**（P1，放宽断言 + 记 notice）
-3. 发版（把 Unreleased 两项一起带上）
-4. Cursor 3.31.11 桌面复核（P2）
-5. Kimi 2.6.x 样本更新（P3）
+1. 确认并推送 `v0.1.11`（`git push origin main --tags`）
+2. **Cursor 3.31.11 桌面渲染复核**（P2，注意按 §7 隔离 `HOME` / `AgentStores`）
+3. 视情况处理 P4 项（如重装 Qoder 后复测、确认 DSH→Claude 子代理 UI 展示）
 
 ---
 
