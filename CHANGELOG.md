@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Changed
+
+- **Cursor 3.31.15 desktop rendering re-verified (2026-11-21).** Re-checked a freshly pushed
+  229-bubble session and the 4-tools regression composer in a `sandbox-exec`-isolated copy of
+  Cursor 3.31.15 via CDP and visual screenshot inspection: human messages, assistant markdown,
+  shell cards, read rows, red/green edit diff cards, grep rows, thinking rows, and turn summaries
+  all render cleanly; `_v=18` and chunked header migration remain unchanged, and post-open
+  `verify --agent cursor` (35/35 PASS) plus `readCursorSession` (333 events) continue to pass.
+  Notes: `research/cursor-ui-2026-11-21.md`.
+
 ## [0.1.11] — 2026-11-21
 
 npm: `sesport@0.1.11` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the

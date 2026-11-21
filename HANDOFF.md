@@ -25,8 +25,8 @@
 
 | 项 | 值 |
 |---|---|
-| 分支 | `main`（含本地 opencode 2.x / Codex 0.169+ / Kimi 2.6.3 修复及 `v0.1.11` 准备提交，具体见 `git log -n 5`） |
-| 发布版本 | **v0.1.11**（已本地打 tag 准备就绪，待 `git push origin main --tags` 后由 CI 发 npm `sesport@0.1.11` + GitHub Release） |
+| 分支 | `main`（含 `v0.1.11` 与 Cursor 3.31.15 桌面复核记录，具体见 `git log -n 5`） |
+| 最新发布 | **v0.1.11**（npm `sesport@0.1.11` + GitHub Release 4 个 macOS 产物） |
 | 测试 | 241 tests / 234 pass / **0 fail** / 7 skip；桌面端 `apps/desktop/test/*.test.ts` **33/33 pass** |
 | 适配器 | 9 个：claude-code / codex / command-code / cursor / dsh / kimi-code / opencode / qoder / workbuddy |
 
@@ -136,20 +136,14 @@ pty 耗尽时 `expect` 起不来，脚本记 `env: no more ptys` 并标 skip，*
 
 ## 7. 已知状态与待办（按优先级）
 
-### 已在 v0.1.11 解决
+### 已在 v0.1.11 及后续复核中解决
 
 - **opencode 2.x 支持（原 P0）**：已兼容 CLI 2.x（`session export`/`import` + `--standalone` + OpenCode.app 内置 CLI 探测 + v2 JSON + `session_v2` 表）并保留 1.x；在 `opencode v2.2.7` 上 `claude-opencode` 矩阵、343-event 导入与 `run --standalone` 实测通过（详见 `research/opencode-format.md` §8）。
 - **Codex 真实样本测试与 0.169+ 兼容（原 P1）**：`codex/src/read.ts` 已追踪未配对 `function_call`（`codex.tool-without-output` warning）与孤立 `function_call_output`（`codex.orphan-tool-result` warning），补了离线 fixture 并改为精确账平断言；同时修复了 Codex 0.169+ 去掉 `AGENTS.md instructions for <dir>` 中 `for <dir>` 后缀导致的 `synthetic` 漏标。
 - **Kimi 2.6.3 兼容与矩阵样本更新（原 P3）**：已将 Kimi 2.5/2.6 运行时事件与 `turn.steer` 纳入处理（0 warning），`verify-matrix.mjs` 的 Kimi 样本已切换到 2.6.3 会话（867 events），`kimi-claude` 与 `kimi-dsh` 双原生通过。
+- **Cursor 3.31.15 桌面渲染复核（原 P2）**：已通过 `sandbox-exec` + `--user-data-dir` + CDP（9223）+ 截图目视复核完成验证（见 `research/cursor-ui-2026-11-21.md`）。人类消息、助手 markdown、shell/read/grep/edit diff 卡片与回合摘要全部正常渲染；`_v=18` 与分块 header 迁移行为和 3.27.22 一致，打开后 `verify`（35/35 PASS）与 `readCursorSession`（333 events）均通过。
 
-### P2：Cursor 3.31.11 桌面渲染未复核
-
-上次确认是 3.27.22（CDP + 截图，见 `research/cursor-ui-2026-10-30.md`），现在 app 已到 3.31.11。
-结构校验通过（35/35 PASS），但 GUI 渲染需要再跑一次。CDP 方法在报告里有完整记录，可以复用。
-
-⚠️ **隔离陷阱（必读）**：`research/cursor-ui-2026-10-30.md` 已实测 Cursor 3.27+ 的 `AgentStores` 路径写死在真实库
-`~/Library/Application Support/Cursor/AgentStores/cursor_agent_stores/`，**不走 `--user-data-dir`**。
-上次是靠 DSH 沙箱 `EPERM` 才没写入真实库；在无沙箱环境下用副本库启动 Cursor 3.31.11 **必须先做 `HOME` 或 `sandbox-exec` 隔离**，否则会反向污染真实库。
+> ⚠️ **Cursor 测试隔离提醒**：Cursor 3.27+ 会写 `--user-data-dir` 之外的 `~/.cursor` 或共享路径，在无沙箱环境下用副本库启动 Cursor 时仍建议用 `sandbox-exec` 显式拒绝写入 `~/Library/Application Support/Cursor` 与 `~/.cursor`。
 
 ### P4：其他
 
@@ -161,7 +155,7 @@ pty 耗尽时 `expect` 起不来，脚本记 `env: no more ptys` 并标 skip，*
 
 ## 8. 发版状态
 
-`v0.1.11` 已完成本地发版准备（版本号、CHANGELOG、构建与离线验证），待确认 `git push origin main --tags` 触发 CI 发 npm 与构建 dmg。
+`v0.1.11` 已推送并由 CI 发布完成（npm `sesport@0.1.11` + GitHub Release 4 个产物）。
 
 发版流程见 `RELEASING.md`：改三处 `package.json` → 挪 CHANGELOG → commit + tag → `git push origin main --tags` → CI 自动发 npm + 构建 dmg。
 
@@ -183,9 +177,8 @@ pty 耗尽时 `expect` 起不来，脚本记 `env: no more ptys` 并标 skip，*
 
 ## 10. 接手后的建议顺序
 
-1. 确认并推送 `v0.1.11`（`git push origin main --tags`）
-2. **Cursor 3.31.11 桌面渲染复核**（P2，注意按 §7 隔离 `HOME` / `AgentStores`）
-3. 视情况处理 P4 项（如重装 Qoder 后复测、确认 DSH→Claude 子代理 UI 展示）
+1. 视情况处理 P4 项（如重装 Qoder 后复测、确认 DSH→Claude 子代理 UI 展示）
+2. 如有新版本更新（如 Claude / Codex / opencode / Cursor 后续升级），先跑 `node scripts/verify-matrix.mjs` 核查回归
 
 ---
 
