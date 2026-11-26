@@ -105,6 +105,8 @@ export interface HistoryRecordSummary {
   targetId: string;
   undoneAt?: string;
   caveats: string[];
+  files: Array<{ path: string; existed: boolean; bytes?: number }>;
+  cursor?: { dbPath: string; composerId: string; backupPath?: string };
 }
 
 export interface UndoResult {

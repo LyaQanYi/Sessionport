@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, CheckCircle2, GitMerge, Info, ListChecks, Loader2, RotateCcw } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, GitMerge, History, Info, ListChecks, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
 
 import { api, sessionRefOf } from '../api.ts';
-import type { AgentId, DivergedMode, SessionRow } from '../api.ts';
+import type { AgentId, DivergedMode, HistoryRecordSummary, SessionRow } from '../api.ts';
 import { Badge, Button, Card, CheckboxRow, Select, Spinner, Topbar, cn } from '../ui.tsx';
 import type { OfficialTarget, OfficialVerifyRow } from '../api.ts';
 import { agentLabel } from '../agents.tsx';
@@ -33,10 +33,18 @@ const OFFICIAL_TEXT: Record<OfficialTarget, { steps: MessageKey[]; notes: Messag
   },
 };
 
+const HISTORY_ACTION_KEY: Record<HistoryRecordSummary['action'], MessageKey> = {
+  push: 'migrate.history.action.push',
+  sync: 'migrate.history.action.sync',
+  'merge-back': 'migrate.history.action.merge-back',
+  'desktop-migrate': 'migrate.history.action.desktop-migrate',
+};
+
 export function MigratePage(props: { initial: SessionRow | null; enabledAgents: string[] }) {
-  const { locale, t, tError, tLoss, tDecision, tSyncDescription, tMechanism } = useT();
+  const { locale, t, tError, tLoss, tDecision, tSyncDescription, tMechanism, formatTime } = useT();
   const sessionsQuery = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
   const capsQuery = useQuery({ queryKey: ['capabilities'], queryFn: api.capabilities });
+  const backupsQuery = useQuery({ queryKey: ['backups'], queryFn: () => api.listBackups({ limit: 15 }) });
 
   const rowKey = (row: SessionRow): string => row.agent + '|' + row.sessionId + '|' + row.nativePath;
   const [sourceKey, setSourceKey] = useState<string | null>(props.initial ? rowKey(props.initial) : null);
@@ -96,7 +104,8 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
   const undo = useMutation({
     mutationFn: (opId: string) => api.undoBackup(opId),
     onSuccess: () => {
-      preview.mutate();
+      if (source && target) preview.mutate();
+      void backupsQuery.refetch();
     },
   });
   const mergeBack = useMutation({
@@ -112,7 +121,10 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
       undo.reset();
     },
     onSuccess: (result) => {
-      if (!result.refused) preview.mutate();
+      if (!result.refused) {
+        preview.mutate();
+        void backupsQuery.refetch();
+      }
     },
   });
   const run = useMutation({
@@ -129,7 +141,10 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
       mergeBack.reset();
     },
     onSuccess: (result) => {
-      if (!result.refused) preview.mutate();
+      if (!result.refused) {
+        preview.mutate();
+        void backupsQuery.refetch();
+      }
     },
   });
 
@@ -532,6 +547,94 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
               <Spinner /> {t('migrate.loadingSessions')}
             </div>
           ) : null}
+
+          <Card className="mt-4 overflow-hidden">
+            <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
+              <History className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs font-medium">{t('migrate.history.title')}</span>
+              <span className="text-2xs text-fg-3">{t('migrate.history.subtitle')}</span>
+              <Button
+                className="ml-auto"
+                size="sm"
+                variant="outline"
+                disabled={backupsQuery.isFetching}
+                onClick={() => void backupsQuery.refetch()}
+              >
+                <RefreshCw className={cn('h-3.5 w-3.5', backupsQuery.isFetching && 'animate-spin')} />
+                {t('migrate.history.refresh')}
+              </Button>
+            </div>
+
+            {backupsQuery.error || undo.error ? (
+              <div className="border-b border-border bg-destructive/5 px-4 py-2 text-2xs text-destructive">
+                {tError(backupsQuery.error ?? undo.error)}
+              </div>
+            ) : null}
+            {undo.data ? (
+              <div className="border-b border-border bg-emerald-500/5 px-4 py-2 text-2xs text-emerald-600 dark:text-emerald-400">
+                {t('migrate.undone', {
+                  id: undo.data.opId,
+                  restored: undo.data.restoredFiles.length,
+                  deleted: undo.data.deletedFiles.length,
+                })}
+              </div>
+            ) : null}
+
+            {backupsQuery.isLoading ? (
+              <div className="flex items-center gap-2 px-4 py-4 text-xs text-muted-foreground">
+                <Spinner /> {t('migrate.loadingSessions')}
+              </div>
+            ) : (backupsQuery.data?.length ?? 0) === 0 ? (
+              <div className="px-4 py-4 text-xs text-muted-foreground">{t('migrate.history.empty')}</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {(backupsQuery.data ?? []).map((record) => {
+                  const isUndoing = undo.isPending && undo.variables === record.id;
+                  return (
+                    <div key={record.id} className="flex flex-wrap items-center gap-2 px-4 py-2.5 text-xs">
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge variant="outline">{t(HISTORY_ACTION_KEY[record.action])}</Badge>
+                          <span className="font-medium">{agentLabel(record.target)}</span>
+                          <span className="truncate font-mono text-3xs text-muted-foreground">{record.id}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
+                          <span className="truncate font-mono">{record.sourceKey}</span>
+                          <ArrowRight className="h-3 w-3 shrink-0" />
+                          <span className="truncate font-mono">{record.targetId}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-3xs text-fg-3">
+                          <span>{formatTime(record.createdAt)}</span>
+                          <span>
+                            {record.cursor
+                              ? t('migrate.history.cursorDb')
+                              : t('migrate.history.files', { count: record.files.length })}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="shrink-0">
+                        {record.undoneAt ? (
+                          <span title={formatTime(record.undoneAt)}>
+                            <Badge variant="outline">{t('migrate.history.undoneBadge')}</Badge>
+                          </span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={undo.isPending}
+                            onClick={() => undo.mutate(record.id)}
+                          >
+                            {isUndoing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                            {isUndoing ? t('migrate.undoing') : t('migrate.history.undo')}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
         </div>
       </div>
     </div>

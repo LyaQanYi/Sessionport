@@ -25,9 +25,9 @@
 
 | 项 | 值 |
 |---|---|
-| 分支 | `main`（含 `v0.1.12` 与路线 A：写前自动备份 + `undo` + 双向增量 `merge-back` 与无损尾部追加，具体见 `git log -n 8`） |
-| 最新发布 | **v0.1.12**（npm `sesport@0.1.12` + GitHub Release 4 个 macOS 产物） |
-| 测试 | 267 tests / 260 pass / **0 fail** / 7 skip；桌面端 `apps/desktop/test/*.test.ts` **37/37 pass** |
+| 分支 | `main`（含 `v0.1.13`、路线 A 写前自动备份/`undo`/双向增量 `merge-back`、`sessionport status` 与桌面端备份历史面板，具体见 `git log -n 8`） |
+| 最新发布 | **v0.1.13**（npm `sesport@0.1.13` + GitHub Release 4 个 macOS 产物） |
+| 测试 | 268 tests / 261 pass / **0 fail** / 7 skip；桌面端 `apps/desktop/test/*.test.ts` **37/37 pass** |
 | 适配器 | 9 个：claude-code / codex / command-code / cursor / dsh / kimi-code / opencode / qoder / workbuddy |
 
 ### 可读可写矩阵
@@ -70,6 +70,9 @@ node packages/cli/src/index.ts list
 node packages/cli/src/index.ts inspect "claude:<session-id>"
 node packages/cli/src/index.ts push "dsh:<session-dir>" --to claude-code --include-children
 node packages/cli/src/index.ts sync "claude:<id>" --to codex --register
+node packages/cli/src/index.ts status
+node packages/cli/src/index.ts merge-back "claude:<id>" --from codex
+node packages/cli/src/index.ts undo --list
 node packages/cli/src/index.ts verify --agent claude-code --id <id> --resume
 
 # 测试（不要用 pnpm，见 §6）
@@ -155,7 +158,7 @@ pty 耗尽时 `expect` 起不来，脚本记 `env: no more ptys` 并标 skip，*
 
 ## 8. 发版状态
 
-`v0.1.11` 已推送并由 CI 发布完成（npm `sesport@0.1.11` + GitHub Release 4 个产物）。
+`v0.1.13`（含 Route A 收尾、`sessionport status`、桌面端备份历史与撤销面板，以及 `appendCodexDelta` / `appendClaudeDelta` 双端原生恢复实测）见发布流水线。
 
 发版流程见 `RELEASING.md`：改三处 `package.json` → 挪 CHANGELOG → commit + tag → `git push origin main --tags` → CI 自动发 npm + 构建 dmg。
 

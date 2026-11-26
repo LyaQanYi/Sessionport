@@ -144,6 +144,7 @@ sessionport push  <source> --to <agent> [options]
 sessionport sync  <source> --to <agent> [options]
 sessionport merge-back <source> --from <agent> [--append-diverged]
 sessionport undo  [<opId>] [--list] [--dry-run]
+sessionport status [--state <dir>] [--json]
 sessionport verify --agent <agent> [options]
 ```
 
@@ -156,7 +157,7 @@ Codex `threads` + `session_index.jsonl`). Pass `--raw-tools` on `push`/`sync`/`m
 tool normalization. Real writes record a pre-write backup in `~/.sessionport/history/<opId>/` so `sessionport undo`
 can restore modified files, `registry.json`, and Cursor composer keys; `merge-back` (or `sync --merge-back`)
 incrementally merges target-side follow-up turns back into the source session (with lossless native tail-append on
-`claude-code`, `codex`, and `command-code`).
+`claude-code`, `codex`, and `command-code`), and `sessionport status` shows live sync state and suggested next commands across all registered pairs.
 
 Large sessions: the `dsh` target supports `--slim` — tool results/call arguments are truncated, older steps keep
 only messages, and reasoning is dropped, so the imported session fits the target model's context window
@@ -222,7 +223,8 @@ The UI is bilingual (zh-CN / en-US): it follows the system language by default a
 pin one; the choice is stored locally and applies immediately (loss/notice descriptions are translated by code).
 
 The migration page also lists the vendor's own import flows (ZCode ← Claude Code, Qoder ← WorkBuddy)
-with a one-click "open app" and a "verify import" button that reads the target app's own store.
+with a one-click "open app" and a "verify import" button that reads the target app's own store, plus a
+persistent backup & undo history panel at the bottom for one-click rollback across recent writes.
 
 | Session browser | Adapters | Settings |
 |---|---|---|
@@ -256,7 +258,7 @@ packages/
 │   ├── cursor/           # read/write/verify (state.vscdb composerData/bubbleId)
 │   ├── qoder/            # read/write/verify (projects/<slug>/<uuid>.jsonl)
 │   └── workbuddy/        # read/verify (projects/<slug>/<sessionId>.jsonl)
-├── cli/                  # inspect / pull / push / sync / verify
+├── cli/                  # inspect / pull / push / sync / merge-back / undo / status / verify
 └── e2e fixtures live in each adapter’s test/ folder
 
 apps/

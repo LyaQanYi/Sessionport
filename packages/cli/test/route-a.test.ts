@@ -221,3 +221,82 @@ test('CLI sync -> 目标续写 diverged -> merge-back 无损尾部追加到 Clau
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('CLI status 实时报告 empty / up-to-date / diverged (+merge-back 建议) / 合并后恢复 up-to-date', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sessionport-cli-status-'));
+  try {
+    const claudeHome = join(dir, 'claude');
+    const codexHome = join(dir, 'codex');
+    const stateHome = join(dir, 'state');
+    const sessionId = '33333333-3333-4333-8333-333333333333';
+    const srcFile = writeClaudeSeed(claudeHome, sessionId, dir);
+
+    // 1. 空 registry
+    const emptyJson = await runCli(['status', '--state', stateHome, '--json'], dir);
+    assert.equal(emptyJson.code, 0, emptyJson.stderr);
+    const parsedEmpty = JSON.parse(emptyJson.stdout) as { total: number; items: unknown[] };
+    assert.equal(parsedEmpty.total, 0);
+    assert.equal(parsedEmpty.items.length, 0);
+
+    const emptyText = await runCli(['status', '--state', stateHome], dir);
+    assert.equal(emptyText.code, 0, emptyText.stderr);
+    assert.match(emptyText.stdout, /暂无已登记的同步记录/);
+
+    // 2. sync 后 -> up-to-date
+    const synced = await runCli(
+      ['sync', 'claude:' + srcFile, '--to', 'codex', '--home', codexHome, '--state', stateHome],
+      dir,
+    );
+    assert.equal(synced.code, 0, synced.stderr);
+
+    const statusUp = await runCli(['status', '--state', stateHome, '--json'], dir);
+    assert.equal(statusUp.code, 0, statusUp.stderr);
+    const parsedUp = JSON.parse(statusUp.stdout) as {
+      total: number;
+      items: Array<{ state: string; target: string; targetPath: string; targetExists: boolean; hint: string }>;
+    };
+    assert.equal(parsedUp.total, 1);
+    assert.equal(parsedUp.items[0]?.state, 'up-to-date');
+    assert.equal(parsedUp.items[0]?.target, 'codex');
+    assert.equal(parsedUp.items[0]?.targetExists, true);
+
+    const codexPath = parsedUp.items[0]!.targetPath;
+
+    // 3. 目标端续写 2 条消息 -> diverged，且建议 merge-back
+    const extraCodex = [
+      { timestamp: '2026-01-01T00:08:00.000Z', type: 'response_item', payload: { type: 'message', id: 'm_u_st', role: 'user', content: [{ type: 'input_text', text: '再查一下' }] } },
+      { timestamp: '2026-01-01T00:08:01.000Z', type: 'response_item', payload: { type: 'message', id: 'm_a_st', role: 'assistant', content: [{ type: 'output_text', text: '查完了' }] } },
+    ];
+    writeFileSync(codexPath, readFileSync(codexPath, 'utf8') + extraCodex.map((r) => JSON.stringify(r)).join('\n') + '\n');
+
+    const statusDiv = await runCli(['status', '--state', stateHome, '--json'], dir);
+    assert.equal(statusDiv.code, 0, statusDiv.stderr);
+    const parsedDiv = JSON.parse(statusDiv.stdout) as {
+      items: Array<{ state: string; targetExtra?: number; hint: string }>;
+    };
+    assert.equal(parsedDiv.items[0]?.state, 'diverged');
+    assert.ok((parsedDiv.items[0]?.targetExtra ?? 0) > 0);
+    assert.match(parsedDiv.items[0]?.hint ?? '', /merge-back/);
+
+    const statusDivText = await runCli(['status', '--state', stateHome], dir);
+    assert.equal(statusDivText.code, 0, statusDivText.stderr);
+    assert.match(statusDivText.stdout, /\[diverged\]/);
+    assert.match(statusDivText.stdout, /merge-back/);
+
+    // 4. merge-back 后 -> 回到 up-to-date
+    const mb = await runCli(
+      ['merge-back', 'claude:' + srcFile, '--from', 'codex', '--state', stateHome],
+      dir,
+    );
+    assert.equal(mb.code, 0, mb.stderr);
+
+    const statusRestored = await runCli(['status', '--state', stateHome, '--json'], dir);
+    assert.equal(statusRestored.code, 0, statusRestored.stderr);
+    const parsedRestored = JSON.parse(statusRestored.stdout) as {
+      items: Array<{ state: string }>;
+    };
+    assert.equal(parsedRestored.items[0]?.state, 'up-to-date');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

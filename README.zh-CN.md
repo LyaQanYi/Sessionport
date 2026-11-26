@@ -123,6 +123,7 @@ sessionport push  <source> --to <agent> [options]
 sessionport sync  <source> --to <agent> [options]
 sessionport merge-back <source> --from <agent> [--append-diverged]
 sessionport undo  [<opId>] [--list] [--dry-run]
+sessionport status [--state <dir>] [--json]
 sessionport verify --agent <agent> [options]
 ```
 
@@ -134,7 +135,7 @@ sessionport verify --agent <agent> [options]
 Codex `threads` + `session_index.jsonl`）。在 `push`/`sync`/`merge-back` 时传 `--raw-tools` 可关闭工具语义归一。
 每次真实写入前会自动把目标原文件与 `registry.json` 备份到 `~/.sessionport/history/<opId>/`，支持用
 `sessionport undo`（及桌面端一键撤销）回滚；当在目标 app 里继续聊过之后，可用 `merge-back` 或
-`sync --merge-back` 把新增轮次增量合回源端（`claude-code` / `codex` / `command-code` 走字节级无损尾部追加）。
+`sync --merge-back` 把新增轮次增量合回源端（`claude-code` / `codex` / `command-code` 走字节级无损尾部追加），并用 `sessionport status` 一览所有已登记会话的实时同步状态与建议操作。
 
 大会话：`dsh` 目标支持 `--slim`——截断工具结果/参数、较早的 step 只保留消息、丢弃 reasoning，
 让导入的会话装进目标模型的上下文窗口（每一处裁剪都会进损失清单）。
@@ -194,7 +195,7 @@ IPC 是主进程里一份很小的类型化白名单，带 zod 校验。
 选择存在本地、立即生效（损失/提示文案按 code 翻译）。
 
 迁移页还会列出厂商自己的导入流程（ZCode ← Claude Code、Qoder ← WorkBuddy），
-带「一键打开 app」和「验证导入」按钮（直接读目标 app 自己的存储）。
+带「一键打开 app」和「验证导入」按钮（直接读目标 app 自己的存储），并在底部提供常驻的备份与撤销历史面板，可对近期写入随时一键回滚。
 
 | 会话浏览 | 适配器 | 设置 |
 |---|---|---|
@@ -227,7 +228,7 @@ packages/
 │   ├── cursor/           # 读/写/verify（state.vscdb composerData/bubbleId）
 │   ├── qoder/            # 读/写/verify（projects/<slug>/<uuid>.jsonl）
 │   └── workbuddy/        # 读/写/verify（projects/<slug>/<sessionId>.jsonl）
-├── cli/                  # inspect / pull / push / sync / verify
+├── cli/                  # inspect / pull / push / sync / merge-back / undo / status / verify
 └── e2e fixtures 放在各 adapter 的 test/ 下
 
 apps/

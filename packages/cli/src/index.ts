@@ -22,6 +22,7 @@ import {
   planMergeBack,
   planSync,
   saveRegistry,
+  sessionportHome,
   SESSION_AGENTS,
   sourceKeyOf,
   upsertRef,
@@ -44,6 +45,8 @@ const USAGE = [
   '                        把目标端续写出来的新轮次增量合并回源会话（默认无损尾部追加）',
   '  sessionport undo [<opId>] [--list] [--dry-run] [--state <dir>]',
   '                        撤销最近一次（或指定 id）写操作，恢复被改写/新建的会话与 registry',
+  '  sessionport status [--state <dir>] [--json]',
+  '                        查看所有已登记会话的同步状态与建议操作',
   '  sessionport verify --agent <agent> [options]',
   '  sessionport list [--agent <agent>] [--limit <n>] [--json]',
   '  sessionport import --into <zcode|qoder> <source> [--open] [--verify]',
@@ -886,6 +889,163 @@ async function cmdMergeBack(source: string, values: Record<string, string | bool
   }
 }
 
+const AGENT_SOURCE_PREFIX: Record<AgentId, string> = {
+  'claude-code': 'claude',
+  'command-code': 'commandcode',
+  'kimi-code': 'kimi',
+  dsh: 'dsh',
+  codex: 'codex',
+  opencode: 'opencode',
+  cursor: 'cursor',
+  qoder: 'qoder',
+  workbuddy: 'workbuddy',
+};
+
+interface StatusRow {
+  sourceKey: string;
+  sourceAgent?: AgentId;
+  sourcePath?: string;
+  target: AgentId;
+  targetId: string;
+  targetPath: string;
+  state: 'up-to-date' | 'refresh' | 'fresh' | 'diverged' | 'source-missing';
+  sourceEvents?: number;
+  recordedSourceEvents: number;
+  targetExists: boolean;
+  targetUnits: number;
+  recordedTargetUnits: number;
+  targetExtra?: number;
+  updatedAt: string;
+  description: string;
+  hint: string;
+}
+
+function inferSourceFromRef(ref: ExternalRef): { sourceAgent?: AgentId; sourceId: string } {
+  const colon = ref.sourceKey.indexOf(':');
+  const prefix = colon >= 0 ? ref.sourceKey.slice(0, colon) : '';
+  const sourceId = colon >= 0 ? ref.sourceKey.slice(colon + 1) : ref.sourceKey;
+  const known = SESSION_AGENTS.includes(prefix as AgentId) ? (prefix as AgentId) : undefined;
+  return {
+    sourceAgent: ref.sourceAgent ?? known,
+    sourceId,
+  };
+}
+
+async function cmdStatus(values: Record<string, string | boolean | undefined>): Promise<void> {
+  const stateHome = typeof values.state === 'string' ? values.state : undefined;
+  const registryFile = join(sessionportHome(stateHome), 'registry.json');
+  const registry = loadRegistry(stateHome);
+  const refs = [...registry.refs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  const items: StatusRow[] = [];
+  for (const ref of refs) {
+    const { sourceAgent, sourceId } = inferSourceFromRef(ref);
+    const targetCount = await countTarget(
+      ref.target,
+      {
+        target: ref.target,
+        targetId: ref.targetId,
+        paths: ref.targetPath ? [ref.targetPath] : [],
+        unit: ref.unit,
+        units: ref.targetUnits,
+        report: {},
+      },
+      { home: ref.targetHome, targetPath: ref.targetPath },
+    ).catch(() => ({ exists: false, units: 0 }));
+
+    const srcAdapter = sourceAgent ? await getAdapter(sourceAgent) : undefined;
+    let sourceBundle: IrBundle | undefined;
+    if (sourceAgent && srcAdapter?.read) {
+      try {
+        sourceBundle = await readTargetBundle(sourceAgent, sourceId, ref.sourcePath, ref.sourceHome);
+      } catch {
+        sourceBundle = undefined;
+      }
+    }
+
+    if (sourceBundle === undefined) {
+      const hint = targetCount.exists
+        ? 'sessionport inspect "' + AGENT_SOURCE_PREFIX[ref.target] + ':' + (ref.targetPath || ref.targetId) + '"'
+        : '源端与目标端均不可用';
+      items.push({
+        sourceKey: ref.sourceKey,
+        ...(sourceAgent !== undefined ? { sourceAgent } : {}),
+        ...(ref.sourcePath !== undefined ? { sourcePath: ref.sourcePath } : {}),
+        target: ref.target,
+        targetId: ref.targetId,
+        targetPath: ref.targetPath,
+        state: 'source-missing',
+        recordedSourceEvents: ref.sourceEvents,
+        targetExists: targetCount.exists,
+        targetUnits: targetCount.units,
+        recordedTargetUnits: ref.targetUnits,
+        updatedAt: ref.updatedAt,
+        description: '源会话无法读取（已移动、删除或未记录 sourcePath）',
+        hint,
+      });
+      continue;
+    }
+
+    const decision = planSync({
+      ref,
+      source: { head: sourceBundle.root.head, events: sourceBundle.root.events.length },
+      target: { exists: targetCount.exists, units: targetCount.units },
+    });
+    const sourceSpec = AGENT_SOURCE_PREFIX[sourceAgent!] + ':' + (ref.sourcePath || sourceId);
+    let hint = '无需操作';
+    if (decision.kind === 'refresh' || decision.kind === 'fresh') {
+      hint = 'sessionport sync "' + sourceSpec + '" --to ' + ref.target;
+    } else if (decision.kind === 'diverged') {
+      hint = srcAdapter?.write
+        ? 'sessionport merge-back "' + sourceSpec + '" --from ' + ref.target + '  或  sessionport sync "' + sourceSpec + '" --to ' + ref.target + ' --fork'
+        : 'sessionport sync "' + sourceSpec + '" --to ' + ref.target + ' --fork';
+    }
+
+    items.push({
+      sourceKey: ref.sourceKey,
+      ...(sourceAgent !== undefined ? { sourceAgent } : {}),
+      ...(ref.sourcePath !== undefined ? { sourcePath: ref.sourcePath } : {}),
+      target: ref.target,
+      targetId: ref.targetId,
+      targetPath: ref.targetPath,
+      state: decision.kind,
+      sourceEvents: sourceBundle.root.events.length,
+      recordedSourceEvents: ref.sourceEvents,
+      targetExists: targetCount.exists,
+      targetUnits: targetCount.units,
+      recordedTargetUnits: ref.targetUnits,
+      ...(decision.kind === 'diverged' ? { targetExtra: decision.targetExtra } : {}),
+      updatedAt: ref.updatedAt,
+      description: describeDecision(decision),
+      hint,
+    });
+  }
+
+  if (values.json) {
+    process.stdout.write(JSON.stringify({ registryFile, total: items.length, items }, null, 2) + '\n');
+    return;
+  }
+
+  if (items.length === 0) {
+    process.stdout.write('暂无已登记的同步记录（' + registryFile + '）。\n');
+    return;
+  }
+
+  process.stdout.write('registry    ' + registryFile + '（共 ' + items.length + ' 条）\n\n');
+  for (const item of items) {
+    process.stdout.write(
+      '[' + item.state + '] ' + item.sourceKey + ' -> ' + item.target + ':' + item.targetId +
+        '  (' + formatListTime(item.updatedAt) + ')\n',
+    );
+    process.stdout.write(
+      '  sourceEvents=' + (item.sourceEvents ?? '-') + ' (recorded ' + item.recordedSourceEvents + ')' +
+        '  targetUnits=' + item.targetUnits + ' (recorded ' + item.recordedTargetUnits + ')' +
+        '  ' + item.description + '\n',
+    );
+    process.stdout.write('  建议: ' + item.hint + '\n');
+  }
+}
+
 
 /** list --agent 的别名解析（大小写不敏感） */
 const AGENT_ALIASES: Record<string, AgentId> = {
@@ -1264,6 +1424,10 @@ async function main(): Promise<void> {
   }
   if (command === 'undo') {
     await cmdUndo(values, positionals);
+    return;
+  }
+  if (command === 'status') {
+    await cmdStatus(values);
     return;
   }
   if (command === 'verify') {

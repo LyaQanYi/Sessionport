@@ -21,6 +21,16 @@ All notable changes to this project are documented here. Format loosely follows
   `sessionport sync ... --merge-back`, or the desktop diverged card (`--append-diverged` when both
   sides advanced) while preserving original `thinking` signatures, Codex `encrypted_content` /
   `paginated` ordinals, and Command Code v3 headers byte-for-byte.
+- **`sessionport status` CLI command.** Added `sessionport status [--state <dir>] [--json]` in
+  `packages/cli/src/index.ts` to inspect every entry in `registry.json`, recompute live sync state
+  (`up-to-date` / `refresh` / `fresh` / `diverged` / `source-missing`), and surface actionable
+  next-step hints (`sync`, `merge-back`, or `sync --fork`).
+- **Desktop backup history & undo panel and native `merge-back` verification.** Added a persistent
+  Backup & undo history card at the bottom of `MigratePage.tsx` (wired to `history:list` /
+  `history:undo` with bilingual zh-CN/en-US UI) and verified real-CLI native resume loading on
+  `appendDelta` outputs (`codex-cli 0.171.0` `verify` 13/13 PASS + `codex exec resume --json`
+  `thread.started`/`turn.started`; Claude Code `2.1.330` `verify` 11/11 PASS + `claude --resume` TUI
+  rendering appended turns and normalized `Bash(pwd)` card).
 
 ## [0.1.12] — 2026-11-26
 
