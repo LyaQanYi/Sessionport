@@ -210,6 +210,15 @@ export const zhCN = {
   'migrate.sync.registry': 'registry = {path}',
   'migrate.refused.diverged': '目标端已有新增内容。选择 fork（另建会话）或 force（覆盖）后重试。',
   'migrate.written': '已写入 {target}',
+  'migrate.undo': '撤销这次写入',
+  'migrate.undoing': '正在撤销…',
+  'migrate.undone': '已撤销 {id}（还原 {restored} 个文件，删除 {deleted} 个文件）',
+  'migrate.mergeBack': '合并回源会话',
+  'migrate.mergeBackAppending': '正在合并回源会话…',
+  'migrate.mergeBackDone': '已从 {target} 合并回源会话（新增 {count} 条事件）',
+  'migrate.mergeBackDiverged': '源会话在同步后也有推进；确认后将带 fork 边界追加写入',
+  'migrate.mergeBackConfirmDiverged': '带 fork 边界强制合并回写',
+  'migrate.mergeBackNothing': '目标端没有可合回的新对话',
   'migrate.loadingSessions': '加载会话列表中…',
 
   // 官方导入步骤（core 里的步骤/说明在 renderer 侧按目标重写，保证可翻译）
@@ -283,6 +292,11 @@ export const zhCN = {
   'error.path.openFailed': '打开目录失败：{message}',
   'error.official.unsupported': '{target} 没有官方导入路径',
   'error.official.unknownTarget': '未知目标：{target}（可选 zcode / qoder / cursor）',
+  'error.history.notFound': '找不到备份记录：{opId}',
+  'error.history.alreadyUndone': '操作 {opId} 已经撤销过',
+  'error.mergeBack.no-ref': '尚未建立源与目标的同步记录，无法 merge-back',
+  'error.mergeBack.source-read-only': '源 harness 是只读的，不支持 merge-back',
+  'error.mergeBack.unanchored': '无法在目标端定位共同祖先锚点，已拒绝回写',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;
@@ -483,6 +497,15 @@ export const enUS: Record<MessageKey, string> = {
   'migrate.sync.registry': 'registry = {path}',
   'migrate.refused.diverged': 'The target has new content. Choose fork (new session) or force (overwrite) and retry.',
   'migrate.written': 'Written to {target}',
+  'migrate.undo': 'Undo this write',
+  'migrate.undoing': 'Undoing…',
+  'migrate.undone': 'Undone {id} ({restored} restored, {deleted} deleted)',
+  'migrate.mergeBack': 'Merge back to source',
+  'migrate.mergeBackAppending': 'Merging back to source…',
+  'migrate.mergeBackDone': 'Merged {count} new events back from {target}',
+  'migrate.mergeBackDiverged': 'Source also advanced after sync; confirm to append with a fork boundary',
+  'migrate.mergeBackConfirmDiverged': 'Append merge with fork boundary',
+  'migrate.mergeBackNothing': 'No new events on target to merge back',
   'migrate.loadingSessions': 'Loading sessions…',
 
   // Official import steps
@@ -556,6 +579,11 @@ export const enUS: Record<MessageKey, string> = {
   'error.path.openFailed': 'Failed to open directory: {message}',
   'error.official.unsupported': '{target} has no official import path',
   'error.official.unknownTarget': 'Unknown target: {target} (expected zcode / qoder / cursor)',
+  'error.history.notFound': 'Backup record not found: {opId}',
+  'error.history.alreadyUndone': 'Operation {opId} has already been undone',
+  'error.mergeBack.no-ref': 'No sync record found between source and target for merge-back',
+  'error.mergeBack.source-read-only': 'Source harness is read-only and does not support merge-back',
+  'error.mergeBack.unanchored': 'Could not locate common ancestor anchor on target; merge-back aborted',
 };
 
 /** 简单插值：{name} → params.name；找不到参数时保留占位符，便于发现漏传。 */

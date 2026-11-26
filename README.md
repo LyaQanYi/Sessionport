@@ -142,6 +142,8 @@ sessionport inspect <source>
 sessionport pull  <source> [--out ir.json]
 sessionport push  <source> --to <agent> [options]
 sessionport sync  <source> --to <agent> [options]
+sessionport merge-back <source> --from <agent> [--append-diverged]
+sessionport undo  [<opId>] [--list] [--dry-run]
 sessionport verify --agent <agent> [options]
 ```
 
@@ -150,7 +152,11 @@ Sources: `kimi:<dir>`, `claude:<path|id>`, `commandcode:<path|id>`, `dsh:<dir>`,
 Targets: `claude-code`, `command-code`, `dsh`, `codex`, `opencode`, `cursor` (needs `--confirm-real`), `qoder`.
 
 Registers into the target app instead of just writing files: `--register` (Command Code desktop list / DSH workspace /
-Codex `threads` + `session_index.jsonl`). Pass `--raw-tools` on `push`/`sync` to disable cross-agent tool normalization.
+Codex `threads` + `session_index.jsonl`). Pass `--raw-tools` on `push`/`sync`/`merge-back` to disable cross-agent
+tool normalization. Real writes record a pre-write backup in `~/.sessionport/history/<opId>/` so `sessionport undo`
+can restore modified files, `registry.json`, and Cursor composer keys; `merge-back` (or `sync --merge-back`)
+incrementally merges target-side follow-up turns back into the source session (with lossless native tail-append on
+`claude-code`, `codex`, and `command-code`).
 
 Large sessions: the `dsh` target supports `--slim` — tool results/call arguments are truncated, older steps keep
 only messages, and reasoning is dropped, so the imported session fits the target model's context window

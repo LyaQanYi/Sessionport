@@ -3,6 +3,25 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Pre-write backup journal & `sessionport undo` (including surgical Cursor SQLite restore).**
+  Added `packages/core/src/history.ts`: real writes across `push`, `sync`, `merge-back`, and
+  desktop migration automatically snapshot pre-existing target files and `registry.json` under
+  `~/.sessionport/history/<opId>/` (keeping the newest 50 records). `sessionport undo [<opId>]`
+  (`--list`, `--dry-run`) and the desktop success-card Undo button atomically restore overwritten
+  files, remove newly created files, restore `registry.json`, and run transactional key-level
+  rollback (`restoreCursorBackup`) for Cursor composers in `state.vscdb`.
+- **Bidirectional incremental `merge-back` with lossless native tail-append.** Added
+  `packages/core/src/merge.ts`, `AgentAdapter.appendDelta`, and `appendClaudeDelta` /
+  `appendCodexDelta` / `appendCommandCodeDelta` so target-side follow-up turns can be merged back
+  to the original session via `sessionport merge-back <source> --from <target>`,
+  `sessionport sync ... --merge-back`, or the desktop diverged card (`--append-diverged` when both
+  sides advanced) while preserving original `thinking` signatures, Codex `encrypted_content` /
+  `paginated` ordinals, and Command Code v3 headers byte-for-byte.
+
 ## [0.1.12] — 2026-11-26
 
 npm: `sesport@0.1.12` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the

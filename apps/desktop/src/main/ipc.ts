@@ -4,8 +4,23 @@ import { existsSync } from 'node:fs';
 import { z } from 'zod';
 
 import { AppError } from './errors.ts';
-import { detectHomes, listSessions, officialImports, officialVerify, pathsInfo, previewMigration, readSession, readableAgents, runMigration, writableAgents } from './services.ts';
-import type { MigrationOptions } from './services.ts';
+import {
+  detectHomes,
+  listBackups,
+  listSessions,
+  officialImports,
+  officialVerify,
+  pathsInfo,
+  previewMergeBack,
+  previewMigration,
+  readSession,
+  readableAgents,
+  runMergeBack,
+  runMigration,
+  undoBackup,
+  writableAgents,
+} from './services.ts';
+import type { MergeBackOptions, MigrationOptions } from './services.ts';
 
 const agentSchema = z.enum([
   'claude-code',
@@ -55,6 +70,28 @@ function extractMigrationOptions(input: z.infer<typeof migrateInputSchema>): Mig
   };
 }
 
+const mergeBackInputSchema = z.object({
+  agent: agentSchema,
+  nativePath: z.string().optional(),
+  sessionId: z.string().optional(),
+  target: agentSchema,
+  home: z.string().optional(),
+  targetHome: z.string().optional(),
+  stateHome: z.string().optional(),
+  normalizeTools: z.boolean().optional(),
+  appendDiverged: z.boolean().optional(),
+});
+
+function extractMergeBackOptions(input: z.infer<typeof mergeBackInputSchema>): MergeBackOptions {
+  return {
+    home: input.home,
+    targetHome: input.targetHome,
+    stateHome: input.stateHome,
+    normalizeTools: input.normalizeTools,
+    appendDiverged: input.appendDiverged,
+  };
+}
+
 const channelSchemas = {
   'sessions:list': z.object({}).default({}),
   'sessions:read': z.object({
@@ -67,6 +104,17 @@ const channelSchemas = {
   }),
   'migrate:preview': migrateInputSchema,
   'migrate:run': migrateInputSchema,
+  'migrate:mergeBackPreview': mergeBackInputSchema,
+  'migrate:mergeBackRun': mergeBackInputSchema,
+  'history:list': z.object({
+    stateHome: z.string().optional(),
+    limit: z.number().int().positive().max(200).optional(),
+  }).default({}),
+  'history:undo': z.object({
+    opId: z.string().optional(),
+    stateHome: z.string().optional(),
+    dryRun: z.boolean().optional(),
+  }).default({}),
   'app:capabilities': z.object({}).default({}),
   'app:paths': z.object({}).default({}),
   'app:openPath': z.object({ key: z.enum(['kimi', 'claude', 'commandCode', 'dsh', 'codex', 'opencode', 'cursor', 'qoder', 'workbuddy', 'registry']) }),
@@ -101,6 +149,32 @@ export function registerIpc(): void {
       input.target,
       extractMigrationOptions(input),
     );
+  }));
+  ipcMain.handle('migrate:mergeBackPreview', async (_event, payload: unknown) => wrap(() => {
+    const input = channelSchemas['migrate:mergeBackPreview'].parse(payload);
+    return previewMergeBack(
+      input.agent,
+      { nativePath: input.nativePath, sessionId: input.sessionId },
+      input.target,
+      extractMergeBackOptions(input),
+    );
+  }));
+  ipcMain.handle('migrate:mergeBackRun', async (_event, payload: unknown) => wrap(() => {
+    const input = channelSchemas['migrate:mergeBackRun'].parse(payload);
+    return runMergeBack(
+      input.agent,
+      { nativePath: input.nativePath, sessionId: input.sessionId },
+      input.target,
+      extractMergeBackOptions(input),
+    );
+  }));
+  ipcMain.handle('history:list', async (_event, payload: unknown) => wrap(() => {
+    const input = channelSchemas['history:list'].parse(payload ?? {});
+    return listBackups(input.stateHome, input.limit);
+  }));
+  ipcMain.handle('history:undo', async (_event, payload: unknown) => wrap(() => {
+    const input = channelSchemas['history:undo'].parse(payload ?? {});
+    return undoBackup(input.opId, { stateHome: input.stateHome, dryRun: input.dryRun });
   }));
   ipcMain.handle('app:capabilities', async () => wrap(() => ({
     readable: readableAgents(),

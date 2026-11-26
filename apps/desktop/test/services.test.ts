@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
-import { listSessions, previewMigration, readSession, readableAgents, runMigration, writableAgents } from '../src/main/services.ts';
+import {
+  listBackups,
+  listSessions,
+  previewMergeBack,
+  previewMigration,
+  readSession,
+  readableAgents,
+  runMergeBack,
+  runMigration,
+  undoBackup,
+  writableAgents,
+} from '../src/main/services.ts';
 
 test('capabilities：可读/可写 agent 列表', () => {
   assert.deepEqual(readableAgents().sort(), ['claude-code', 'codex', 'command-code', 'cursor', 'dsh', 'kimi-code', 'opencode', 'qoder', 'workbuddy'].sort());
@@ -191,6 +202,127 @@ test('normalizeTools：默认归一化，设为 false 时保留源工具名并�
     assert.equal(rawRun.refused, undefined);
     const written = readFileSync(rawRun.paths[0]!, 'utf8');
     assert.ok(written.includes('"name":"exec_command"'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('desktop backup & undo: runMigration 自动生成 backupId，undoBackup 删除新建目标并恢复 registry', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sessionport-desktop-undo-'));
+  const stateHome = join(dir, 'state');
+  const claudeHome = join(dir, 'claude');
+  try {
+    const srcFile = writeCodexFixtureFile(dir, '33333333-3333-4333-8333-333333333333');
+    const ref = { nativePath: srcFile };
+    const run = await runMigration('codex', ref, 'claude-code', { stateHome, home: claudeHome });
+    assert.ok(run.backupId);
+    assert.equal(existsSync(run.paths[0]!), true);
+    assert.equal(listBackups(stateHome).length, 1);
+
+    const undone = await undoBackup(run.backupId, { stateHome });
+    assert.equal(undone.opId, run.backupId);
+    assert.equal(existsSync(run.paths[0]!), false);
+    assert.equal(undone.registryDeleted, true);
+
+    const previewAfter = await previewMigration('codex', ref, 'claude-code', { stateHome, home: claudeHome });
+    assert.equal(previewAfter.sync.decision, 'fresh');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('desktop merge-back: Claude -> Codex 同步后 Codex 续写 -> preview/runMergeBack 无损追加回 Claude 并可 undo', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sessionport-desktop-mb-'));
+  const stateHome = join(dir, 'state');
+  const claudeHome = join(dir, 'claude');
+  const codexHome = join(dir, 'codex');
+  const sessionId = '44444444-4444-4444-8444-444444444444';
+  const claudeFile = join(claudeHome, 'projects', '-tmp-desktop-mb', sessionId + '.jsonl');
+  try {
+    mkdirSync(dirname(claudeFile), { recursive: true });
+    const claudeSeed = [
+      {
+        type: 'user',
+        uuid: 'u-desk-1',
+        parentUuid: null,
+        sessionId,
+        timestamp: '2026-01-01T00:00:00.000Z',
+        cwd: '/tmp/desktop-mb',
+        version: '2.1.330',
+        gitBranch: 'main',
+        isSidechain: false,
+        userType: 'external',
+        message: { role: 'user', content: [{ type: 'text', text: '分析一下' }] },
+      },
+      {
+        type: 'assistant',
+        uuid: 'a-desk-1',
+        parentUuid: 'u-desk-1',
+        sessionId,
+        timestamp: '2026-01-01T00:00:01.000Z',
+        cwd: '/tmp/desktop-mb',
+        version: '2.1.330',
+        gitBranch: 'main',
+        isSidechain: false,
+        userType: 'external',
+        message: {
+          id: 'msg_desk_1',
+          type: 'message',
+          role: 'assistant',
+          model: 'claude-sonnet-5',
+          content: [
+            { type: 'thinking', thinking: '原始签名思考', signature: 'sig_desktop_preserved' },
+            { type: 'text', text: '准备好了' },
+          ],
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      },
+    ];
+    const originalBytes = Buffer.from(claudeSeed.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
+    writeFileSync(claudeFile, originalBytes);
+
+    const srcRef = { nativePath: claudeFile };
+    const migrated = await runMigration('claude-code', srcRef, 'codex', { stateHome, home: codexHome });
+    assert.equal(migrated.refused, undefined);
+
+    // 模拟在 Codex 里追加新一轮对话与工具调用
+    const codexFile = migrated.paths[0]!;
+    appendFileSync(
+      codexFile,
+      [
+        { timestamp: '2026-01-01T00:02:00.000Z', type: 'response_item', payload: { type: 'message', id: 'u2', role: 'user', content: [{ type: 'input_text', text: '跑个 ls' }] } },
+        { timestamp: '2026-01-01T00:02:01.000Z', type: 'response_item', payload: { type: 'function_call', name: 'exec_command', call_id: 'call_desk', arguments: '{"cmd":"ls"}' } },
+        { timestamp: '2026-01-01T00:02:02.000Z', type: 'response_item', payload: { type: 'function_call_output', call_id: 'call_desk', output: 'ok' } },
+      ]
+        .map((r) => JSON.stringify(r))
+        .join('\n') + '\n',
+    );
+
+    const mbPreview = await previewMergeBack('claude-code', srcRef, 'codex', { stateHome, targetHome: codexHome });
+    assert.equal(mbPreview.decision, 'fast-forward');
+    assert.equal(mbPreview.deltaEvents, 3);
+    assert.equal(mbPreview.strategy, 'appendDelta');
+
+    const mbRun = await runMergeBack('claude-code', srcRef, 'codex', { stateHome, targetHome: codexHome });
+    assert.equal(mbRun.refused, undefined);
+    assert.equal(mbRun.decision, 'fast-forward');
+    assert.equal(mbRun.mergedEvents, 3);
+    assert.equal(mbRun.strategy, 'appendDelta');
+    assert.ok(mbRun.backupId);
+
+    const updatedBytes = readFileSync(claudeFile);
+    assert.deepEqual(updatedBytes.subarray(0, originalBytes.length), originalBytes);
+    assert.match(updatedBytes.toString('utf8'), /"name":"Bash"/);
+
+    // 合回后应已同步
+    const afterSync = await previewMigration('claude-code', srcRef, 'codex', { stateHome, home: codexHome });
+    assert.equal(afterSync.sync.decision, 'up-to-date');
+
+    // undo merge-back 后字节级还原回原文件
+    await undoBackup(mbRun.backupId, { stateHome });
+    assert.deepEqual(readFileSync(claudeFile), originalBytes);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

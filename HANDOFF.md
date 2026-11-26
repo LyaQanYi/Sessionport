@@ -25,9 +25,9 @@
 
 | 项 | 值 |
 |---|---|
-| 分支 | `main`（含 Phase 1 / Phase 1.5：Adapter 契约与 CLI/桌面端注册表、工具语义归一、Codex 0.169+ 噪音归类，具体见 `git log -n 6`） |
-| 最新发布 | **v0.1.11**（npm `sesport@0.1.11` + GitHub Release 4 个 macOS 产物） |
-| 测试 | 256 tests / 249 pass / **0 fail** / 7 skip；桌面端 `apps/desktop/test/*.test.ts` **35/35 pass** |
+| 分支 | `main`（含 `v0.1.12` 与路线 A：写前自动备份 + `undo` + 双向增量 `merge-back` 与无损尾部追加，具体见 `git log -n 8`） |
+| 最新发布 | **v0.1.12**（npm `sesport@0.1.12` + GitHub Release 4 个 macOS 产物） |
+| 测试 | 267 tests / 260 pass / **0 fail** / 7 skip；桌面端 `apps/desktop/test/*.test.ts` **37/37 pass** |
 | 适配器 | 9 个：claude-code / codex / command-code / cursor / dsh / kimi-code / opencode / qoder / workbuddy |
 
 ### 可读可写矩阵

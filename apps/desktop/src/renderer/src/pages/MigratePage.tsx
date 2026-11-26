@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, CheckCircle2, Info, ListChecks, Loader2 } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, GitMerge, Info, ListChecks, Loader2, RotateCcw } from 'lucide-react';
 
 import { api, sessionRefOf } from '../api.ts';
 import type { AgentId, DivergedMode, SessionRow } from '../api.ts';
@@ -93,6 +93,28 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
     mutationFn: () =>
       api.previewMigration(source!.agent, sessionRefOf(source!), target!, migrationOptions()),
   });
+  const undo = useMutation({
+    mutationFn: (opId: string) => api.undoBackup(opId),
+    onSuccess: () => {
+      preview.mutate();
+    },
+  });
+  const mergeBack = useMutation({
+    mutationFn: (appendDiverged?: boolean) =>
+      api.runMergeBack({
+        agent: source!.agent,
+        ref: sessionRefOf(source!),
+        target: target!,
+        normalizeTools,
+        appendDiverged,
+      }),
+    onMutate: () => {
+      undo.reset();
+    },
+    onSuccess: (result) => {
+      if (!result.refused) preview.mutate();
+    },
+  });
   const run = useMutation({
     mutationFn: () =>
       api.runMigration({
@@ -102,10 +124,43 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
         onDiverged: mode,
         ...migrationOptions(),
       }),
+    onMutate: () => {
+      undo.reset();
+      mergeBack.reset();
+    },
     onSuccess: (result) => {
       if (!result.refused) preview.mutate();
     },
   });
+
+  const renderUndoAction = (backupId: string | undefined) => {
+    if (!backupId) return null;
+    const undoneThis = undo.data?.opId === backupId ? undo.data : undefined;
+    return (
+      <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
+        {!undoneThis ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={undo.isPending}
+            onClick={() => undo.mutate(backupId)}
+          >
+            {undo.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+            {undo.isPending ? t('migrate.undoing') : t('migrate.undo')}
+          </Button>
+        ) : (
+          <span className="text-2xs text-muted-foreground">
+            {t('migrate.undone', {
+              id: undoneThis.opId,
+              restored: undoneThis.restoredFiles.length,
+              deleted: undoneThis.deletedFiles.length,
+            })}
+          </span>
+        )}
+        {undo.error ? <span className="text-2xs text-destructive">{tError(undo.error)}</span> : null}
+      </div>
+    );
+  };
 
   const losses = preview.data?.losses ?? [];
   const warned = losses.filter((loss) => loss.severity === 'warning').length;
@@ -345,6 +400,36 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                       </button>
                     ))}
                   </div>
+                  {source && writableAll.includes(source.agent) ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-amber-500/20 pt-3">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={mergeBack.isPending}
+                        onClick={() => mergeBack.mutate(false)}
+                      >
+                        {mergeBack.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitMerge className="h-3.5 w-3.5" />}
+                        {mergeBack.isPending ? t('migrate.mergeBackAppending') : t('migrate.mergeBack')}
+                      </Button>
+                      {mergeBack.data?.refused ? (
+                        <>
+                          <span className="text-2xs text-amber-600 dark:text-amber-400">{t('migrate.mergeBackDiverged')}</span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={mergeBack.isPending}
+                            onClick={() => mergeBack.mutate(true)}
+                          >
+                            {t('migrate.mergeBackConfirmDiverged')}
+                          </Button>
+                        </>
+                      ) : null}
+                      {mergeBack.data && !mergeBack.data.refused && mergeBack.data.decision === 'up-to-date' ? (
+                        <span className="text-2xs text-muted-foreground">{t('migrate.mergeBackNothing')}</span>
+                      ) : null}
+                      {mergeBack.error ? <span className="text-2xs text-destructive">{tError(mergeBack.error)}</span> : null}
+                    </div>
+                  ) : null}
                 </Card>
               ) : null}
 
@@ -423,6 +508,22 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                       </li>
                     ))}
                   </ul>
+                  {renderUndoAction(run.data.backupId)}
+                </Card>
+              ) : null}
+              {mergeBack.data && !mergeBack.data.refused && mergeBack.data.mergedEvents > 0 && target ? (
+                <Card className="p-4">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                    <GitMerge className="h-3.5 w-3.5" />
+                    {t('migrate.mergeBackDone', { target: agentLabel(target), count: mergeBack.data.mergedEvents })}
+                    {mergeBack.data.strategy ? (
+                      <Badge variant="outline" className="ml-auto font-mono text-3xs">{mergeBack.data.strategy}</Badge>
+                    ) : null}
+                  </div>
+                  {mergeBack.data.sourcePath ? (
+                    <div className="mt-1.5 truncate font-mono text-3xs text-muted-foreground">{mergeBack.data.sourcePath}</div>
+                  ) : null}
+                  {renderUndoAction(mergeBack.data.backupId)}
                 </Card>
               ) : null}
             </div>

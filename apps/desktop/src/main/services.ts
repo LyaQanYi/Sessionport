@@ -4,12 +4,51 @@
  */
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
-import { describeDecision, findRef, loadRegistry, OFFICIAL_IMPORTS, officialSupport, planSync, saveRegistry, sessionportHome, sourceKeyOf, upsertRef, verifyOfficialImport } from '@sessionport/core';
+import {
+  applyUndo,
+  beginBackup,
+  buildDeltaAndMergedBundles,
+  collectOutcomePaths,
+  describeDecision,
+  describeMergeBackDecision,
+  eventFingerprint,
+  findRef,
+  latestUndoableRecord,
+  listHistory,
+  loadHistoryRecord,
+  loadRegistry,
+  OFFICIAL_IMPORTS,
+  officialSupport,
+  planMergeBack,
+  planSync,
+  saveRegistry,
+  sessionportHome,
+  sourceKeyOf,
+  upsertRef,
+  verifyOfficialImport,
+} from '@sessionport/core';
 import { READABLE_AGENTS, WRITABLE_AGENTS, getAdapter } from './adapters.ts';
 import { AppError } from './errors.ts';
-import type { AdapterWriteOptions, AgentAdapter, AgentId, ExternalRef, IrBundle, IrSession, LossEntry, OfficialSupport, OfficialTarget, OfficialVerifyResult, SyncDecision } from '@sessionport/core';
+import type {
+  AdapterWriteOptions,
+  AdapterWriteOutcome,
+  AgentAdapter,
+  AgentId,
+  CursorUndoInfo,
+  ExternalRef,
+  HistoryRecord,
+  IrBundle,
+  IrSession,
+  LossEntry,
+  MergeBackDecision,
+  OfficialSupport,
+  OfficialTarget,
+  OfficialVerifyResult,
+  SyncDecision,
+  UndoResult,
+} from '@sessionport/core';
 
 export type ReadableAgent = AgentId;
 
@@ -128,6 +167,38 @@ export interface MigrationResult {
   losses: LossEntry[];
   imported: boolean;
   sync: SyncInfo;
+  backupId?: string;
+  refused?: { reason: string; code?: string; params?: Record<string, unknown> };
+}
+
+export interface MergeBackOptions {
+  home?: string;
+  targetHome?: string;
+  stateHome?: string;
+  normalizeTools?: boolean;
+  appendDiverged?: boolean;
+}
+
+export interface MergeBackPreview {
+  source: { agent: AgentId; sessionId: string; title?: string; events: number };
+  target: { agent: AgentId; sessionId?: string; events?: number };
+  decision: MergeBackDecision['kind'];
+  description: string;
+  deltaEvents: number;
+  sourceDelta: number;
+  strategy?: 'appendDelta' | 'rewrite';
+  losses: LossEntry[];
+  targetPath?: string;
+  sourcePath?: string;
+}
+
+export interface MergeBackResult {
+  decision: MergeBackDecision['kind'];
+  mergedEvents: number;
+  strategy?: 'appendDelta' | 'rewrite';
+  sourcePath?: string;
+  backupId?: string;
+  losses: LossEntry[];
   refused?: { reason: string; code?: string; params?: Record<string, unknown> };
 }
 
@@ -364,9 +435,60 @@ interface PreparedMigration {
   caps: Record<string, unknown>;
   registry: ReturnType<typeof loadRegistry>;
   extRef: ExternalRef | undefined;
+  previewOutcome: AdapterWriteOutcome;
+  sourcePath?: string;
   stateHome: string | undefined;
   targetId?: string;
   targetPath?: string;
+}
+
+function inferHomeFromPath(agent: AgentId, filePath: string | undefined): string | undefined {
+  if (!filePath) return undefined;
+  const abs = resolve(filePath);
+  if (agent === 'claude-code' || agent === 'command-code' || agent === 'qoder') {
+    return dirname(dirname(dirname(abs)));
+  }
+  if (agent === 'dsh') {
+    return dirname(dirname(dirname(abs)));
+  }
+  if (agent === 'codex') {
+    return dirname(dirname(dirname(dirname(dirname(abs)))));
+  }
+  return undefined;
+}
+
+async function readTargetSessionBundle(
+  agent: AgentId,
+  targetId: string,
+  targetPath?: string,
+  targetHome?: string,
+): Promise<IrBundle> {
+  if (agent === 'cursor') {
+    const adapter = await requireReader(agent, 'session.noReader', 'cursor 缺少 reader');
+    return adapter.read(targetPath ? targetPath + '#' + targetId : targetId);
+  }
+  if (agent === 'opencode') {
+    if (targetHome !== undefined && targetHome.length > 0) {
+      const mod = await import('@sessionport/adapter-opencode');
+      const raw = await mod.exportOpencodeSession(targetId, { env: { XDG_DATA_HOME: targetHome } });
+      return mod.exportToBundle(raw);
+    }
+    const adapter = await requireReader(agent, 'session.noReader', 'opencode 缺少 reader');
+    return adapter.read(targetId);
+  }
+  const adapter = await requireReader(agent, 'session.noReader', agent + ' 缺少 reader');
+  return adapter.read(targetPath ?? targetId);
+}
+
+function backupCaveatsFor(target: AgentId, register?: boolean): string[] {
+  const caveats: string[] = [];
+  if (target === 'opencode') {
+    caveats.push('opencode 会话写入共享数据库/外部进程，undo 仅还原 registry 而不回滚 opencode 库内消息');
+  }
+  if (register === true) {
+    caveats.push('已写入目标应用索引（如 threads/session_index.jsonl/app-state.json/workspace.json），undo 不自动删除索引条目');
+  }
+  return caveats;
 }
 
 async function prepareMigration(agent: AgentId, ref: SessionRefInput, target: AgentId, options: MigrationOptions): Promise<PreparedMigration> {
@@ -416,6 +538,8 @@ async function prepareMigration(agent: AgentId, ref: SessionRefInput, target: Ag
     caps: (preview.report.caps ?? {}) as Record<string, unknown>,
     registry,
     extRef,
+    previewOutcome: preview,
+    sourcePath: bundle.root.source.nativePath ?? ref.nativePath,
     stateHome: options.stateHome,
     targetId: id,
     targetPath,
@@ -476,39 +600,441 @@ export async function runMigration(
 
   const fork = prepared.sync.decision === 'diverged' && mode === 'fork';
   const writer = await requireWriter(target);
-  const outcome = await writer.write(
-    prepared.bundle,
-    buildAdapterWriteOpts(target, prepared.bundle, {
-      ...options,
-      dryRun: false,
-      id: fork ? undefined : (options.targetId ?? prepared.extRef?.targetId),
-      targetPath: fork ? undefined : prepared.extRef?.targetPath,
-      allowOverwrite: prepared.extRef !== undefined && !fork,
-    }),
-  );
+  const lockedPreview = fork
+    ? await writer.write(
+        prepared.bundle,
+        buildAdapterWriteOpts(target, prepared.bundle, { ...options, dryRun: true, id: undefined, targetPath: undefined }),
+      )
+    : prepared.previewOutcome;
+  const lockedId = fork
+    ? lockedPreview.targetId
+    : (options.targetId ?? prepared.extRef?.targetId ?? lockedPreview.targetId);
+  const lockedTargetPath = fork
+    ? (target === 'codex' ? lockedPreview.paths[0] : undefined)
+    : (prepared.extRef?.targetPath ?? (target === 'codex' ? lockedPreview.paths[0] : undefined));
 
-  const nextRef: ExternalRef = {
+  const plannedPaths =
+    target === 'cursor' || target === 'opencode' ? [] : collectOutcomePaths(lockedPreview);
+  const handle = beginBackup({
+    stateHome: prepared.stateHome,
+    action: 'desktop-migrate',
     sourceKey: prepared.sync.sourceKey,
     target,
-    targetId: outcome.targetId,
-    targetPath: outcome.paths[0] ?? prepared.targetPath ?? '',
-    unit: outcome.unit,
-    targetUnits: outcome.units,
-    sourceEvents: prepared.bundle.root.events.length,
-    sourceHead: prepared.bundle.root.head,
-    updatedAt: new Date().toISOString(),
-  };
-  upsertRef(prepared.registry, nextRef);
-  saveRegistry(prepared.registry, prepared.stateHome);
+    targetId: lockedId,
+    targetHome: options.home,
+    plannedPaths,
+    includeRegistry: true,
+    caveats: backupCaveatsFor(target, options.register),
+  });
+
+  try {
+    const writeOpts = buildAdapterWriteOpts(target, prepared.bundle, {
+      ...options,
+      dryRun: false,
+      id: lockedId,
+      targetPath: lockedTargetPath,
+      allowOverwrite: prepared.extRef !== undefined && !fork,
+    });
+    if (target === 'cursor') writeOpts.backupDir = handle.cursorBackupDir;
+
+    const outcome = await writer.write(prepared.bundle, writeOpts);
+    const writtenPath = outcome.paths[0] ?? prepared.targetPath ?? '';
+
+    let targetIrEvents: number | undefined;
+    let targetIrHead: string | null | undefined;
+    let targetIrHeadHash: string | null | undefined;
+    try {
+      const readBack = await readTargetSessionBundle(target, outcome.targetId, writtenPath, options.home);
+      targetIrEvents = readBack.root.events.length;
+      targetIrHead = readBack.root.head;
+      targetIrHeadHash = eventFingerprint(readBack.root.events.at(-1));
+    } catch {
+      // 个别场景无法回读目标时保留空锚点，后续 merge-back 回退内容指纹匹配
+    }
+
+    const nextRef: ExternalRef = {
+      sourceKey: prepared.sync.sourceKey,
+      target,
+      targetId: outcome.targetId,
+      targetPath: writtenPath,
+      unit: outcome.unit,
+      targetUnits: outcome.units,
+      sourceEvents: prepared.bundle.root.events.length,
+      sourceHead: prepared.bundle.root.head,
+      updatedAt: new Date().toISOString(),
+      sourceAgent: prepared.bundle.root.source.agent,
+      ...(prepared.sourcePath !== undefined ? { sourcePath: prepared.sourcePath } : {}),
+      ...(options.home !== undefined ? { targetHome: options.home } : {}),
+      ...(targetIrEvents !== undefined ? { targetIrEvents } : {}),
+      ...(targetIrHead !== undefined ? { targetIrHead } : {}),
+      ...(targetIrHeadHash !== undefined ? { targetIrHeadHash } : {}),
+    };
+    upsertRef(prepared.registry, nextRef);
+    saveRegistry(prepared.registry, prepared.stateHome);
+
+    const cursor: CursorUndoInfo | undefined =
+      target === 'cursor'
+        ? {
+            dbPath: writtenPath,
+            composerId: outcome.targetId,
+            ...(typeof outcome.report.backupPath === 'string' ? { backupPath: outcome.report.backupPath } : {}),
+          }
+        : undefined;
+    const backupRecord = handle.finalize({
+      targetId: outcome.targetId,
+      actualPaths: target === 'cursor' || target === 'opencode' ? [] : collectOutcomePaths(outcome),
+      ...(cursor !== undefined ? { cursor } : {}),
+    });
+
+    return {
+      target,
+      sessionId: outcome.targetId,
+      paths: outcome.paths,
+      losses: (outcome.report.losses ?? []) as LossEntry[],
+      imported: outcome.report.imported === true,
+      sync: { ...prepared.sync, targetId: outcome.targetId, targetPath: nextRef.targetPath, targetUnits: outcome.units },
+      backupId: backupRecord.id,
+    };
+  } catch (error) {
+    handle.abort();
+    throw error;
+  }
+}
+
+export function listBackups(stateHome?: string, limit = 30): HistoryRecord[] {
+  return listHistory(stateHome, limit);
+}
+
+export async function undoBackup(
+  opId?: string,
+  options: { stateHome?: string; dryRun?: boolean } = {},
+): Promise<UndoResult> {
+  const record = opId ? loadHistoryRecord(opId, options.stateHome) : latestUndoableRecord(options.stateHome);
+  if (!record) {
+    throw new AppError(
+      'history.notFound',
+      opId ? '找不到备份记录: ' + opId : '没有可撤销的操作记录',
+      { opId: opId ?? '' },
+    );
+  }
+  if (record.undoneAt !== undefined) {
+    throw new AppError(
+      'history.alreadyUndone',
+      '操作 ' + record.id + ' 已经撤销过（' + record.undoneAt + '）',
+      { opId: record.id },
+    );
+  }
+  return applyUndo(record, {
+    stateHome: options.stateHome,
+    dryRun: options.dryRun,
+    restoreCursor: async (backupPath) => {
+      const mod = await import('@sessionport/adapter-cursor');
+      mod.restoreCursorBackup(backupPath);
+    },
+  });
+}
+
+interface PreparedMergeBack {
+  sourceBundle: IrBundle;
+  targetBundle?: IrBundle;
+  sourceAgent: AgentId;
+  sourceAdapter: AgentAdapter;
+  sourceKey: string;
+  sourceId: string;
+  sourcePath?: string;
+  sourceHome?: string;
+  targetHome?: string;
+  registry: ReturnType<typeof loadRegistry>;
+  extRef?: ExternalRef;
+  decision: MergeBackDecision;
+  strategy?: 'appendDelta' | 'rewrite';
+  built?: ReturnType<typeof buildDeltaAndMergedBundles>;
+}
+
+async function prepareMergeBack(
+  agent: AgentId,
+  ref: SessionRefInput,
+  target: AgentId,
+  options: MergeBackOptions = {},
+): Promise<PreparedMergeBack> {
+  const sourceBundle = await loadSource(agent, ref);
+  const sourceAgent = sourceBundle.root.source.agent;
+  const sourceAdapter = (await getAdapter(sourceAgent))!;
+  const sourceWritable = Boolean(sourceAdapter?.write);
+  const sourceKey = sourceKeyOf(sourceBundle.root.source, sourceBundle.root.id);
+  const sourceId = sourceBundle.root.source.nativeSessionId ?? sourceBundle.root.id;
+  const registry = loadRegistry(options.stateHome);
+  const extRef = findRef(registry, sourceKey, target);
+
+  if (extRef === undefined) {
+    return {
+      sourceBundle,
+      sourceAgent,
+      sourceAdapter,
+      sourceKey,
+      sourceId,
+      registry,
+      decision: planMergeBack({
+        ref: undefined,
+        source: sourceBundle.root,
+        target: sourceBundle.root,
+        sourceWritable,
+      }),
+    };
+  }
+
+  const targetHome = options.targetHome ?? extRef.targetHome;
+  const targetBundle = await readTargetSessionBundle(target, extRef.targetId, extRef.targetPath, targetHome);
+  const decision = planMergeBack({
+    ref: extRef,
+    source: sourceBundle.root,
+    target: targetBundle.root,
+    sourceWritable,
+  });
+
+  if (decision.kind !== 'fast-forward' && decision.kind !== 'both-changed') {
+    return {
+      sourceBundle,
+      targetBundle,
+      sourceAgent,
+      sourceAdapter,
+      sourceKey,
+      sourceId,
+      targetHome,
+      registry,
+      extRef,
+      decision,
+    };
+  }
+
+  const sourcePath = sourceBundle.root.source.nativePath ?? ref.nativePath ?? extRef.sourcePath;
+  const sourceHome = options.home ?? extRef.sourceHome ?? inferHomeFromPath(sourceAgent, sourcePath);
+  const strategy: 'appendDelta' | 'rewrite' =
+    sourceAdapter.appendDelta && sourcePath && existsSync(sourcePath) ? 'appendDelta' : 'rewrite';
+  const built = buildDeltaAndMergedBundles({
+    sourceBundle,
+    targetAgent: target,
+    targetId: extRef.targetId,
+    deltaEvents: decision.deltaEvents,
+    normalizeTools: options.normalizeTools !== false,
+    includeDivergedBoundary: decision.kind === 'both-changed',
+  });
 
   return {
-    target,
-    sessionId: outcome.targetId,
-    paths: outcome.paths,
-    losses: (outcome.report.losses ?? []) as LossEntry[],
-    imported: outcome.report.imported === true,
-    sync: { ...prepared.sync, targetId: outcome.targetId, targetPath: nextRef.targetPath, targetUnits: outcome.units },
+    sourceBundle,
+    targetBundle,
+    sourceAgent,
+    sourceAdapter,
+    sourceKey,
+    sourceId,
+    sourcePath,
+    sourceHome,
+    targetHome,
+    registry,
+    extRef,
+    decision,
+    strategy,
+    built,
   };
+}
+
+export async function previewMergeBack(
+  agent: AgentId,
+  ref: SessionRefInput,
+  target: AgentId,
+  options: MergeBackOptions = {},
+): Promise<MergeBackPreview> {
+  const prep = await prepareMergeBack(agent, ref, target, options);
+  const deltaEvents =
+    prep.decision.kind === 'fast-forward' || prep.decision.kind === 'both-changed'
+      ? prep.decision.deltaEvents.length
+      : 0;
+  const sourceDelta = prep.decision.kind === 'both-changed' ? prep.decision.sourceDelta : 0;
+  return {
+    source: {
+      agent: prep.sourceAgent,
+      sessionId: prep.sourceId,
+      title: prep.sourceBundle.root.meta.title,
+      events: prep.sourceBundle.root.events.length,
+    },
+    target: {
+      agent: target,
+      ...(prep.extRef?.targetId !== undefined ? { sessionId: prep.extRef.targetId } : {}),
+      ...(prep.targetBundle !== undefined ? { events: prep.targetBundle.root.events.length } : {}),
+    },
+    decision: prep.decision.kind,
+    description: describeMergeBackDecision(prep.decision),
+    deltaEvents,
+    sourceDelta,
+    ...(prep.strategy !== undefined ? { strategy: prep.strategy } : {}),
+    losses: prep.built?.losses ?? [],
+    ...(prep.extRef?.targetPath !== undefined ? { targetPath: prep.extRef.targetPath } : {}),
+    ...(prep.sourcePath !== undefined ? { sourcePath: prep.sourcePath } : {}),
+  };
+}
+
+export async function runMergeBack(
+  agent: AgentId,
+  ref: SessionRefInput,
+  target: AgentId,
+  options: MergeBackOptions = {},
+): Promise<MergeBackResult> {
+  const prep = await prepareMergeBack(agent, ref, target, options);
+  if (prep.decision.kind === 'no-ref' || prep.decision.kind === 'source-read-only' || prep.decision.kind === 'unanchored') {
+    throw new AppError('mergeBack.' + prep.decision.kind, describeMergeBackDecision(prep.decision));
+  }
+  if (prep.decision.kind === 'up-to-date') {
+    return {
+      decision: 'up-to-date',
+      mergedEvents: 0,
+      losses: [],
+      ...(prep.sourcePath !== undefined ? { sourcePath: prep.sourcePath } : {}),
+    };
+  }
+  if (prep.decision.kind === 'both-changed' && options.appendDiverged !== true) {
+    return {
+      decision: 'both-changed',
+      mergedEvents: 0,
+      losses: prep.built?.losses ?? [],
+      refused: {
+        reason: describeMergeBackDecision(prep.decision),
+        code: 'mergeBack.bothChanged',
+        params: { deltaEvents: prep.decision.deltaEvents.length, sourceDelta: prep.decision.sourceDelta },
+      },
+    };
+  }
+
+  const extRef = prep.extRef!;
+  const targetBundle = prep.targetBundle!;
+  const built = prep.built!;
+  const strategy = prep.strategy!;
+
+  let plannedPaths: string[] = [];
+  if (prep.sourceAgent !== 'cursor' && prep.sourceAgent !== 'opencode') {
+    if (strategy === 'appendDelta' && prep.sourcePath) {
+      plannedPaths = [prep.sourcePath];
+    } else {
+      const previewWrite = await prep.sourceAdapter.write!(built.mergedBundle, {
+        id: prep.sourceId,
+        home: prep.sourceHome,
+        cwd: prep.sourceBundle.root.meta.cwd,
+        targetPath: prep.sourcePath,
+        includeChildren: prep.sourceBundle.children.length > 0,
+        normalizeTools: false,
+        dryRun: true,
+      });
+      plannedPaths = collectOutcomePaths(previewWrite);
+      if (prep.sourcePath && !plannedPaths.includes(resolve(prep.sourcePath))) {
+        plannedPaths.unshift(resolve(prep.sourcePath));
+      }
+    }
+  }
+
+  const handle = beginBackup({
+    stateHome: options.stateHome,
+    action: 'merge-back',
+    sourceKey: prep.sourceKey,
+    target: prep.sourceAgent,
+    targetId: prep.sourceId,
+    targetHome: prep.sourceHome,
+    plannedPaths,
+    includeRegistry: true,
+    caveats: backupCaveatsFor(prep.sourceAgent, false),
+  });
+
+  try {
+    const outcome =
+      strategy === 'appendDelta'
+        ? await prep.sourceAdapter.appendDelta!(prep.sourcePath!, built.deltaBundle, {
+            id: prep.sourceId,
+            home: prep.sourceHome,
+            cwd: prep.sourceBundle.root.meta.cwd,
+            model: prep.sourceBundle.root.meta.model,
+            normalizeTools: false,
+            dryRun: false,
+          })
+        : await prep.sourceAdapter.write!(built.mergedBundle, {
+            id: prep.sourceId,
+            home: prep.sourceHome,
+            dbPath: prep.sourceAgent === 'cursor' ? prep.sourcePath : undefined,
+            targetPath: prep.sourcePath,
+            cwd: prep.sourceBundle.root.meta.cwd,
+            model: prep.sourceBundle.root.meta.model,
+            includeChildren: prep.sourceBundle.children.length > 0,
+            allowOverwrite: true,
+            overwrite: true,
+            confirmReal: true,
+            backupDir: handle.cursorBackupDir,
+            normalizeTools: false,
+            dryRun: false,
+          });
+
+    const writtenSourcePath = outcome.paths[0] ? resolve(outcome.paths[0]) : prep.sourcePath;
+    const updatedSource = await readTargetSessionBundle(
+      prep.sourceAgent,
+      outcome.targetId,
+      writtenSourcePath,
+      prep.sourceHome,
+    );
+
+    const targetAdapter = await getAdapter(target);
+    const countedTarget = targetAdapter?.countTarget
+      ? await targetAdapter.countTarget(
+          {
+            target,
+            targetId: extRef.targetId,
+            paths: extRef.targetPath ? [extRef.targetPath] : [],
+            unit: extRef.unit,
+            units: extRef.targetUnits,
+            report: {},
+          },
+          { home: prep.targetHome, targetPath: extRef.targetPath },
+        )
+      : { exists: true, units: extRef.targetUnits };
+
+    const nextRef: ExternalRef = {
+      ...extRef,
+      sourceAgent: prep.sourceAgent,
+      ...(writtenSourcePath !== undefined ? { sourcePath: writtenSourcePath } : {}),
+      ...(prep.sourceHome !== undefined ? { sourceHome: prep.sourceHome } : {}),
+      ...(prep.targetHome !== undefined ? { targetHome: prep.targetHome } : {}),
+      targetUnits: countedTarget.exists ? countedTarget.units : extRef.targetUnits,
+      sourceEvents: updatedSource.root.events.length,
+      sourceHead: updatedSource.root.head,
+      targetIrEvents: targetBundle.root.events.length,
+      targetIrHead: targetBundle.root.head,
+      targetIrHeadHash: eventFingerprint(targetBundle.root.events.at(-1)),
+      updatedAt: new Date().toISOString(),
+    };
+    upsertRef(prep.registry, nextRef);
+    saveRegistry(prep.registry, options.stateHome);
+
+    const cursor: CursorUndoInfo | undefined =
+      prep.sourceAgent === 'cursor'
+        ? {
+            dbPath: outcome.paths[0] ?? '',
+            composerId: outcome.targetId,
+            ...(typeof outcome.report.backupPath === 'string' ? { backupPath: outcome.report.backupPath } : {}),
+          }
+        : undefined;
+    const backupRecord = handle.finalize({
+      targetId: outcome.targetId,
+      actualPaths: prep.sourceAgent === 'cursor' || prep.sourceAgent === 'opencode' ? [] : collectOutcomePaths(outcome),
+      ...(cursor !== undefined ? { cursor } : {}),
+    });
+
+    return {
+      decision: prep.decision.kind,
+      mergedEvents: prep.decision.deltaEvents.length,
+      strategy,
+      sourcePath: writtenSourcePath,
+      backupId: backupRecord.id,
+      losses: [...built.losses, ...((outcome.report.losses ?? []) as LossEntry[])],
+    };
+  } catch (error) {
+    handle.abort();
+    throw error;
+  }
 }
 
 export interface PathsInfo {

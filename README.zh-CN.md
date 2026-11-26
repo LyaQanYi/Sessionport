@@ -121,6 +121,8 @@ sessionport inspect <source>
 sessionport pull  <source> [--out ir.json]
 sessionport push  <source> --to <agent> [options]
 sessionport sync  <source> --to <agent> [options]
+sessionport merge-back <source> --from <agent> [--append-diverged]
+sessionport undo  [<opId>] [--list] [--dry-run]
 sessionport verify --agent <agent> [options]
 ```
 
@@ -129,7 +131,10 @@ sessionport verify --agent <agent> [options]
 目标：`claude-code`、`command-code`、`dsh`、`codex`、`opencode`、`cursor`（写真实库需 `--confirm-real`）、`qoder`。
 
 不只写文件，还注册进目标 app：`--register`（Command Code 桌面列表 / DSH workspace /
-Codex `threads` + `session_index.jsonl`）。在 `push`/`sync` 时传 `--raw-tools` 可关闭工具语义归一。
+Codex `threads` + `session_index.jsonl`）。在 `push`/`sync`/`merge-back` 时传 `--raw-tools` 可关闭工具语义归一。
+每次真实写入前会自动把目标原文件与 `registry.json` 备份到 `~/.sessionport/history/<opId>/`，支持用
+`sessionport undo`（及桌面端一键撤销）回滚；当在目标 app 里继续聊过之后，可用 `merge-back` 或
+`sync --merge-back` 把新增轮次增量合回源端（`claude-code` / `codex` / `command-code` 走字节级无损尾部追加）。
 
 大会话：`dsh` 目标支持 `--slim`——截断工具结果/参数、较早的 step 只保留消息、丢弃 reasoning，
 让导入的会话装进目标模型的上下文窗口（每一处裁剪都会进损失清单）。

@@ -90,7 +90,63 @@ export interface MigrationResult {
   losses: LossEntry[];
   imported: boolean;
   sync: SyncInfo;
+  backupId?: string;
   /** code/params 是后加的结构化信息；reason 保留给旧调用方 / 未知 code 回退 */
+  refused?: { reason: string; code?: string; params?: Record<string, unknown> };
+}
+
+export interface HistoryRecordSummary {
+  version: 1;
+  id: string;
+  createdAt: string;
+  action: 'push' | 'sync' | 'merge-back' | 'desktop-migrate';
+  sourceKey: string;
+  target: AgentId;
+  targetId: string;
+  undoneAt?: string;
+  caveats: string[];
+}
+
+export interface UndoResult {
+  opId: string;
+  dryRun: boolean;
+  restoredFiles: string[];
+  deletedFiles: string[];
+  missingFiles: string[];
+  registryRestored: boolean;
+  registryDeleted: boolean;
+  cursorRestored: boolean;
+  caveats: string[];
+}
+
+export interface MergeBackOptions {
+  home?: string;
+  targetHome?: string;
+  stateHome?: string;
+  normalizeTools?: boolean;
+  appendDiverged?: boolean;
+}
+
+export interface MergeBackPreview {
+  source: { agent: AgentId; sessionId: string; title?: string; events: number };
+  target: { agent: AgentId; sessionId?: string; events?: number };
+  decision: 'no-ref' | 'source-read-only' | 'unanchored' | 'up-to-date' | 'fast-forward' | 'both-changed';
+  description: string;
+  deltaEvents: number;
+  sourceDelta: number;
+  strategy?: 'appendDelta' | 'rewrite';
+  losses: LossEntry[];
+  targetPath?: string;
+  sourcePath?: string;
+}
+
+export interface MergeBackResult {
+  decision: 'no-ref' | 'source-read-only' | 'unanchored' | 'up-to-date' | 'fast-forward' | 'both-changed';
+  mergedEvents: number;
+  strategy?: 'appendDelta' | 'rewrite';
+  sourcePath?: string;
+  backupId?: string;
+  losses: LossEntry[];
   refused?: { reason: string; code?: string; params?: Record<string, unknown> };
 }
 
@@ -211,6 +267,14 @@ export const api = {
     invoke<MigrationPreview>('migrate:preview', { agent, ...ref, target, ...options }),
   runMigration: (payload: { agent: AgentId; ref: SessionRef; target: AgentId } & MigrationOptions) =>
     invoke<MigrationResult>('migrate:run', { ...payload, ...payload.ref, agent: payload.agent, target: payload.target }),
+  previewMergeBack: (agent: AgentId, ref: SessionRef, target: AgentId, options: MergeBackOptions = {}) =>
+    invoke<MergeBackPreview>('migrate:mergeBackPreview', { agent, ...ref, target, ...options }),
+  runMergeBack: (payload: { agent: AgentId; ref: SessionRef; target: AgentId } & MergeBackOptions) =>
+    invoke<MergeBackResult>('migrate:mergeBackRun', { ...payload, ...payload.ref, agent: payload.agent, target: payload.target }),
+  listBackups: (options: { stateHome?: string; limit?: number } = {}) =>
+    invoke<HistoryRecordSummary[]>('history:list', options),
+  undoBackup: (opId?: string, options: { stateHome?: string; dryRun?: boolean } = {}) =>
+    invoke<UndoResult>('history:undo', { opId, ...options }),
   capabilities: () => invoke<Capabilities>('app:capabilities'),
   paths: () => invoke<PathsInfo>('app:paths'),
   openPath: (key: string) => invoke<{ opened: string }>('app:openPath', { key }),
