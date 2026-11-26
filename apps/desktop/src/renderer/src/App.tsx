@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeftRight, Blocks, ChevronLeft, ChevronRight, MessagesSquare, Monitor, Moon, Search, Settings2, Sun } from 'lucide-react';
+import { ArrowLeftRight, Blocks, ChevronLeft, MessagesSquare, Monitor, Moon, Search, Settings2, Sun } from 'lucide-react';
 
 import { api } from './api.ts';
 import type { SessionRow } from './api.ts';
-import { AgentGlyph, AGENT_META, agentLabel } from './agents.tsx';
+import { AgentGlyph, agentLabel } from './agents.tsx';
 import { CommandPalette } from './CommandPalette.tsx';
 import { nextTheme } from './commandPalette.ts';
 import { HOME_TO_AGENT, useAgentPreferences } from './preferences.ts';
 import { useT } from './i18n/I18nProvider.tsx';
-import { Kbd, cn } from './ui.tsx';
+import { Kbd, WindowChromeProvider, cn } from './ui.tsx';
 import { SessionsPage } from './pages/SessionsPage.tsx';
 import { ReaderPage } from './pages/ReaderPage.tsx';
 import { MigratePage } from './pages/MigratePage.tsx';
@@ -114,214 +114,213 @@ export function App() {
   const enabledAgents = prefs.enabled;
 
   return (
-    <div className="flex h-full overflow-hidden bg-background text-foreground">
-      <aside className={cn('flex w-sidebar shrink-0 flex-col border-r border-sidebar-border bg-sidebar', isMac ? 'pt-10' : 'pt-3', collapsed && 'hidden')}>
-        <div className="mb-3 flex items-center gap-2 px-4 app-no-drag">
-          <div className="flex h-6 w-6 items-center justify-center rounded-control bg-primary text-primary-foreground">
-            <ArrowLeftRight className="h-3.5 w-3.5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-title leading-tight">sessionport</div>
-            <div className="truncate text-caption text-sidebar-muted">{t('app.tagline')}</div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setCollapsed(true)}
-            className="flex h-6 w-6 items-center justify-center rounded-control text-sidebar-muted hover:bg-sidebar-row hover:text-sidebar-foreground"
-            title={t('app.collapseSidebar')}
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        {/* ⌘K 命令面板入口（快捷键的可见提示） */}
-        <div className="px-2 pb-1">
-          <button
-            type="button"
-            onClick={() => setPaletteOpen(true)}
-            className={cn(rowClass(false), 'justify-start')}
-            title={t('palette.openHint', { shortcut: isMac ? '⌘K' : 'Ctrl+K' })}
-          >
-            <Search className="h-4 w-4 shrink-0 opacity-80" />
-            <span className="truncate">{t('palette.open')}</span>
-            <span className="ml-auto">
-              <Kbd>{isMac ? '⌘K' : 'Ctrl K'}</Kbd>
-            </span>
-          </button>
-        </div>
-
-        {/* 我安装的 harness：点一行 = 过滤该 agent 的会话 */}
-        <div className="px-2">
-          <div className="flex items-center justify-between px-2 pb-1">
-            <span className="text-3xs font-medium uppercase tracking-wider text-sidebar-muted">Harness</span>
+    <WindowChromeProvider isMac={isMac} sidebarCollapsed={collapsed} onExpandSidebar={() => setCollapsed(false)}>
+      <div className="flex h-full overflow-hidden bg-background text-foreground">
+        <aside className={cn('flex h-full min-h-0 w-sidebar shrink-0 flex-col border-r border-sidebar-border bg-sidebar', collapsed && 'hidden')}>
+          <div className={cn('shrink-0', isMac ? 'app-drag h-10' : 'h-3')} />
+          <div className="app-drag mb-2 flex shrink-0 items-center gap-2 px-4">
+            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-control bg-primary text-primary-foreground">
+              <ArrowLeftRight className="h-3.5 w-3.5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-title leading-tight">sessionport</div>
+              <div className="truncate text-caption text-sidebar-muted">{t('app.tagline')}</div>
+            </div>
             <button
               type="button"
-              onClick={() => setView('settings')}
-              className="text-3xs text-sidebar-muted hover:text-sidebar-foreground"
-              title={t('app.manageHarnessHint')}
+              onClick={() => setCollapsed(true)}
+              className="app-no-drag flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-sidebar-muted transition-colors hover:bg-sidebar-row hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title={t('app.collapseSidebar')}
+              aria-label={t('app.collapseSidebar')}
             >
-              {t('app.manageHarness')}
+              <ChevronLeft className="h-3.5 w-3.5" />
             </button>
           </div>
-          <div className="flex flex-col gap-0.5">
-            {enabledAgents.length === 0 ? (
-              <button type="button" onClick={() => setView('settings')} className={cn(rowClass(false), 'justify-start')}>
-                {t('app.noHarness')}
-              </button>
-            ) : (
-              enabledAgents.map((agent) => {
-                const selected = view === 'sessions' && agentFilter === agent;
-                const count = counts.get(agent) ?? 0;
+
+          {/* ⌘K 命令面板入口（快捷键的可见提示） */}
+          <div className="shrink-0 px-2 pb-2">
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className={cn(rowClass(false), 'justify-start')}
+              title={t('palette.openHint', { shortcut: isMac ? '⌘K' : 'Ctrl+K' })}
+            >
+              <Search className="h-4 w-4 shrink-0 opacity-80" />
+              <span className="truncate">{t('palette.open')}</span>
+              <span className="ml-auto">
+                <Kbd>{isMac ? '⌘K' : 'Ctrl K'}</Kbd>
+              </span>
+            </button>
+          </div>
+
+          {/* 中部可独立滚动：防止 10 个 harness 在 600px 高度下挤掉底部设置/主题栏 */}
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1">
+            <div>
+              <div className="flex items-center justify-between px-2 pb-1">
+                <span className="text-3xs font-medium uppercase tracking-wider text-sidebar-muted">Harness</span>
+                <button
+                  type="button"
+                  onClick={() => setView('settings')}
+                  className="app-no-drag text-3xs text-sidebar-muted transition-colors hover:text-sidebar-foreground"
+                  title={t('app.manageHarnessHint')}
+                >
+                  {t('app.manageHarness')}
+                </button>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {enabledAgents.length === 0 ? (
+                  <button type="button" onClick={() => setView('settings')} className={cn(rowClass(false), 'justify-start')}>
+                    {t('app.noHarness')}
+                  </button>
+                ) : (
+                  enabledAgents.map((agent) => {
+                    const selected = view === 'sessions' && agentFilter === agent;
+                    const count = counts.get(agent) ?? 0;
+                    return (
+                      <button
+                        key={agent}
+                        type="button"
+                        data-nav={'agent:' + agent}
+                        onClick={() => {
+                          setAgentFilter(agent);
+                          setView('sessions');
+                        }}
+                        className={rowClass(selected)}
+                        title={agentLabel(agent)}
+                      >
+                        {selected ? <span className="absolute left-0 top-1.5 h-5 w-0.5 rounded-full bg-ring" /> : null}
+                        <AgentGlyph agent={agent} size="sm" />
+                        <span className="truncate">{agentLabel(agent)}</span>
+                        {count > 0 ? (
+                          <span className="ml-auto rounded-full bg-sidebar-row px-1.5 text-3xs tabular-nums text-sidebar-muted">{count}</span>
+                        ) : null}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="mx-2 my-3 h-px bg-sidebar-border" />
+
+            <nav className="flex flex-col gap-0.5">
+              {globalNav.map((item) => {
+                const Icon = item.icon;
+                const selected =
+                  item.view === 'sessions'
+                    ? (view === 'sessions' && agentFilter === null) || view === 'reader'
+                    : view === item.view;
                 return (
                   <button
-                    key={agent}
+                    key={item.view}
                     type="button"
-                    data-nav={'agent:' + agent}
+                    data-nav={item.view}
                     onClick={() => {
-                      setAgentFilter(agent);
-                      setView('sessions');
+                      if (item.view === 'sessions') setAgentFilter(null);
+                      setView(item.view);
                     }}
                     className={rowClass(selected)}
-                    title={agentLabel(agent)}
                   >
                     {selected ? <span className="absolute left-0 top-1.5 h-5 w-0.5 rounded-full bg-ring" /> : null}
-                    <AgentGlyph agent={agent} size="sm" />
-                    <span className="truncate">{agentLabel(agent)}</span>
-                    {count > 0 ? (
-                      <span className="ml-auto rounded-full bg-sidebar-row px-1.5 text-3xs tabular-nums text-sidebar-muted">{count}</span>
-                    ) : null}
+                    <Icon className="h-4 w-4 shrink-0 opacity-80" />
+                    <span className="truncate">{item.label}</span>
                   </button>
                 );
-              })
-            )}
-          </div>
-        </div>
+              })}
+            </nav>
 
-        <div className="mx-4 my-3 h-px bg-sidebar-border" />
-
-        <nav className="flex flex-col gap-0.5 px-2">
-          {globalNav.map((item) => {
-            const Icon = item.icon;
-            const selected =
-              item.view === 'sessions'
-                ? (view === 'sessions' && agentFilter === null) || view === 'reader'
-                : view === item.view;
-            return (
+            {active ? (
               <button
-                key={item.view}
                 type="button"
-                data-nav={item.view}
-                onClick={() => {
-                  if (item.view === 'sessions') setAgentFilter(null);
-                  setView(item.view);
-                }}
-                className={rowClass(selected)}
+                onClick={() => setView('reader')}
+                className="app-no-drag mt-3 flex w-full items-center gap-2 rounded-control border border-sidebar-border/70 bg-sidebar-row/40 px-2.5 py-2 text-left transition-colors hover:bg-sidebar-row"
+                title={active.nativePath}
               >
-                {selected ? <span className="absolute left-0 top-1.5 h-5 w-0.5 rounded-full bg-ring" /> : null}
-                <Icon className="h-4 w-4 shrink-0 opacity-80" />
-                <span className="truncate">{item.label}</span>
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ring" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-caption text-sidebar-foreground">{active.title ?? active.sessionId}</span>
+                  <span className="block truncate text-3xs text-sidebar-muted">{agentLabel(active.agent)}</span>
+                </span>
               </button>
-            );
-          })}
-        </nav>
+            ) : null}
+          </div>
 
-        {active ? (
-          <button
-            type="button"
-            onClick={() => setView('reader')}
-            className="mx-2 mt-3 flex items-center gap-2 rounded-control px-2.5 py-2 text-left hover:bg-sidebar-row"
-            title={active.nativePath}
-          >
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ring" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-caption text-sidebar-foreground">{active.title ?? active.sessionId}</span>
-              <span className="block truncate text-3xs text-sidebar-muted">{active.agent}</span>
-            </span>
-          </button>
-        ) : null}
-
-        <div className="mt-auto flex flex-col gap-2 px-2 pb-2">
-          <button
-            type="button"
-            data-nav="settings"
-            onClick={() => setView('settings')}
-            className={rowClass(view === 'settings')}
-          >
-            {view === 'settings' ? <span className="absolute left-0 top-1.5 h-5 w-0.5 rounded-full bg-ring" /> : null}
-            <Settings2 className="h-4 w-4 shrink-0 opacity-80" />
-            <span className="truncate">{t('app.settings')}</span>
-          </button>
-          <div className="flex items-center justify-between rounded-control px-1">
-            <span className="text-3xs text-sidebar-muted">v{pathsQuery.data?.version ?? '—'} · alpha</span>
+          <div className="mt-auto flex shrink-0 flex-col gap-1.5 border-t border-sidebar-border/60 px-2 pb-2 pt-2">
             <button
               type="button"
-              onClick={cycleTheme}
-              className="flex h-6 items-center gap-1 rounded px-1.5 text-3xs text-sidebar-muted hover:bg-sidebar-row hover:text-sidebar-foreground"
-              title={t('theme.title', { mode: themeLabel })}
+              data-nav="settings"
+              onClick={() => setView('settings')}
+              className={rowClass(view === 'settings')}
             >
-              {themeIcon}
-              <span>{themeLabel}</span>
+              {view === 'settings' ? <span className="absolute left-0 top-1.5 h-5 w-0.5 rounded-full bg-ring" /> : null}
+              <Settings2 className="h-4 w-4 shrink-0 opacity-80" />
+              <span className="truncate">{t('app.settings')}</span>
             </button>
+            <div className="flex items-center justify-between rounded-control px-1.5">
+              <span className="text-3xs text-sidebar-muted">v{pathsQuery.data?.version ?? '—'} · alpha</span>
+              <button
+                type="button"
+                onClick={cycleTheme}
+                className="app-no-drag flex h-6 items-center gap-1 rounded px-1.5 text-3xs text-sidebar-muted transition-colors hover:bg-sidebar-row hover:text-sidebar-foreground"
+                title={t('theme.title', { mode: themeLabel })}
+              >
+                {themeIcon}
+                <span>{themeLabel}</span>
+              </button>
+            </div>
           </div>
-        </div>
-      </aside>
+        </aside>
 
-      {collapsed ? (
-        <button
-          type="button"
-          onClick={() => setCollapsed(false)}
-          className="absolute left-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-control border border-border bg-card text-fg-2 shadow-sm hover:text-fg-1"
-          title={t('app.expandSidebar')}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
-      ) : null}
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {view === 'sessions' ? (
+            <SessionsPage
+              enabledAgents={enabledAgents}
+              agentFilter={agentFilter}
+              onAgentFilterChange={setAgentFilter}
+              onOpen={(session) => {
+                setActive(session);
+                setView('reader');
+              }}
+              onMigrate={(session) => {
+                setActive(session);
+                setView('migrate');
+              }}
+            />
+          ) : null}
+          {view === 'agents' ? (
+            <AgentsPage
+              prefs={prefs}
+              onOpenAgent={(agent) => {
+                setAgentFilter(agent);
+                setView('sessions');
+              }}
+            />
+          ) : null}
+          {view === 'reader' && active ? (
+            <ReaderPage session={active} onBack={navBack} onMigrate={() => setView('migrate')} />
+          ) : null}
+          {view === 'migrate' ? <MigratePage initial={active} enabledAgents={enabledAgents} /> : null}
+          {view === 'settings' ? <SettingsPage theme={theme} onThemeChange={setTheme} prefs={prefs} /> : null}
+        </main>
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {view === 'sessions' ? (
-          <SessionsPage
-            enabledAgents={enabledAgents}
-            agentFilter={agentFilter}
-            onAgentFilterChange={setAgentFilter}
-            onOpen={(session) => {
+        {paletteOpen ? (
+          <CommandPalette
+            sessions={sessionsQuery.data?.sessions}
+            loading={sessionsQuery.isLoading}
+            theme={theme}
+            onClose={() => setPaletteOpen(false)}
+            onOpenSession={(session) => {
               setActive(session);
               setView('reader');
             }}
-          />
-        ) : null}
-        {view === 'agents' ? (
-          <AgentsPage
-            prefs={prefs}
-            onOpenAgent={(agent) => {
-              setAgentFilter(agent);
-              setView('sessions');
+            onNavigate={navigate}
+            onRefreshSessions={() => {
+              void queryClient.invalidateQueries({ queryKey: ['sessions'] });
             }}
+            onThemeChange={setTheme}
           />
         ) : null}
-        {view === 'reader' && active ? (
-          <ReaderPage session={active} onBack={navBack} onMigrate={() => setView('migrate')} />
-        ) : null}
-        {view === 'migrate' ? <MigratePage initial={active} enabledAgents={enabledAgents} /> : null}
-        {view === 'settings' ? <SettingsPage theme={theme} onThemeChange={setTheme} prefs={prefs} /> : null}
-      </main>
-
-      {paletteOpen ? (
-        <CommandPalette
-          sessions={sessionsQuery.data?.sessions}
-          loading={sessionsQuery.isLoading}
-          theme={theme}
-          onClose={() => setPaletteOpen(false)}
-          onOpenSession={(session) => {
-            setActive(session);
-            setView('reader');
-          }}
-          onNavigate={navigate}
-          onRefreshSessions={() => {
-            void queryClient.invalidateQueries({ queryKey: ['sessions'] });
-          }}
-          onThemeChange={setTheme}
-        />
-      ) : null}
-    </div>
+      </div>
+    </WindowChromeProvider>
   );
 }

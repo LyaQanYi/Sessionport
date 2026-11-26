@@ -31,11 +31,11 @@ export function AgentGlyph(props: { agent: string; size?: 'sm' | 'md' | 'lg'; cl
   const meta = AGENT_META[props.agent];
   const Icon = meta?.icon ?? Hexagon;
   const sizeClass = props.size === 'lg' ? 'h-9 w-9 rounded-panel' : props.size === 'md' ? 'h-7 w-7 rounded-control' : 'h-6 w-6 rounded-sm';
-  const iconClass = props.size === 'lg' ? 'h-4.5 w-4.5' : props.size === 'md' ? 'h-4 w-4' : 'h-3.5 w-3.5';
+  const iconClass = props.size === 'lg' ? 'h-5 w-5' : props.size === 'md' ? 'h-4 w-4' : 'h-3.5 w-3.5';
   return (
     <span
       aria-hidden="true"
-      className={cn('inline-flex shrink-0 items-center justify-center', sizeClass, meta?.tile ?? 'bg-muted text-muted-foreground', props.className)}
+      className={cn('inline-flex shrink-0 items-center justify-center', sizeClass, meta?.tile ?? 'bg-muted text-fg-2', props.className)}
     >
       <Icon className={iconClass} />
     </span>

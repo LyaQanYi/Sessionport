@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ChevronDown, ChevronRight, Copy, Folder, Hash, MessagesSquare, RefreshCw } from 'lucide-react';
+import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Folder, Hash, MessagesSquare, RefreshCw } from 'lucide-react';
 
 import { api } from '../api.ts';
 import type { SessionRow } from '../api.ts';
@@ -97,38 +97,50 @@ export function SessionsPage(props: {
   agentFilter: string | null;
   onAgentFilterChange: (agent: string | null) => void;
   onOpen: (session: SessionRow) => void;
+  onMigrate: (session: SessionRow) => void;
 }) {
   const { locale, t, tError, formatTime } = useT();
   const [query, setQuery] = useState('');
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const copyTimerRef = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { data, isLoading, error, refetch, isFetching } = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
 
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
   const all = data?.sessions ?? [];
   const warnings = (data?.warnings ?? []).map((warning) => (locale === 'zh-CN' ? warning : warningText(warning, t)));
+  const enabledSessions = useMemo(() => {
+    if (props.enabledAgents.length === 0) return all;
+    return all.filter((row) => props.enabledAgents.includes(row.agent));
+  }, [all, props.enabledAgents]);
+
   const agentCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const row of all) counts.set(row.agent, (counts.get(row.agent) ?? 0) + 1);
+    for (const row of enabledSessions) counts.set(row.agent, (counts.get(row.agent) ?? 0) + 1);
     return counts;
-  }, [all]);
+  }, [enabledSessions]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return all.filter((row) => {
-      if (props.enabledAgents.length > 0 && !props.enabledAgents.includes(row.agent)) return false;
+    return enabledSessions.filter((row) => {
       if (props.agentFilter && row.agent !== props.agentFilter) return false;
       if (!needle) return true;
       return [row.title, row.cwd, row.sessionId, row.agent].filter(Boolean).join(' ').toLowerCase().includes(needle);
     });
-  }, [all, query, props.agentFilter, props.enabledAgents]);
+  }, [enabledSessions, query, props.agentFilter]);
 
-  const rows = useMemo<Row[]>(() => {
+  const { rows, groupKeys } = useMemo<{ rows: Row[]; groupKeys: string[] }>(() => {
     const groups = new Map<string, { label: string; sessions: SessionRow[]; latest: string }>();
     for (const session of filtered) {
       const key = groupMode === 'project' ? projectName(session, t('sessions.noProject')) : timeBucket(session.updatedAt, t);
-      const label = groupMode === 'project' ? key : key;
-      const entry = groups.get(key) ?? { label, sessions: [], latest: '' };
+      const entry = groups.get(key) ?? { label: key, sessions: [], latest: '' };
       entry.sessions.push(session);
       const stamp = session.updatedAt ?? '';
       if (stamp > entry.latest) entry.latest = stamp;
@@ -139,15 +151,20 @@ export function SessionsPage(props: {
         ? [...groups.entries()].sort((a, b) => (b[1].latest ?? '').localeCompare(a[1].latest ?? ''))
         : [...groups.entries()]; // 时间桶保持「今天/昨天/…」的自然插入顺序
     const result: Row[] = [];
+    const keys: string[] = [];
     for (const [key, entry] of ordered) {
+      keys.push(groupMode + ':' + key);
       rowGroup(result, key, entry.label, entry.sessions, groupMode, collapsed);
     }
-    return result;
+    return { rows: result, groupKeys: keys };
   }, [filtered, groupMode, collapsed, t]);
+
+  const allCollapsed = groupKeys.length > 0 && groupKeys.every((key) => collapsed.has(key));
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
+    getItemKey: (index) => rows[index]?.key ?? index,
     estimateSize: (index) => (rows[index]?.kind === 'header' ? 34 : 58),
     overscan: 14,
   });
@@ -162,8 +179,26 @@ export function SessionsPage(props: {
     });
   };
 
-  const copy = (text: string | undefined): void => {
-    if (text) void navigator.clipboard.writeText(text);
+  const toggleAllGroups = (): void => {
+    if (groupKeys.length === 0) return;
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (allCollapsed) {
+        for (const key of groupKeys) next.delete(key);
+      } else {
+        for (const key of groupKeys) next.add(key);
+      }
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  };
+
+  const copy = (feedbackKey: string, text: string | undefined): void => {
+    if (!text) return;
+    void navigator.clipboard.writeText(text);
+    setCopiedKey(feedbackKey);
+    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = window.setTimeout(() => setCopiedKey(null), 1400);
   };
 
   return (
@@ -171,11 +206,11 @@ export function SessionsPage(props: {
       <Topbar
         icon={<MessagesSquare className="h-4 w-4" />}
         title={t('sessions.title')}
-        subtitle={data ? t('sessions.subtitle', { sessions: all.length, agents: agentCounts.size }) : t('common.loading')}
+        subtitle={data ? t('sessions.subtitle', { sessions: enabledSessions.length, agents: agentCounts.size }) : t('common.loading')}
         actions={
           <>
             <SearchField value={query} onChange={setQuery} placeholder={t('sessions.searchPlaceholder')} className="w-56" />
-            <Button variant="outline" size="icon" onClick={() => void refetch()} title={t('common.refresh')}>
+            <Button variant="outline" size="icon" onClick={() => void refetch()} title={t('common.refresh')} aria-label={t('common.refresh')}>
               <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />
             </Button>
           </>
@@ -194,7 +229,7 @@ export function SessionsPage(props: {
             { value: 'time', label: t('sessions.group.time') },
           ]}
         />
-        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           <button
             type="button"
             onClick={() => props.onAgentFilterChange(null)}
@@ -203,11 +238,9 @@ export function SessionsPage(props: {
               props.agentFilter === null ? 'bg-selected text-fg-1' : 'text-fg-2 hover:bg-accent',
             )}
           >
-            {t('sessions.all', { count: all.length })}
+            {t('sessions.all', { count: enabledSessions.length })}
           </button>
-          {[...agentCounts.entries()]
-            .filter(([agent]) => props.enabledAgents.length === 0 || props.enabledAgents.includes(agent))
-            .map(([agent, count]) => (
+          {[...agentCounts.entries()].map(([agent, count]) => (
             <button
               key={agent}
               type="button"
@@ -222,7 +255,21 @@ export function SessionsPage(props: {
             </button>
           ))}
         </div>
-        <div className="ml-auto shrink-0 text-caption text-fg-3">{t('sessions.count', { count: filtered.length })}</div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <span className="text-caption tabular-nums text-fg-3">{t('sessions.count', { count: filtered.length })}</span>
+          {groupKeys.length > 0 ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={toggleAllGroups}
+              title={allCollapsed ? t('sessions.expandAll') : t('sessions.collapseAll')}
+              className="h-6 px-2 text-caption text-fg-2"
+            >
+              {allCollapsed ? <ChevronsUpDown className="h-3.5 w-3.5" /> : <ChevronsDownUp className="h-3.5 w-3.5" />}
+              <span>{allCollapsed ? t('sessions.expandAll') : t('sessions.collapseAll')}</span>
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       {isLoading ? (
@@ -247,25 +294,32 @@ export function SessionsPage(props: {
                     <div
                       key={row.key}
                       style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: 'translateY(' + virtualRow.start + 'px)' }}
-                      className="flex h-[34px] items-center gap-2 border-b border-border bg-background px-4"
+                      className="flex h-[34px] items-center border-b border-border bg-subtle/70"
                     >
                       <button
                         type="button"
                         onClick={() => toggleGroup(row.key)}
-                        className="flex min-w-0 items-center gap-1 text-caption font-medium text-fg-2 hover:text-fg-1"
+                        className="group flex h-full w-full items-center gap-2 px-4 text-left text-caption font-medium text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
                       >
-                        {collapsed.has(row.key) ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        {collapsed.has(row.key) ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-fg-3" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-3" />}
                         <span className="truncate">{row.label}</span>
-                        <span className="text-fg-3">{row.count}</span>
+                        <span className="rounded bg-background/80 px-1.5 py-0.5 text-3xs tabular-nums text-fg-3">{row.count}</span>
                       </button>
                     </div>
                   );
                 }
                 const session = row.session;
+                const resumeCopied = copiedKey === row.key + ':resume';
+                const idCopied = copiedKey === row.key + ':id';
+                const anyCopied = resumeCopied || idCopied;
                 return (
                   <div
                     key={row.key}
                     style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: 'translateY(' + virtualRow.start + 'px)' }}
+                    className={cn(
+                      'group flex h-[58px] w-full items-center border-b border-border/60 transition-colors',
+                      session.readable ? 'hover:bg-accent/60' : 'opacity-60',
+                    )}
                   >
                     <button
                       type="button"
@@ -274,8 +328,8 @@ export function SessionsPage(props: {
                       title={session.readable ? undefined : t('sessions.readableHint')}
                       onClick={() => props.onOpen(session)}
                       className={cn(
-                        'group flex h-[58px] w-full items-center gap-2.5 border-b border-border/60 px-4 text-left transition-colors',
-                        session.readable ? 'hover:bg-accent/60' : 'cursor-not-allowed opacity-60',
+                        'flex h-full min-w-0 flex-1 items-center gap-2.5 pl-4 pr-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                        session.readable ? 'cursor-pointer' : 'cursor-not-allowed',
                       )}
                     >
                       <AgentGlyph agent={session.agent} />
@@ -289,18 +343,37 @@ export function SessionsPage(props: {
                           <span className="truncate">{session.cwd ?? session.nativePath}</span>
                         </div>
                       </div>
-                      <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2 pr-4">
+                      <div className={cn('items-center gap-0.5', anyCopied ? 'flex' : 'hidden group-hover:flex group-focus-within:flex')}>
+                        {session.readable ? (
+                          <RowAction label={t('sessions.migrate')} onClick={() => props.onMigrate(session)}>
+                            <ArrowLeftRight className="h-3.5 w-3.5" />
+                          </RowAction>
+                        ) : null}
                         {session.resumeHint ? (
-                          <RowAction label={t('sessions.copyResume', { command: session.resumeHint })} onClick={() => copy(session.resumeHint)}>
+                          <RowAction
+                            label={t('sessions.copyResume', { command: session.resumeHint })}
+                            copied={resumeCopied}
+                            copiedLabel={t('common.copied')}
+                            onClick={() => copy(row.key + ':resume', session.resumeHint)}
+                          >
                             <Copy className="h-3.5 w-3.5" />
                           </RowAction>
                         ) : null}
-                        <RowAction label={t('sessions.copySessionId', { id: session.sessionId })} onClick={() => copy(session.sessionId)}>
+                        <RowAction
+                          label={t('sessions.copySessionId', { id: session.sessionId })}
+                          copied={idCopied}
+                          copiedLabel={t('common.copied')}
+                          onClick={() => copy(row.key + ':id', session.sessionId)}
+                        >
                           <Hash className="h-3.5 w-3.5" />
                         </RowAction>
                       </div>
-                      <div className="w-20 shrink-0 text-right text-caption text-fg-3">{relativeTime(session.updatedAt, t, formatTime)}</div>
-                    </button>
+                      <div className="w-20 shrink-0 text-right text-caption tabular-nums text-fg-3">
+                        {relativeTime(session.updatedAt, t, formatTime)}
+                      </div>
+                    </div>
                   </div>
                 );
               })}

@@ -131,7 +131,14 @@ body {
 
 .app-drag {
   -webkit-app-region: drag;
+  user-select: none;
 }
+.app-drag button,
+.app-drag a,
+.app-drag input,
+.app-drag select,
+.app-drag textarea,
+.app-drag [role='button'],
 .app-no-drag {
   -webkit-app-region: no-drag;
 }

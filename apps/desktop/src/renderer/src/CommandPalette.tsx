@@ -11,6 +11,7 @@ import {
   Search,
   Settings2,
   Sun,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -178,9 +179,9 @@ export function CommandPalette(props: CommandPaletteProps): ReactNode {
         aria-modal="true"
         aria-label={t('palette.title')}
         onMouseDown={(event) => event.stopPropagation()}
-        className="flex w-full max-w-[640px] flex-col overflow-hidden rounded-dialog border border-border bg-popover text-popover-foreground shadow-2xl"
+        className="flex w-full max-w-[640px] flex-col overflow-hidden rounded-dialog border border-border-strong/70 bg-popover text-popover-foreground shadow-2xl"
       >
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3">
+        <div className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border px-3.5">
           <Search className="h-4 w-4 shrink-0 text-fg-3" />
           <input
             ref={inputRef}
@@ -197,12 +198,31 @@ export function CommandPalette(props: CommandPaletteProps): ReactNode {
             className="h-full min-w-0 flex-1 bg-transparent text-body text-fg-1 placeholder:text-fg-3 focus:outline-none"
             spellCheck={false}
           />
-          <button type="button" onClick={props.onClose} aria-label={t('palette.close')} className="shrink-0 rounded-control p-0.5">
-            <Kbd>esc</Kbd>
+          {query.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => {
+                setQuery('');
+                inputRef.current?.focus();
+              }}
+              aria-label={t('common.clear')}
+              title={t('common.clear')}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-fg-3 transition-colors hover:bg-accent hover:text-fg-1"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={props.onClose}
+            aria-label={t('palette.close')}
+            className="shrink-0 rounded-control p-0.5 transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Kbd>Esc</Kbd>
           </button>
         </div>
 
-        <div ref={listRef} id="palette-listbox" role="listbox" aria-label={t('palette.title')} className="max-h-[min(420px,60vh)] overflow-y-auto p-1">
+        <div ref={listRef} id="palette-listbox" role="listbox" aria-label={t('palette.title')} className="max-h-[min(420px,60vh)] overflow-y-auto p-1.5">
           {commands.length === 0 ? (
             <div className="flex flex-col items-center gap-1 px-4 py-10 text-center">
               <span className="text-section text-fg-1">{t('palette.empty')}</span>
@@ -211,11 +231,14 @@ export function CommandPalette(props: CommandPaletteProps): ReactNode {
               </span>
             </div>
           ) : (
-            sections.map((section) => (
+            sections.map((section, sectionIdx) => (
               <div key={section.group} role="group" aria-labelledby={'palette-group-' + section.group} className="py-0.5">
                 <div
                   id={'palette-group-' + section.group}
-                  className="px-2 pb-1 pt-1.5 text-3xs font-medium uppercase tracking-wider text-fg-3"
+                  className={cn(
+                    'px-2.5 pb-1 text-3xs font-medium uppercase tracking-wider text-fg-3',
+                    sectionIdx === 0 ? 'pt-1' : 'pt-2',
+                  )}
                 >
                   {groupLabel(t, section.group)}
                 </div>
@@ -236,7 +259,7 @@ export function CommandPalette(props: CommandPaletteProps): ReactNode {
                       }}
                       onClick={() => run(command)}
                       className={cn(
-                        'flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-body transition-colors',
+                        'flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-body transition-colors',
                         active ? 'bg-selected text-fg-1' : 'text-fg-2 hover:bg-accent',
                       )}
                     >
@@ -248,7 +271,7 @@ export function CommandPalette(props: CommandPaletteProps): ReactNode {
                       {command.session && command.session.readable === false ? (
                         <Badge variant="outline">{t('sessions.metadata')}</Badge>
                       ) : null}
-                      {active ? <CornerDownLeft className="h-3 w-3 shrink-0 text-fg-3" /> : null}
+                      {active ? <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-fg-3" /> : null}
                     </button>
                   );
                 })}
@@ -257,9 +280,22 @@ export function CommandPalette(props: CommandPaletteProps): ReactNode {
           )}
         </div>
 
-        <div className="flex h-7 shrink-0 items-center gap-2 border-t border-border px-3 text-3xs text-fg-3">
-          <span className="truncate">{t('palette.footer.hint')}</span>
-          <span className="ml-auto tabular-nums">{t('palette.resultCount', { count: commands.length })}</span>
+        <div className="flex min-h-8 shrink-0 items-center justify-between gap-3 border-t border-border bg-subtle/60 px-3.5 py-1.5 text-caption text-fg-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="inline-flex items-center gap-1.5">
+              <Kbd>↑↓</Kbd>
+              <span>{t('palette.footer.select')}</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Kbd>↵</Kbd>
+              <span>{t('palette.footer.open')}</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Kbd>Esc</Kbd>
+              <span>{t('palette.footer.close')}</span>
+            </span>
+          </div>
+          <span className="shrink-0 tabular-nums">{t('palette.resultCount', { count: commands.length })}</span>
         </div>
       </div>
     </div>,

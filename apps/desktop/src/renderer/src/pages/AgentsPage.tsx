@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Blocks, Check, Eye, EyeOff, FolderOpen, MessageSquare, X } from 'lucide-react';
+import { AlertTriangle, Blocks, Check, Eye, EyeOff, FolderOpen, MessageSquare, RefreshCw, X } from 'lucide-react';
 
 import { api } from '../api.ts';
 import { AgentGlyph, AGENT_META, agentLabel } from '../agents.tsx';
@@ -43,7 +43,9 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
   for (const row of sessions) counts.set(row.agent, (counts.get(row.agent) ?? 0) + 1);
   const readable = new Set<string>(capsQuery.data?.readable ?? []);
   const writable = new Set<string>(capsQuery.data?.writable ?? []);
+  const antigravityApiAvailable = Boolean(capsQuery.data?.antigravityApiAvailable);
   const homes = pathsQuery.data?.homes ?? {};
+  const redetecting = pathsQuery.isFetching || capsQuery.isFetching;
 
   const agents = Object.keys(AGENT_META);
 
@@ -54,7 +56,16 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
         title={t('agents.title')}
         subtitle={t('agents.subtitle')}
         actions={
-          <Button variant="outline" size="sm" onClick={() => { void pathsQuery.refetch(); void capsQuery.refetch(); }}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={redetecting}
+            onClick={() => {
+              void pathsQuery.refetch();
+              void capsQuery.refetch();
+            }}
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', redetecting && 'animate-spin')} />
             {t('agents.redetect')}
           </Button>
         }
@@ -67,24 +78,27 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
               <Spinner /> {t('agents.detecting')}
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3.5 md:grid-cols-2 xl:grid-cols-3">
               {agents.map((agent) => {
                 const homeKey = HOME_KEY[agent] ?? '';
                 const home = homes[homeKey];
                 const count = counts.get(agent) ?? 0;
+                const isAntigravity = agent === 'antigravity';
+                const canWrite = writable.has(agent);
+                const enabledInSidebar = props.prefs.enabled.includes(agent);
                 return (
                   <div key={agent} className="flex flex-col gap-3 rounded-panel border border-border bg-card p-4">
                     <div className="flex items-start gap-3">
                       <AgentGlyph agent={agent} size="lg" />
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <span className="truncate text-section text-fg-1">{agentLabel(agent)}</span>
                           {home?.exists ? <Badge variant="success">{t('agents.detected')}</Badge> : <Badge variant="outline">{t('agents.notInstalled')}</Badge>}
-                          {props.prefs.enabled.includes(agent) ? null : <Badge variant="secondary">{t('agents.hidden')}</Badge>}
+                          {enabledInSidebar ? null : <Badge variant="secondary">{t('agents.hidden')}</Badge>}
                         </div>
                         <div className="mt-0.5 truncate font-mono text-3xs text-fg-3">{agent}</div>
                       </div>
-                      <div className="text-right">
+                      <div className="shrink-0 text-right tabular-nums">
                         <div className="text-section text-fg-1">{count}</div>
                         <div className="text-3xs text-fg-3">{t('agents.sessions')}</div>
                       </div>
@@ -92,17 +106,39 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
 
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                       <Capability ok={readable.has(agent)} label={t('agents.read')} />
-                      <Capability ok={writable.has(agent)} label={t('agents.write')} />
+                      {isAntigravity && canWrite ? (
+                        <span
+                          className="inline-flex items-center gap-1 text-caption text-warning"
+                          title={t('agents.writeHandoffHint')}
+                        >
+                          <AlertTriangle className="h-3 w-3 shrink-0" />
+                          {t('agents.writeHandoff')}
+                        </span>
+                      ) : (
+                        <Capability ok={canWrite} label={t('agents.write')} />
+                      )}
                       <Capability ok={RESUME_SMOKE_AGENTS.has(agent)} label={t('agents.headlessResume')} />
                     </div>
 
+                    {isAntigravity && canWrite ? (
+                      <div className="flex flex-wrap items-center gap-1.5" title={t('agents.writeHandoffHint')}>
+                        <Badge variant="warning">{t('agents.handoffBadge')}</Badge>
+                        <Badge variant={antigravityApiAvailable ? 'success' : 'outline'}>
+                          {antigravityApiAvailable ? t('agents.antigravityApiReady') : t('agents.antigravityFileOnly')}
+                        </Badge>
+                      </div>
+                    ) : null}
+
                     <div className="min-w-0 rounded-control border border-border bg-subtle px-2.5 py-1.5">
-                      <div className="truncate font-mono text-3xs text-fg-2" title={home?.path ?? t('agents.notConfigured')}>
+                      <div
+                        className={cn('truncate font-mono text-3xs', home?.exists ? 'text-fg-2' : 'text-fg-3')}
+                        title={home?.path ?? t('agents.notConfigured')}
+                      >
                         {home?.path ?? t('agents.noDataDir')}
                       </div>
                     </div>
 
-                    <div className="mt-auto flex items-center gap-2">
+                    <div className="mt-auto flex items-center gap-2 pt-0.5">
                       <Button size="sm" variant="outline" disabled={!home?.exists} onClick={() => void api.openPath(homeKey).catch(() => undefined)}>
                         <FolderOpen className="h-3.5 w-3.5" />
                         {t('agents.openDir')}
@@ -111,11 +147,18 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
                         size="sm"
                         variant="ghost"
                         onClick={() => props.prefs.toggle(agent)}
-                        title={props.prefs.enabled.includes(agent) ? t('agents.hideFromSidebar') : t('agents.showInSidebar')}
+                        title={enabledInSidebar ? t('agents.hideFromSidebar') : t('agents.showInSidebar')}
+                        aria-label={enabledInSidebar ? t('agents.hideFromSidebar') : t('agents.showInSidebar')}
                       >
-                        {props.prefs.enabled.includes(agent) ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                        {enabledInSidebar ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                       </Button>
-                      <Button size="sm" disabled={count === 0} onClick={() => props.onOpenAgent(agent)} className="ml-auto">
+                      <Button
+                        size="sm"
+                        variant={count === 0 ? 'outline' : 'default'}
+                        disabled={count === 0}
+                        onClick={() => props.onOpenAgent(agent)}
+                        className="ml-auto"
+                      >
                         <MessageSquare className="h-3.5 w-3.5" />
                         {t('agents.viewSessions')}
                       </Button>
