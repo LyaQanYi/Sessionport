@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
 import type { IrBundle, IrEvent, IrEventDraft } from '@sessionport/core';
-import { readCodexSession, verifyCodexSession, writeCodexSession, inferCodexHome } from '../src/index.ts';
+import { appendCodexDelta, codexAdapter, codexRolloutPath, readCodexSession, verifyCodexSession, writeCodexSession, inferCodexHome } from '../src/index.ts';
 
 const TEST_CWD = '/tmp/sessionport-codex-test';
 
@@ -193,6 +193,65 @@ test('跨源工具归一：Claude Edit/Bash → apply_patch(custom)/exec_command
       .filter((r) => r.payload?.type === 'function_call')
       .map((r) => r.payload?.name);
     assert.deepEqual(rawNames, ['Edit', 'Bash']);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('appendCodexDelta: paginated 续写 ordinal 顺延，encrypted_content 原行逐字节不变且自检通过', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'sessionport-codex-append-'));
+  const sessionId = '77777777-7777-4777-8777-777777777777';
+  const rollout = codexRolloutPath(home, sessionId, new Date('2026-01-01T00:00:00.000Z'));
+  try {
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(dirname(rollout), { recursive: true });
+    const lines = [
+      {
+        timestamp: '2026-01-01T00:00:00.000Z',
+        type: 'session_meta',
+        ordinal: 0,
+        payload: { id: sessionId, session_id: sessionId, timestamp: '2026-01-01T00:00:00.000Z', cwd: TEST_CWD, history_mode: 'paginated' },
+      },
+      {
+        timestamp: '2026-01-01T00:00:01.000Z',
+        type: 'response_item',
+        ordinal: 1,
+        payload: { type: 'message', id: 'msg_1', role: 'user', content: [{ type: 'input_text', text: '原问题' }] },
+      },
+      {
+        timestamp: '2026-01-01T00:00:02.000Z',
+        type: 'response_item',
+        ordinal: 2,
+        payload: { type: 'reasoning', id: 'rs_1', encrypted_content: 'CIPHER_BLOB_XYZ' },
+      },
+    ];
+    const prefixBytes = Buffer.from(lines.map((l) => JSON.stringify(l)).join('\n') + '\n', 'utf8');
+    writeFileSync(rollout, prefixBytes);
+
+    const deltaEvents = chain([
+      { kind: 'message', id: 'd1', at: '2026-01-01T00:02:00.000Z', role: 'user', parts: [{ type: 'text', text: '追问' }] },
+      { kind: 'tool_call', id: 'd2', at: '2026-01-01T00:02:01.000Z', callId: 'c1', name: 'Bash', input: { command: 'pwd' } },
+      { kind: 'tool_result', id: 'd3', at: '2026-01-01T00:02:02.000Z', callId: 'c1', content: [{ type: 'text', text: TEST_CWD }] },
+    ] as IrEventDraft[]);
+    const deltaBundle: IrBundle = {
+      ...makeBundle(deltaEvents),
+      root: { ...makeBundle(deltaEvents).root, source: { agent: 'claude-code', nativeSessionId: 'c-1' } },
+    };
+
+    const outcome = await codexAdapter.appendDelta!(rollout, deltaBundle, { normalizeTools: true });
+    const updatedBytes = readFileSync(rollout);
+    assert.deepEqual(updatedBytes.subarray(0, prefixBytes.length), prefixBytes);
+
+    const allRows = updatedBytes.toString('utf8').trim().split('\n').map((l) => JSON.parse(l) as { ordinal?: number });
+    assert.deepEqual(allRows.map((r) => r.ordinal), [0, 1, 2, 3, 4, 5]);
+    assert.equal(outcome.units, 6);
+
+    const verify = await verifyCodexSession({ filePath: rollout });
+    assert.equal(verify.ok, true, JSON.stringify(verify.checks.filter((c) => !c.ok)));
+    const readBack = await readCodexSession(rollout);
+    assert.ok(readBack.root.events.some((e) => e.kind === 'reasoning' && e.reasoning.kind === 'opaque'));
+
+    void appendCodexDelta;
   } finally {
     await rm(home, { recursive: true, force: true });
   }

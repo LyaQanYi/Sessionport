@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import type { AdapterWriteOptions, AdapterWriteOutcome, AgentAdapter } from '@sessionport/core';
 
 import { readClaudeSession } from './read.ts';
-import { writeClaudeSession } from './write.ts';
+import { appendClaudeDelta, writeClaudeSession } from './write.ts';
 
 export const claudeCodeAdapter: AgentAdapter = {
   id: 'claude-code',
@@ -27,6 +27,24 @@ export const claudeCodeAdapter: AgentAdapter = {
       paths: report.paths,
       unit: 'rows',
       units: report.rows.length,
+      report: report as unknown as AdapterWriteOutcome['report'],
+    };
+  },
+  async appendDelta(targetPath, deltaBundle, opts: AdapterWriteOptions): Promise<AdapterWriteOutcome> {
+    const configDir = typeof opts.home === 'string' ? opts.home : undefined;
+    const sessionId = typeof opts.id === 'string' ? opts.id : undefined;
+    const report = await appendClaudeDelta(targetPath, deltaBundle, {
+      ...(opts as object),
+      ...(configDir !== undefined ? { configDir } : {}),
+      sessionId,
+      dryRun: opts.dryRun === true,
+    });
+    return {
+      target: 'claude-code',
+      targetId: report.sessionId,
+      paths: [targetPath],
+      unit: 'rows',
+      units: report.totalRows,
       report: report as unknown as AdapterWriteOutcome['report'],
     };
   },

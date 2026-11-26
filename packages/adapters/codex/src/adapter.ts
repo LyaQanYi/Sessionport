@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import type { AdapterWriteOptions, AdapterWriteOutcome, AgentAdapter } from '@sessionport/core';
 
 import { readCodexSession } from './read.ts';
-import { writeCodexSession } from './write.ts';
+import { appendCodexDelta, writeCodexSession } from './write.ts';
 
 export const codexAdapter: AgentAdapter = {
   id: 'codex',
@@ -27,6 +27,23 @@ export const codexAdapter: AgentAdapter = {
       paths: report.paths,
       unit: 'rows',
       units: report.rows.length + 1,
+      report: report as unknown as AdapterWriteOutcome['report'],
+    };
+  },
+  async appendDelta(targetPath, deltaBundle, opts: AdapterWriteOptions): Promise<AdapterWriteOutcome> {
+    const id = typeof opts.id === 'string' ? opts.id : undefined;
+    const report = await appendCodexDelta(targetPath, deltaBundle, {
+      ...(opts as object),
+      id,
+      dryRun: opts.dryRun === true,
+      filePath: targetPath,
+    });
+    return {
+      target: 'codex',
+      targetId: report.sessionId,
+      paths: [targetPath],
+      unit: 'rows',
+      units: report.totalLines,
       report: report as unknown as AdapterWriteOutcome['report'],
     };
   },

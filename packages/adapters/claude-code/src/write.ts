@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { LossCollector, assistantMessageId, contentToText, normalizeToolCall, randomUuid } from '@sessionport/core';
@@ -712,6 +712,90 @@ export async function writeClaudeSession(bundle: IrBundle, options: WriteClaudeO
     },
     losses: lossList,
     caps: CLAUDE_CAPS,
+  };
+}
+
+export interface AppendClaudeDeltaResult extends WriteClaudeResult {
+  /** 追加写入后目标文件里的总非空行数 */
+  totalRows: number;
+}
+
+/** 仅向已有 Claude JSONL 文件尾部追加增量行，保留既有行字节原样不动 */
+export async function appendClaudeDelta(
+  filePath: string,
+  deltaBundle: IrBundle,
+  options: WriteClaudeOptions = {},
+): Promise<AppendClaudeDeltaResult> {
+  const existingBuf = await readFile(filePath);
+  const existingText = existingBuf.toString('utf8');
+  const existingLines = existingText.split('\n').filter((line) => line.trim().length > 0);
+  if (existingLines.length === 0) {
+    throw new Error('Claude transcript 为空，无法尾部追加: ' + filePath);
+  }
+
+  let lastUuid: string | null = null;
+  let sessionId = options.sessionId;
+  let cwd = options.cwd;
+  let version = options.version;
+  let gitBranch = options.gitBranch;
+  for (const rawLine of existingLines) {
+    try {
+      const parsed = JSON.parse(rawLine) as {
+        type?: unknown;
+        uuid?: unknown;
+        sessionId?: unknown;
+        cwd?: unknown;
+        version?: unknown;
+        gitBranch?: unknown;
+      };
+      if (sessionId === undefined && typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0) {
+        sessionId = parsed.sessionId;
+      }
+      if (cwd === undefined && typeof parsed.cwd === 'string' && parsed.cwd.length > 0) {
+        cwd = parsed.cwd;
+      }
+      if (version === undefined && typeof parsed.version === 'string' && parsed.version.length > 0) {
+        version = parsed.version;
+      }
+      if (gitBranch === undefined && typeof parsed.gitBranch === 'string') {
+        gitBranch = parsed.gitBranch;
+      }
+      if ((parsed.type === 'user' || parsed.type === 'assistant') && typeof parsed.uuid === 'string' && parsed.uuid.length > 0) {
+        lastUuid = parsed.uuid;
+      }
+    } catch {
+      // 容忍旧文件里存在损坏元数据行
+    }
+  }
+
+  const dryReport = await writeClaudeSession(deltaBundle, {
+    ...options,
+    sessionId,
+    cwd,
+    version,
+    gitBranch,
+    includeChildren: false,
+    dryRun: true,
+  });
+
+  if (dryReport.rows.length > 0) {
+    dryReport.rows[0]!.parentUuid = lastUuid;
+    if (options.dryRun !== true) {
+      const needsNewline = existingBuf.length > 0 && existingBuf[existingBuf.length - 1] !== 0x0a;
+      const appendBuf = Buffer.from((needsNewline ? '\n' : '') + serializeRows(dryReport.rows), 'utf8');
+      const tmpPath = filePath + '.tmp-' + process.pid + '-' + randomBytes(4).toString('hex');
+      await writeFile(tmpPath, Buffer.concat([existingBuf, appendBuf]));
+      await rename(tmpPath, filePath);
+    }
+  }
+
+  const totalRows = existingLines.length + dryReport.rows.length;
+  return {
+    ...dryReport,
+    paths: [filePath],
+    filePath,
+    children: [],
+    totalRows,
   };
 }
 

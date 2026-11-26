@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { isAbsolute, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -347,6 +347,89 @@ export async function writeCodexSession(bundle: IrBundle, options: WriteCodexOpt
     },
     losses: lossList,
     caps: CODEX_CAPS,
+  };
+}
+
+export interface AppendCodexDeltaResult extends WriteCodexResult {
+  totalLines: number;
+}
+
+/** 仅向已有 Codex rollout 尾部追加增量行，保留 session_meta / encrypted_content 前缀不变并接续 paginated ordinal */
+export async function appendCodexDelta(
+  filePath: string,
+  deltaBundle: IrBundle,
+  options: WriteCodexOptions = {},
+): Promise<AppendCodexDeltaResult> {
+  const existingBuf = await readFile(filePath);
+  const existingText = existingBuf.toString('utf8');
+  const existingLines = existingText.split('\n').filter((line) => line.trim().length > 0);
+  if (existingLines.length === 0) {
+    throw new Error('Codex rollout 为空，无法尾部追加: ' + filePath);
+  }
+
+  let sessionId = options.id;
+  let cwd = options.cwd;
+  let historyMode: 'legacy' | 'paginated' = options.historyMode ?? 'legacy';
+  let maxOrdinal = -1;
+
+  for (const rawLine of existingLines) {
+    try {
+      const parsed = JSON.parse(rawLine) as {
+        type?: unknown;
+        ordinal?: unknown;
+        payload?: {
+          id?: unknown;
+          session_id?: unknown;
+          cwd?: unknown;
+          history_mode?: unknown;
+        };
+      };
+      if (typeof parsed.ordinal === 'number' && Number.isFinite(parsed.ordinal)) {
+        maxOrdinal = Math.max(maxOrdinal, parsed.ordinal);
+      }
+      if (parsed.type === 'session_meta' && parsed.payload) {
+        const metaId = parsed.payload.session_id ?? parsed.payload.id;
+        if (sessionId === undefined && typeof metaId === 'string' && metaId.length > 0) sessionId = metaId;
+        if (cwd === undefined && typeof parsed.payload.cwd === 'string' && parsed.payload.cwd.length > 0) {
+          cwd = parsed.payload.cwd;
+        }
+        if (parsed.payload.history_mode === 'paginated') historyMode = 'paginated';
+      }
+    } catch {
+      // 跳过坏行
+    }
+  }
+
+  const dryReport = await writeCodexSession(deltaBundle, {
+    ...options,
+    id: sessionId,
+    cwd,
+    historyMode,
+    filePath,
+    register: false,
+    dryRun: true,
+  });
+
+  const nextOrdinalStart = maxOrdinal >= 0 ? maxOrdinal + 1 : existingLines.length;
+  const rowsToAppend: CodexLine[] =
+    historyMode === 'paginated'
+      ? dryReport.rows.map((row, idx) => ({ ...row, ordinal: nextOrdinalStart + idx }) as CodexLine & { ordinal: number })
+      : dryReport.rows;
+
+  if (rowsToAppend.length > 0 && options.dryRun !== true) {
+    const needsNewline = existingBuf.length > 0 && existingBuf[existingBuf.length - 1] !== 0x0a;
+    const body = (needsNewline ? '\n' : '') + rowsToAppend.map((line) => JSON.stringify(line)).join('\n') + '\n';
+    const tmpPath = filePath + '.tmp-' + process.pid + '-' + randomBytes(4).toString('hex');
+    await writeFile(tmpPath, Buffer.concat([existingBuf, Buffer.from(body, 'utf8')]));
+    await rename(tmpPath, filePath);
+  }
+
+  return {
+    ...dryReport,
+    rows: rowsToAppend,
+    filePath,
+    paths: [filePath],
+    totalLines: existingLines.length + rowsToAppend.length,
   };
 }
 

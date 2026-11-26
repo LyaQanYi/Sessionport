@@ -6,10 +6,10 @@ export {
 export type { ReadCommandCodeOptions, ReadCommandCodeDetailedResult } from './read.ts';
 export { listCommandCodeSessions } from './list.ts';
 
-export { writeCommandCodeSession, printWriteReport, COMMAND_CODE_CAPS } from './write.ts';
+export { appendCommandCodeDelta, writeCommandCodeSession, printWriteReport, COMMAND_CODE_CAPS } from './write.ts';
 export { registerCommandCodeThread, commandCodeUserDataDir } from './register.ts';
 export type { RegisterThreadSpec, RegisterResult, RegisterOptions } from './register.ts';
-export type { WriteCommandCodeOptions, WriteCommandCodeResult } from './write.ts';
+export type { AppendCommandCodeDeltaResult, WriteCommandCodeOptions, WriteCommandCodeResult } from './write.ts';
 
 export {
   verifyCommandCodeSession,

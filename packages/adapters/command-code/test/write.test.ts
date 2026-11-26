@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { IR_VERSION } from '@sessionport/core';
 import type { IrBundle, IrEvent, IrEventDraft } from '@sessionport/core';
 import {
+  appendCommandCodeDelta,
+  commandCodeAdapter,
   readCommandCodeSession,
   resumeSmokeCommandCode,
   verifyCommandCodeSession,
@@ -230,6 +232,43 @@ test('跨源工具归一：Claude Edit/Bash → edit_file/shell_command，normal
       .filter((b) => b.type === 'tool_use')
       .map((b) => (b as { name: string }).name);
     assert.deepEqual(rawNames, ['Edit', 'Bash']);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('appendCommandCodeDelta: 保留 v3 header 与已有行逐字节不变，续接 parentId 与单调时间', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'cc-append-'));
+  try {
+    const initial = await writeCommandCodeSession(makeBundle(sampleEvents()), {
+      home,
+      id: '88888888-8888-4888-8888-888888888888',
+      cwd: TEST_CWD,
+    });
+    const prefixBytes = await readFile(initial.filePath);
+
+    const deltaEvents = chain([
+      { kind: 'message', id: 'd1', at: '2026-01-01T00:05:00.000Z', role: 'user', parts: [{ type: 'text', text: '继续执行' }] },
+      { kind: 'tool_call', id: 'd2', at: '2026-01-01T00:05:01.000Z', callId: 'call_delta_1', name: 'Bash', input: { command: 'ls' } },
+      { kind: 'tool_result', id: 'd3', at: '2026-01-01T00:05:02.000Z', callId: 'call_delta_1', content: [{ type: 'text', text: 'ok' }] },
+      { kind: 'message', id: 'd4', at: '2026-01-01T00:05:03.000Z', role: 'assistant', parts: [{ type: 'text', text: '已完成' }] },
+    ] as IrEventDraft[]);
+    const deltaBundle: IrBundle = {
+      ...makeBundle(deltaEvents),
+      root: { ...makeBundle(deltaEvents).root, source: { agent: 'claude-code', nativeSessionId: 'src-claude' } },
+    };
+
+    const outcome = await commandCodeAdapter.appendDelta!(initial.filePath, deltaBundle, { normalizeTools: true });
+    const updatedBytes = await readFile(initial.filePath);
+    assert.deepEqual(updatedBytes.subarray(0, prefixBytes.length), prefixBytes);
+    assert.equal(outcome.units, updatedBytes.toString('utf8').trim().split('\n').length);
+
+    const verify = await verifyCommandCodeSession({ filePath: initial.filePath });
+    assert.equal(verify.ok, true, JSON.stringify(verify.checks.filter((c) => !c.ok)));
+
+    const readBack = await readCommandCodeSession(initial.filePath);
+    assert.ok(readBack.root.events.some((e) => e.kind === 'tool_call' && e.name === 'shell_command'));
+    void appendCommandCodeDelta;
   } finally {
     await rm(home, { recursive: true, force: true });
   }

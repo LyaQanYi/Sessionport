@@ -2,7 +2,7 @@ import type { AdapterWriteOptions, AdapterWriteOutcome, AgentAdapter } from '@se
 
 import { readCommandCodeSession } from './read.ts';
 import { countCommandCodeTarget } from './verify.ts';
-import { writeCommandCodeSession } from './write.ts';
+import { appendCommandCodeDelta, writeCommandCodeSession } from './write.ts';
 
 export const commandCodeAdapter: AgentAdapter = {
   id: 'command-code',
@@ -24,6 +24,20 @@ export const commandCodeAdapter: AgentAdapter = {
       paths: report.paths,
       unit: 'rows',
       units: report.rows.length + 1,
+      report: report as unknown as AdapterWriteOutcome['report'],
+    };
+  },
+  async appendDelta(targetPath, deltaBundle, opts: AdapterWriteOptions): Promise<AdapterWriteOutcome> {
+    const report = await appendCommandCodeDelta(targetPath, deltaBundle, {
+      ...(opts as object),
+      dryRun: opts.dryRun === true,
+    });
+    return {
+      target: 'command-code',
+      targetId: report.sessionId,
+      paths: [targetPath],
+      unit: 'rows',
+      units: report.totalLines,
       report: report as unknown as AdapterWriteOutcome['report'],
     };
   },

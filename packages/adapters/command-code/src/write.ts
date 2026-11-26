@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { extname, isAbsolute } from 'node:path';
 
 import { LossCollector, normalizeToolCall } from '@sessionport/core';
@@ -529,6 +529,94 @@ export async function writeCommandCodeSession(bundle: IrBundle, options: WriteCo
     },
     losses: lossList,
     caps: COMMAND_CODE_CAPS,
+  };
+}
+
+export interface AppendCommandCodeDeltaResult extends WriteCommandCodeResult {
+  totalLines: number;
+}
+
+/** 仅向已有 Command Code v3 transcript 尾部追加增量行，保留头文件与既有行字节原样不动 */
+export async function appendCommandCodeDelta(
+  filePath: string,
+  deltaBundle: IrBundle,
+  options: WriteCommandCodeOptions = {},
+): Promise<AppendCommandCodeDeltaResult> {
+  const existingBuf = await readFile(filePath);
+  const existingLines = existingBuf
+    .toString('utf8')
+    .split('\n')
+    .filter((line) => line.trim().length > 0);
+  if (existingLines.length === 0) {
+    throw new Error('Command Code transcript 为空，无法尾部追加: ' + filePath);
+  }
+
+  const header = JSON.parse(existingLines[0]!) as Partial<CcSessionHeader>;
+  if (header.type !== 'session' || typeof header.id !== 'string' || typeof header.cwd !== 'string') {
+    throw new Error('Command Code transcript 首行不是合法 v3 header: ' + filePath);
+  }
+
+  const existingIds = new Set<string>();
+  let tailId: string | null = null;
+  let lastMs = Number.isFinite(Date.parse(String(header.timestamp ?? '')))
+    ? Date.parse(String(header.timestamp))
+    : 0;
+
+  for (const rawLine of existingLines.slice(1)) {
+    try {
+      const entry = JSON.parse(rawLine) as { id?: unknown; timestamp?: unknown };
+      if (typeof entry.id === 'string' && entry.id.length > 0) {
+        existingIds.add(entry.id);
+        tailId = entry.id;
+      }
+      if (typeof entry.timestamp === 'string') {
+        const ms = Date.parse(entry.timestamp);
+        if (Number.isFinite(ms)) lastMs = Math.max(lastMs, ms);
+      }
+    } catch {
+      // 跳过损坏行
+    }
+  }
+
+  const dryReport = await writeCommandCodeSession(deltaBundle, {
+    ...options,
+    id: header.id,
+    cwd: options.cwd ?? header.cwd,
+    includeChildren: false,
+    register: false,
+    dryRun: true,
+  });
+
+  let prevId: string | null = tailId;
+  for (const row of dryReport.rows) {
+    if (existingIds.has(row.id)) {
+      row.id = newEntryId(existingIds);
+    }
+    existingIds.add(row.id);
+    row.parentId = prevId;
+    prevId = row.id;
+
+    const ms = Date.parse(row.timestamp);
+    if (!Number.isFinite(ms) || ms < lastMs) {
+      row.timestamp = new Date(lastMs).toISOString();
+    } else {
+      lastMs = ms;
+    }
+  }
+
+  if (dryReport.rows.length > 0 && options.dryRun !== true) {
+    const needsNewline = existingBuf.length > 0 && existingBuf[existingBuf.length - 1] !== 0x0a;
+    const appendText = (needsNewline ? '\n' : '') + dryReport.rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
+    const tmpPath = filePath + '.tmp-' + process.pid + '-' + randomBytes(4).toString('hex');
+    await writeFile(tmpPath, Buffer.concat([existingBuf, Buffer.from(appendText, 'utf8')]));
+    await rename(tmpPath, filePath);
+  }
+
+  return {
+    ...dryReport,
+    paths: [filePath],
+    filePath,
+    totalLines: existingLines.length + dryReport.rows.length,
   };
 }
 

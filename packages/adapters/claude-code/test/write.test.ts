@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
 import type { IrBundle, IrEvent, IrEventDraft } from '@sessionport/core';
-import { writeClaudeSession } from '../src/write.ts';
-import { verifyClaudeSession } from '../src/verify.ts';
+import { appendClaudeDelta, claudeCodeAdapter, readClaudeSession, sessionFilePath, verifyClaudeSession, writeClaudeSession } from '../src/index.ts';
 
 function chain(events: IrEventDraft[]): IrEvent[] {
   return events.map((e, i) => ({ ...e, parentId: i === 0 ? null : events[i - 1]!.id })) as IrEvent[];
@@ -164,6 +164,94 @@ test('callId 为空字符串的孤立 tool_result 降级为文本', async () => 
       sessionId: '55555555-5555-4555-8555-555555555555',
     });
     assert.equal(verify.ok, true, JSON.stringify(verify.checks));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('appendClaudeDelta: 保留已有 thinking+signature 前缀逐字节不变，追加增量并自检通过', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sessionport-claude-append-'));
+  const sessionId = '66666666-6666-4666-8666-666666666666';
+  const cwd = '/tmp/sessionport-append-test';
+  const file = sessionFilePath(dir, cwd, sessionId);
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    const row1 = JSON.stringify({
+      type: 'user',
+      uuid: 'orig-u1',
+      parentUuid: null,
+      sessionId,
+      timestamp: '2026-01-01T00:00:00.000Z',
+      cwd,
+      version: '2.1.330',
+      gitBranch: 'main',
+      isSidechain: false,
+      userType: 'external',
+      message: { role: 'user', content: [{ type: 'text', text: '先思考一下' }] },
+    });
+    const row2 = JSON.stringify({
+      type: 'assistant',
+      uuid: 'orig-a1',
+      parentUuid: 'orig-u1',
+      sessionId,
+      timestamp: '2026-01-01T00:00:01.000Z',
+      cwd,
+      version: '2.1.330',
+      gitBranch: 'main',
+      isSidechain: false,
+      userType: 'external',
+      message: {
+        id: 'msg_orig_1',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-sonnet-5',
+        content: [
+          { type: 'thinking', thinking: '原始加密思考', signature: 'sig_anthropic_preserved_xyz' },
+          { type: 'text', text: '好了' },
+        ],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    });
+    const prefixBytes = Buffer.from(row1 + '\n' + row2 + '\n', 'utf8');
+    writeFileSync(file, prefixBytes);
+
+    const deltaEvents = chain([
+      { kind: 'message', id: 'd1', at: '2026-01-01T00:01:00.000Z', role: 'user', parts: [{ type: 'text', text: '继续查文件' }] },
+      { kind: 'tool_call', id: 'd2', at: '2026-01-01T00:01:01.000Z', callId: 'c_delta', name: 'exec_command', input: { cmd: 'ls' } },
+      { kind: 'tool_result', id: 'd3', at: '2026-01-01T00:01:02.000Z', callId: 'c_delta', content: [{ type: 'text', text: 'ok' }] },
+      { kind: 'message', id: 'd4', at: '2026-01-01T00:01:03.000Z', role: 'assistant', parts: [{ type: 'text', text: '搞定' }] },
+    ] as IrEventDraft[]);
+    const deltaBundle: IrBundle = {
+      irVersion: IR_VERSION,
+      createdAt: '2026-01-01T00:01:03.000Z',
+      root: {
+        id: 'ir_delta',
+        source: { agent: 'codex', nativeSessionId: 'codex-1' },
+        meta: { cwd },
+        events: deltaEvents,
+        head: 'd4',
+        notices: [],
+      },
+      children: [],
+    };
+
+    const outcome = await claudeCodeAdapter.appendDelta!(file, deltaBundle, { normalizeTools: true });
+    assert.equal(existsSync(file), true);
+    const updatedBytes = readFileSync(file);
+    assert.deepEqual(updatedBytes.subarray(0, prefixBytes.length), prefixBytes, '已有前缀必须逐字节一致');
+    assert.equal(outcome.units, updatedBytes.toString('utf8').trim().split('\n').length);
+
+    const verify = await verifyClaudeSession({ configDir: dir, cwd, sessionId });
+    assert.equal(verify.ok, true, JSON.stringify(verify.checks.filter((c) => !c.ok)));
+
+    const readBack = await readClaudeSession(file);
+    assert.ok(readBack.root.events.some((e) => e.kind === 'reasoning' && e.reasoning.kind === 'plain' && e.reasoning.signature === 'sig_anthropic_preserved_xyz'));
+    const toolCall = readBack.root.events.find((e) => e.kind === 'tool_call');
+    assert.equal(toolCall?.kind === 'tool_call' ? toolCall.name : undefined, 'Bash');
+
+    void appendClaudeDelta;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

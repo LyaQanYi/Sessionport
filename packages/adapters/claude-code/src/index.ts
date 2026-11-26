@@ -1,5 +1,5 @@
-export { writeClaudeSession, printWriteReport, CLAUDE_CAPS, CLAUDE_DEFAULT_SUBAGENT_TYPE } from './write.ts';
-export type { ClaudeSubagentMeta, WriteClaudeChild, WriteClaudeOptions, WriteClaudeResult } from './write.ts';
+export { appendClaudeDelta, writeClaudeSession, printWriteReport, CLAUDE_CAPS, CLAUDE_DEFAULT_SUBAGENT_TYPE } from './write.ts';
+export type { AppendClaudeDeltaResult, ClaudeSubagentMeta, WriteClaudeChild, WriteClaudeOptions, WriteClaudeResult } from './write.ts';
 export { readClaudeSession } from './read.ts';
 export type { ReadClaudeOptions, ClaudeSessionFile } from './read.ts';
 export { listClaudeSessions } from './list.ts';
