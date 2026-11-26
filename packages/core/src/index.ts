@@ -5,3 +5,5 @@ export * from './paths.ts';
 export * from './registry.ts';
 export * from './sessions.ts';
 export * from './sync.ts';export * from './official.ts';
+export * from './tools.ts';
+export * from './adapter.ts';

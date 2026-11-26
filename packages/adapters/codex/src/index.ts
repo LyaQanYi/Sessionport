@@ -18,3 +18,4 @@ export {
   sessionIdFromRolloutPath,
 } from './wire.ts';
 export type { CodexLine, CodexSessionMeta, CodexIndexEntry } from './wire.ts';
+export { codexAdapter } from './adapter.ts';

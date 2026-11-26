@@ -116,6 +116,8 @@ export interface WriteCursorOptions {
   preserveUpdatedAt?: boolean;
   /** 关闭 key 冲突检查（仅供测试/极端场景，正常不要用） */
   allowOverwrite?: boolean;
+  /** 是否在未命中内置别名时回退到 core 工具归一（默认 true；--raw-tools 可关闭） */
+  normalizeTools?: boolean;
 }
 
 export interface WriteCursorRow {
@@ -779,6 +781,7 @@ export async function writeCursorSession(
             isError: resultInfo.event.isError === true,
             atMs: msOf(resultInfo.event.at),
           },
+      { normalizeTools: session.source.agent === CURSOR_AGENT ? false : options.normalizeTools },
     );
     if (!built.ok) {
       for (const warning of built.warnings) {

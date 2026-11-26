@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import { LossCollector } from '@sessionport/core';
-import type { ExportCaps, IrBundle, IrContent, IrPart, LossEntry, WriteReport } from '@sessionport/core';
+import { LossCollector, normalizeToolCall } from '@sessionport/core';
+import type { ExportCaps, IrBundle, IrContent, IrEvent, IrPart, LossEntry, WriteReport } from '@sessionport/core';
 
 import type {
   OpencodeExport,
@@ -51,6 +51,8 @@ export interface WriteOpencodeOptions {
   env?: Record<string, string>;
   /** opencode import 的运行 cwd / --directory */
   runCwd?: string;
+  /** 是否把跨源工具调用改写为 opencode 原生工具（默认 true；--raw-tools 可关闭） */
+  normalizeTools?: boolean;
 }
 
 export interface WriteOpencodeResult extends WriteReport {
@@ -77,6 +79,7 @@ interface BuildContext {
   explicitModel: boolean;
   createdAt: number;
   updatedAt: number;
+  normalizeTools?: boolean;
 }
 
 interface BuildCounts {
@@ -163,6 +166,27 @@ function addCommonSessionLosses(bundle: IrBundle, losses: LossCollector): void {
     losses.add('opencode.subagent-dropped', 'opencode 的子代理会话暂未导出（需按父子顺序分别导入）', { count: bundle.children.length });
     losses.add('opencode.subagent-events-dropped', '子代理会话的事件未导出', { count: childEvents });
   }
+}
+
+function normalizeOpencodeTool(
+  sourceAgent: string,
+  event: Extract<IrEvent, { kind: 'tool_call' }>,
+  ctx: BuildContext,
+  losses: LossCollector,
+): { name: string; input: unknown } {
+  const normalized = normalizeToolCall({
+    target: 'opencode',
+    sourceAgent,
+    name: event.name,
+    input: event.input,
+    enabled: ctx.normalizeTools,
+  });
+  if (normalized.status === 'normalized') {
+    losses.add('opencode.tool-normalized', '工具调用已改写为目标端原生工具（--raw-tools 可关闭）', { severity: 'info' });
+  } else if (normalized.status === 'unmapped') {
+    losses.add('opencode.tool-unmapped', '工具调用无法映射到目标端原生工具，保留源端工具名', { severity: 'info' });
+  }
+  return { name: normalized.name, input: normalized.input };
 }
 
 function buildV1Payload(bundle: IrBundle, ctx: BuildContext): BuiltPayload {
@@ -260,14 +284,15 @@ function buildV1Payload(bundle: IrBundle, ctx: BuildContext): BuiltPayload {
     }
     if (event.kind === 'tool_call') {
       const target = ensureAssistant(atMs);
+      const tool = normalizeOpencodeTool(session.source.agent, event, ctx, losses);
       const part: OpencodePart = {
         type: 'tool',
         id: opencodeRandomId('prt'),
         sessionID: ctx.sessionId,
         messageID: target.info!.id!,
-        tool: event.name,
+        tool: tool.name,
         callID: event.callId,
-        state: { status: 'running', input: event.input ?? {}, metadata: {}, title: toolTitle(event.name, event.input), time: { start: atMs } },
+        state: { status: 'running', input: tool.input ?? {}, metadata: {}, title: toolTitle(tool.name, tool.input), time: { start: atMs } },
       };
       target.parts!.push(part);
       pendingTools.set(event.callId, part);
@@ -407,12 +432,13 @@ function buildV2Payload(bundle: IrBundle, ctx: BuildContext): BuiltPayload {
     }
     if (event.kind === 'tool_call') {
       const target = ensureAssistant(atMs);
-      const input = normalizeV2ToolInput(event.input);
+      const tool = normalizeOpencodeTool(session.source.agent, event, ctx, losses);
+      const input = normalizeV2ToolInput(tool.input);
       // 2.x import 拒绝 running/pending 状态；默认占位为 aborted 错误态，收到对应 tool_result 时再覆写为 completed/error
       const block: OpencodeV2ContentBlock = {
         type: 'tool',
         id: event.callId || opencodeRandomId('prt'),
-        name: event.name,
+        name: tool.name,
         executed: false,
         state: {
           status: 'error',
@@ -520,7 +546,18 @@ export async function writeOpencodeSession(bundle: IrBundle, options: WriteOpenc
   const createdAt = session.meta.createdAt && Number.isFinite(Date.parse(session.meta.createdAt)) ? Date.parse(session.meta.createdAt) : Date.now();
   const updatedAt = session.meta.updatedAt && Number.isFinite(Date.parse(session.meta.updatedAt)) ? Date.parse(session.meta.updatedAt) : createdAt;
 
-  const ctx: BuildContext = { cwd, sessionId, title, agent, modelId, providerID, explicitModel, createdAt, updatedAt };
+  const ctx: BuildContext = {
+    cwd,
+    sessionId,
+    title,
+    agent,
+    modelId,
+    providerID,
+    explicitModel,
+    createdAt,
+    updatedAt,
+    normalizeTools: options.normalizeTools,
+  };
 
   const binary = opencodeCliBinary(options.binary);
   let candidateFormats: OpencodeExportFormat[];

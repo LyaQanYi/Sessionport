@@ -7,7 +7,9 @@
     "./ir": "./src/ir.ts",
     "./loss": "./src/loss.ts",
     "./ids": "./src/ids.ts",
-    "./paths": "./src/paths.ts"
+    "./paths": "./src/paths.ts",
+    "./tools": "./src/tools.ts",
+    "./adapter": "./src/adapter.ts"
   },
   "license": "Apache-2.0",
   "engines": {

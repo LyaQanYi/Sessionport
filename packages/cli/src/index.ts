@@ -4,8 +4,9 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { bundleEventCount, describeDecision, eventKindCounts, findRef, listAllSessions, loadRegistry, planSync, saveRegistry, SESSION_AGENTS, sourceKeyOf, upsertRef, validateIrBundle } from '@sessionport/core';
-import type { AgentId, ExternalRef, SyncDecision } from '@sessionport/core';
+import type { AdapterWriteOutcome, AgentId, ExternalRef, SyncDecision } from '@sessionport/core';
 import type { IrBundle, IrNotice } from '@sessionport/core';
+import { getAdapter, prefixTable, WRITE_TARGETS } from './adapters.ts';
 import { openTargetApp, planOfficialImport, officialSupport, verifyOfficialImport, type OfficialTarget } from './official.ts';
 
 const USAGE = [
@@ -53,6 +54,7 @@ const USAGE = [
   '  --include-children     子代理会话一并导出（dsh / claude-code / command-code / qoder 支持；其余记入损失清单）',
   '  --synthesize-agent-calls  源端缺触发子代理的调用时，补一对合成的 Agent 调用（claude-code；默认关，会记一条 info 损失）',
   '  --keep-injected        保留源端注入消息（默认在支持的目标上丢弃并记损失）',
+  '  --raw-tools            关闭工具语义归一（默认把工具调用改写为目标端原生工具）',
   '  --slim                 dsh 目标精简导入：截断 tool_result/参数、丢弃较早 reasoning（日志也损）',
   '  --compact              dsh 目标压缩导入：保留全部事件日志，写 DSH 原生 compaction（摘要+最近 step）',
   '  --compact-budget-chars <n>  压缩导入时可见上下文（最近 step）的字符预算（默认 200000）',
@@ -80,25 +82,17 @@ function fail(message: string): never {
 }
 
 interface SourceKind {
-  kind: 'kimi' | 'claude-code' | 'command-code' | 'dsh' | 'codex' | 'opencode' | 'cursor' | 'qoder' | 'workbuddy' | 'ir';
+  kind: AgentId | 'ir';
   target: string;
 }
 
 function detectSource(raw: string): SourceKind {
-  if (raw.startsWith('kimi:')) return { kind: 'kimi', target: raw.slice(5) };
-  if (raw.startsWith('claude:')) return { kind: 'claude-code', target: raw.slice(7) };
-  if (raw.startsWith('claudecode:')) return { kind: 'claude-code', target: raw.slice(11) };
-  if (raw.startsWith('commandcode:')) return { kind: 'command-code', target: raw.slice(12) };
-  if (raw.startsWith('cmd:')) return { kind: 'command-code', target: raw.slice(4) };
-  if (raw.startsWith('dsh:')) return { kind: 'dsh', target: raw.slice(4) };
-  if (raw.startsWith('codex:')) return { kind: 'codex', target: raw.slice(6) };
-  if (raw.startsWith('opencode:')) return { kind: 'opencode', target: raw.slice(9) };
-  if (raw.startsWith('cursor:')) return { kind: 'cursor', target: raw.slice(7) };
-  if (raw.startsWith('qoder:')) return { kind: 'qoder', target: raw.slice(6) };
-  if (raw.startsWith('workbuddy:')) return { kind: 'workbuddy', target: raw.slice(10) };
-  if (raw.startsWith('wb:')) return { kind: 'workbuddy', target: raw.slice(3) };
+  for (const [prefix, kind] of prefixTable()) {
+    const tag = prefix + ':';
+    if (raw.startsWith(tag)) return { kind, target: raw.slice(tag.length) };
+  }
   if (raw.endsWith('.json') && existsSync(raw) && !existsSync(join(raw, 'state.json'))) return { kind: 'ir', target: raw };
-  if (existsSync(join(raw, 'state.json'))) return { kind: 'kimi', target: raw };
+  if (existsSync(join(raw, 'state.json'))) return { kind: 'kimi-code', target: raw };
   if (existsSync(join(raw, 'session.v4.jsonl.zstd'))) return { kind: 'dsh', target: raw };
   if (raw.endsWith('.jsonl.zstd')) return { kind: 'dsh', target: raw };
   if (raw.endsWith('.jsonl')) {
@@ -114,7 +108,7 @@ function detectSource(raw: string): SourceKind {
     }
     return { kind: 'command-code', target: raw };
   }
-  if (existsSync(raw) && existsSync(join(raw, 'agents'))) return { kind: 'kimi', target: raw };
+  if (existsSync(raw) && existsSync(join(raw, 'agents'))) return { kind: 'kimi-code', target: raw };
   fail('无法识别的 source: ' + raw + '（可以显式加 kimi: / commandcode: / dsh: 前缀）');
 }
 
@@ -138,40 +132,9 @@ async function loadBundle(source: string): Promise<IrBundle> {
     if (errors.length > 0) fail('IR 校验失败:\n  ' + errors.join('\n  '));
     return bundle;
   }
-  if (detected.kind === 'kimi') {
-    const mod = await import('@sessionport/adapter-kimi-code');
-    return mod.readKimiBundle(resolve(detected.target));
-  }
-  if (detected.kind === 'claude-code') {
-    const mod = await import('@sessionport/adapter-claude-code');
-    return mod.readClaudeSession(detected.target);
-  }
-  if (detected.kind === 'opencode') {
-    const mod = await import('@sessionport/adapter-opencode');
-    return mod.readOpencodeSession(detected.target);
-  }
-  if (detected.kind === 'command-code') {
-    const mod = await import('@sessionport/adapter-command-code');
-    return mod.readCommandCodeSession(detected.target);
-  }
-  if (detected.kind === 'codex') {
-    const mod = await import('@sessionport/adapter-codex');
-    return mod.readCodexSession(detected.target);
-  }
-  if (detected.kind === 'cursor') {
-    const mod = await import('@sessionport/adapter-cursor');
-    return mod.readCursorSession(detected.target);
-  }
-  if (detected.kind === 'qoder') {
-    const mod = await import('@sessionport/adapter-qoder');
-    return mod.readQoderSession(detected.target);
-  }
-  if (detected.kind === 'workbuddy') {
-    const mod = await import('@sessionport/adapter-workbuddy');
-    return mod.readWorkBuddySession(detected.target);
-  }
-  const mod = await import('@sessionport/adapter-dsh');
-  return mod.readDshSession(detected.target);
+  const adapter = await getAdapter(detected.kind);
+  if (!adapter?.read) fail('不支持的源 agent: ' + detected.kind);
+  return adapter.read(detected.target);
 }
 
 function printNotices(notices: IrNotice[]): void {
@@ -226,6 +189,9 @@ function commonTargetOptions(values: Record<string, string | boolean | undefined
     keepInjected: Boolean(values['keep-injected']),
     includeChildren: Boolean(values['include-children']),
     synthesizeAgentCalls: Boolean(values['synthesize-agent-calls']),
+    normalizeTools: values['raw-tools'] !== true,
+    version: typeof values.version === 'string' ? values.version : undefined,
+    keepThinking: Boolean(values['keep-thinking']),
     userDataDir: typeof values['user-data-dir'] === 'string' ? values['user-data-dir'] : undefined,
     dryRun: Boolean(values['dry-run']),
     confirmReal: Boolean(values['confirm-real']),
@@ -265,7 +231,9 @@ function printReport(report: {
 
 async function cmdPush(source: string, values: Record<string, string | boolean | undefined>): Promise<void> {
   const to = typeof values.to === 'string' ? values.to : '';
-  if (!to) fail('push 需要 --to <agent>（claude-code / command-code / dsh）');
+  if (!to) fail('push 需要 --to <agent>（' + WRITE_TARGETS.join(' / ') + '）');
+  const adapter = await getAdapter(to);
+  if (!adapter?.write) fail('不支持的目标 agent: ' + to);
   const bundle = await loadBundle(source);
   const totalEvents = bundle.root.events.length + bundle.children.reduce((sum, child) => sum + child.session.events.length, 0);
   if (to === 'dsh' && values.slim !== true && values.compact !== true && totalEvents > 400) {
@@ -279,70 +247,21 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
     writeFileSync(values['write-ir'] as string, JSON.stringify(bundle, null, 2) + '\n', 'utf8');
   }
   const opts = commonTargetOptions(values);
-
-  let report: Parameters<typeof printReport>[0];
-  if (to === 'claude-code') {
-    const mod = await import('@sessionport/adapter-claude-code');
-    report = await mod.writeClaudeSession(bundle, {
-      configDir: opts.home as string | undefined,
-      cwd: opts.cwd as string | undefined,
-      sessionId: opts.id as string | undefined,
-      model: opts.model as string | undefined,
-      version: typeof values.version === 'string' ? values.version : undefined,
-      keepThinking: Boolean(values['keep-thinking']),
-      includeChildren: opts.includeChildren === true,
-      synthesizeAgentCalls: opts.synthesizeAgentCalls === true,
-      dryRun: Boolean(values['dry-run']),
-    });
-  } else if (to === 'command-code') {
-    const mod = await import('@sessionport/adapter-command-code');
-    report = await mod.writeCommandCodeSession(bundle, opts);
-  } else if (to === 'dsh') {
-    const mod = await import('@sessionport/adapter-dsh');
-    report = await mod.writeDshSession(bundle, opts);
-  } else if (to === 'codex') {
-    const mod = await import('@sessionport/adapter-codex');
-    report = await mod.writeCodexSession(bundle, opts);
-  } else if (to === 'opencode') {
-    const mod = await import('@sessionport/adapter-opencode');
-    // opencode CLI 用 XDG_DATA_HOME 定位数据目录：--home 映射过去才能隔离写库
-    const opencodeHome = opts.home as string | undefined;
-    report = await mod.writeOpencodeSession(bundle, {
-      ...opts,
-      ...(opencodeHome !== undefined ? { env: { XDG_DATA_HOME: opencodeHome } } : {}),
-    });
-  } else if (to === 'cursor') {
-    const mod = await import('@sessionport/adapter-cursor');
-    report = await mod.writeCursorSession(bundle, {
-      ...opts,
-      composerId: opts.id as string | undefined,
-      confirmReal: Boolean(values['confirm-real']),
-      keepSynthetic: Boolean(values['keep-inject']),
-    });
-  } else if (to === 'qoder') {
-    const mod = await import('@sessionport/adapter-qoder');
-    report = await mod.writeQoderSession(bundle, opts);
-  } else {
-    fail('不支持的目标 agent: ' + to);
-  }
+  const outcome = await adapter.write(bundle, opts);
 
   if (values.json) {
-    process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    process.stdout.write(JSON.stringify(outcome.report, null, 2) + '\n');
     return;
   }
+  const report: Parameters<typeof printReport>[0] = {
+    ...outcome.report,
+    target: outcome.target,
+    sessionId: outcome.targetId,
+    paths: outcome.paths,
+  };
   printReport(report);
   printNotices(bundle.root.notices);
   process.stdout.write('\n下一步: 用目标 agent 打开/继续这个会话（' + report.paths[0] + '）\n');
-}
-
-interface WriteOutcome {
-  target: string;
-  targetId: string;
-  paths: string[];
-  /** 目标端计量单位（rows: transcript 行数含头；events: 事件数） */
-  unit: 'rows' | 'events';
-  units: number;
-  report: { written?: { events: number }; rows?: unknown[]; losses?: Array<{ severity: string; code: string; count: number; message: string }> };
 }
 
 async function writeTarget(
@@ -351,109 +270,20 @@ async function writeTarget(
   opts: Record<string, unknown>,
   id: string | undefined,
   dryRun: boolean,
-): Promise<WriteOutcome> {
-  // codex rollout 文件名带秒级时间戳：有登记路径时强制复用，否则每次都会算出新路径
-  const forcedPath = typeof opts.targetPath === 'string' ? opts.targetPath : undefined;
-  if (target === 'claude-code') {
-    const mod = await import('@sessionport/adapter-claude-code');
-    // commonTargetOptions 用的是 home；claude adapter 只认 configDir（否则 --home 会被忽略，写到真实 ~/.claude）
-    const configDir = typeof opts.home === 'string' ? opts.home : undefined;
-    const report = await mod.writeClaudeSession(bundle, {
-      ...(opts as object),
-      ...(configDir !== undefined ? { configDir } : {}),
-      sessionId: id,
-      dryRun,
-    });
-    return { target, targetId: report.sessionId, paths: report.paths, unit: 'rows', units: report.rows.length, report };
-  }
-  if (target === 'command-code') {
-    const mod = await import('@sessionport/adapter-command-code');
-    const report = await mod.writeCommandCodeSession(bundle, { ...(opts as object), id, dryRun });
-    return { target, targetId: report.sessionId, paths: report.paths, unit: 'rows', units: report.rows.length + 1, report };
-  }
-  if (target === 'opencode') {
-    const mod = await import('@sessionport/adapter-opencode');
-    const opencodeHome = typeof opts.home === 'string' ? opts.home : undefined;
-    const report = await mod.writeOpencodeSession(bundle, {
-      ...(opts as object),
-      id,
-      dryRun,
-      runCwd: typeof opts.cwd === 'string' ? opts.cwd : undefined,
-      ...(opencodeHome !== undefined ? { env: { XDG_DATA_HOME: opencodeHome } } : {}),
-    });
-    return { target, targetId: report.sessionId, paths: report.jsonPath ? [report.jsonPath] : [], unit: 'rows', units: report.exportData.messages?.length ?? 0, report };
-  }
-  if (target === 'codex') {
-    const mod = await import('@sessionport/adapter-codex');
-    const report = await mod.writeCodexSession(bundle, { ...(opts as object), id, dryRun, filePath: forcedPath });
-    return { target, targetId: report.sessionId, paths: report.paths, unit: 'rows', units: report.rows.length + 1, report };
-  }
-  if (target === 'cursor') {
-    const mod = await import('@sessionport/adapter-cursor');
-    const report = await mod.writeCursorSession(bundle, { ...(opts as object), composerId: id, dryRun, confirmReal: Boolean(opts.confirmReal) });
-    const bubbles = report.rows.filter((row: { kind: string }) => row.kind === 'bubble').length;
-    return { target, targetId: report.composerId, paths: [report.dbPath], unit: 'rows', units: bubbles, report };
-  }
-  if (target === 'qoder') {
-    const mod = await import('@sessionport/adapter-qoder');
-    const report = await mod.writeQoderSession(bundle, { ...(opts as object), sessionId: id, dryRun });
-    return { target, targetId: report.sessionId, paths: [report.path], unit: 'rows', units: report.rows.length, report };
-  }
-  const mod = await import('@sessionport/adapter-dsh');
-  const report = await mod.writeDshSession(bundle, { ...(opts as object), id, dryRun });
-  return { target, targetId: report.sessionId, paths: report.paths, unit: 'events', units: report.written.events, report };
+): Promise<AdapterWriteOutcome> {
+  const adapter = await getAdapter(target);
+  if (!adapter?.write) fail('不支持的目标 agent: ' + target);
+  return adapter.write(bundle, { ...opts, id, dryRun });
 }
 
-async function countTarget(target: string, outcome: WriteOutcome, opts: Record<string, unknown>): Promise<{ exists: boolean; units: number }> {
-  if (target === 'command-code') {
-    const mod = await import('@sessionport/adapter-command-code');
-    return mod.countCommandCodeTarget(outcome.paths[0]!);
-  }
-  if (target === 'dsh') {
-    const mod = await import('@sessionport/adapter-dsh');
-    const result = await mod.countDshTarget({ home: opts.home as string | undefined, sessionId: outcome.targetId });
-    return { exists: result.exists, units: result.units };
-  }
-  if (target === 'opencode') {
-    try {
-      const mod = await import('@sessionport/adapter-opencode');
-      const opencodeHome = typeof opts.home === 'string' ? opts.home : undefined;
-      // 目标端不落 JSON 文件（import 后临时文件会清理），通过 export 数消息
-      const raw = await mod.exportOpencodeSession(outcome.targetId, {
-        ...(opencodeHome !== undefined ? { env: { XDG_DATA_HOME: opencodeHome } } : {}),
-      });
-      return mod.countOpencodeTarget(raw);
-    } catch {
-      return { exists: false, units: 0 };
-    }
-  }
-  if (target === 'cursor') {
-    const mod = await import('@sessionport/adapter-cursor');
-    return mod.countCursorTarget({ home: opts.home as string | undefined, sessionId: outcome.targetId });
-  }
-  if (target === 'qoder') {
-    try {
-      const text = readFileSync(outcome.paths[0]!, 'utf8');
-      return { exists: true, units: text.split('\n').filter((line) => line.trim().length > 0).length };
-    } catch {
-      return { exists: false, units: 0 };
-    }
-  }
-  if (target === 'codex') {
-    const forcedPath = typeof opts.targetPath === 'string' ? opts.targetPath : undefined;
-    try {
-      const text = readFileSync(forcedPath ?? outcome.paths[0]!, 'utf8');
-      return { exists: true, units: text.split('\n').filter((line) => line.trim().length > 0).length };
-    } catch {
-      return { exists: false, units: 0 };
-    }
-  }
-  try {
-    const text = readFileSync(outcome.paths[0]!, 'utf8');
-    return { exists: true, units: text.split('\n').filter((line) => line.trim().length > 0).length };
-  } catch {
-    return { exists: false, units: 0 };
-  }
+async function countTarget(
+  target: string,
+  outcome: AdapterWriteOutcome,
+  opts: Record<string, unknown>,
+): Promise<{ exists: boolean; units: number }> {
+  const adapter = await getAdapter(target);
+  if (!adapter?.countTarget) return { exists: false, units: 0 };
+  return adapter.countTarget(outcome, opts);
 }
 
 async function cmdSync(source: string, values: Record<string, string | boolean | undefined>): Promise<void> {
@@ -831,6 +661,7 @@ async function main(): Promise<void> {
       version: { type: 'string' },
       'keep-thinking': { type: 'boolean' },
       'keep-injected': { type: 'boolean' },
+      'raw-tools': { type: 'boolean' },
       'include-children': { type: 'boolean' },
       'synthesize-agent-calls': { type: 'boolean' },
       'dry-run': { type: 'boolean' },

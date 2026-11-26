@@ -84,8 +84,12 @@ export async function verifyCodexSession(options: VerifyCodexOptions): Promise<V
   });
   checks.push({ name: 'message-content-shape', ok: badContent.length === 0, detail: badContent.length + ' 行 content 异常' });
 
-  const calls = responseItems.filter((line) => line.payload?.type === 'function_call');
-  const outputs = responseItems.filter((line) => line.payload?.type === 'function_call_output');
+  const fnCalls = responseItems.filter((line) => line.payload?.type === 'function_call');
+  const customCalls = responseItems.filter((line) => line.payload?.type === 'custom_tool_call');
+  const calls = [...fnCalls, ...customCalls];
+  const outputs = responseItems.filter(
+    (line) => line.payload?.type === 'function_call_output' || line.payload?.type === 'custom_tool_call_output',
+  );
   const callIds = new Set(calls.map((line) => String(line.payload?.call_id ?? '')));
   const outputIds = new Set(outputs.map((line) => String(line.payload?.call_id ?? '')));
   const orphanCalls = [...callIds].filter((id) => id.length > 0 && !outputIds.has(id));
@@ -96,7 +100,7 @@ export async function verifyCodexSession(options: VerifyCodexOptions): Promise<V
     detail: 'calls=' + calls.length + ' outputs=' + outputs.length + ' 缺结果=' + orphanCalls.length + ' 孤立结果=' + orphanOutputs.length,
   });
 
-  const badArgs = calls.filter((line) => {
+  const badArgs = fnCalls.filter((line) => {
     const raw = line.payload?.arguments;
     if (typeof raw !== 'string') return true;
     try {
@@ -107,6 +111,9 @@ export async function verifyCodexSession(options: VerifyCodexOptions): Promise<V
     }
   });
   checks.push({ name: 'tool-arguments-json', ok: badArgs.length === 0, detail: badArgs.length + ' 条 arguments 非 JSON' });
+
+  const badCustomInputs = customCalls.filter((line) => typeof line.payload?.input !== 'string');
+  checks.push({ name: 'custom-tool-input-string', ok: badCustomInputs.length === 0, detail: badCustomInputs.length + ' 条 custom input 非字符串' });
 
   // 短会话可能只有 user 消息（甚至只有 tool 往返），因此只要求有对话内容
   const hasConversation = messageItems.length > 0 || calls.length > 0;

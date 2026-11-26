@@ -120,3 +120,4 @@ export async function listQoderSessions(options: ListSessionsOptions = {}): Prom
 
   return finalizeSessionList([...byId.values()], options.limit);
 }
+export { qoderAdapter } from './adapter.ts';

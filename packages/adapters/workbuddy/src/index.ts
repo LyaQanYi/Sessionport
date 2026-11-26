@@ -107,3 +107,4 @@ export function workBuddyTranscriptInfo(path: string): { sessionId: string; size
   const base = path.split('/').pop() ?? path;
   return { sessionId: base.replace(/\.jsonl$/, ''), size: info.size, mtimeMs: info.mtimeMs };
 }
+export { workbuddyAdapter } from './adapter.ts';

@@ -154,3 +154,4 @@ export type {
   CursorThinking,
   CursorToolFormerData,
 } from './wire.ts';
+export { cursorAdapter } from './adapter.ts';

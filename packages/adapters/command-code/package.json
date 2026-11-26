@@ -7,7 +7,8 @@
     "./read": "./src/read.ts",
     "./write": "./src/write.ts",
     "./verify": "./src/verify.ts",
-    "./wire": "./src/wire.ts"
+    "./wire": "./src/wire.ts",
+    "./adapter": "./src/adapter.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts"

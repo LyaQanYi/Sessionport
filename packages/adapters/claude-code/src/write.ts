@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { LossCollector, assistantMessageId, contentToText, randomUuid } from '@sessionport/core';
+import { LossCollector, assistantMessageId, contentToText, normalizeToolCall, randomUuid } from '@sessionport/core';
 import type {
   ExportCaps,
   IrBundle,
@@ -57,6 +57,8 @@ export interface WriteClaudeOptions {
    * 让 Claude 能把 subagents transcript 挂到父会话的调用下（默认否，会记一条 info 损失）。
    */
   synthesizeAgentCalls?: boolean;
+  /** 是否把跨源工具调用改写为 Claude 原生工具（默认 true；--raw-tools 可关闭） */
+  normalizeTools?: boolean;
 }
 
 /** 子代理 meta.json 内容（字段对齐真实 Claude Code 2.1.303） */
@@ -435,7 +437,22 @@ function buildChunks(session: IrSession, opts: WriteClaudeOptions, losses: LossC
       }
       case 'tool_call': {
         const chunk = ensureAssistant(ev.at);
-        chunk.blocks.push(toolUseBlock(ev.callId, ev.name, ev.input));
+        const normalized = normalizeToolCall({
+          target: 'claude-code',
+          sourceAgent: session.source.agent,
+          name: ev.name,
+          input: ev.input,
+          enabled: opts.normalizeTools,
+        });
+        if (normalized.status === 'normalized') {
+          losses.add('claude.tool-normalized', '工具调用已改写为目标端原生工具（--raw-tools 可关闭）', { severity: 'info' });
+        } else if (normalized.status === 'unmapped') {
+          losses.add('claude.tool-unmapped', '工具调用无法映射到目标端原生工具，保留源端工具名', { severity: 'info' });
+        }
+        const isPlainObject =
+          normalized.input !== null && typeof normalized.input === 'object' && !Array.isArray(normalized.input);
+        const toolInput = normalized.status === 'unmapped' && !isPlainObject ? { input: normalized.input } : normalized.input;
+        chunk.blocks.push(toolUseBlock(ev.callId, normalized.name, toolInput));
         chunk.toolUseIds.push(ev.callId);
         counts.toolCalls += 1;
         break;
@@ -470,18 +487,24 @@ function repairToolPairs(chunks: Chunk[], losses: LossCollector): Chunk[] {
     const nextIds = next && next.role === 'user' ? next.toolResultIds : [];
     const missing = chunk.toolUseIds.filter((id) => !nextIds.includes(id));
     if (missing.length === 0) continue;
-    const synthetic: Chunk = {
-      role: 'user',
-      at: chunk.at,
-      blocks: missing.map((id) => toolResultBlock(id, '[sessionport] 源会话里没有这条工具调用的结果', true)),
-      toolUseIds: [],
-      toolResultIds: missing,
-    };
-    out.splice(i + 1, 0, synthetic);
+    const missingBlocks = missing.map((id) => toolResultBlock(id, '[sessionport] 源会话里没有这条工具调用的结果', true));
+    if (next && next.role === 'user' && !next.isMeta && next.toolResultIds.length > 0) {
+      next.blocks.push(...missingBlocks);
+      next.toolResultIds.push(...missing);
+    } else {
+      const synthetic: Chunk = {
+        role: 'user',
+        at: chunk.at,
+        blocks: missingBlocks,
+        toolUseIds: [],
+        toolResultIds: missing,
+      };
+      out.splice(i + 1, 0, synthetic);
+      i += 1;
+    }
     losses.add('claude.tool-result-synthesized', '源会话里工具调用没有对应结果，已合成占位 tool_result 以保持 Claude 可加载', {
       count: missing.length,
     });
-    i += 1;
   }
 
   // 孤立的 tool_result（前面没有对应 tool_use）：降级为文本，避免 Claude 拒绝
@@ -493,13 +516,13 @@ function repairToolPairs(chunks: Chunk[], losses: LossCollector): Chunk[] {
     const keptIds: string[] = [];
     for (const block of chunk.blocks) {
       const b = block as { type?: string; tool_use_id?: string; content?: unknown };
-      if (b.type === 'tool_result' && b.tool_use_id && !allToolUse.has(b.tool_use_id)) {
+      if (b.type === 'tool_result' && typeof b.tool_use_id === 'string' && !allToolUse.has(b.tool_use_id)) {
         kept.push(textBlock('[tool_result ' + b.tool_use_id + '] ' + String(b.content ?? '')));
         losses.add('claude.orphan-tool-result', '孤立 tool_result（源会话里找不到对应 tool_use）已降级为文本', { severity: 'info', count: 1 });
         continue;
       }
       kept.push(block);
-      if (b.type === 'tool_result' && b.tool_use_id) keptIds.push(b.tool_use_id);
+      if (b.type === 'tool_result' && typeof b.tool_use_id === 'string') keptIds.push(b.tool_use_id);
     }
     chunk.blocks = kept;
     chunk.toolResultIds = keptIds;

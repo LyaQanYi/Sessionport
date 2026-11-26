@@ -7,7 +7,8 @@
     "./read": "./src/read.ts",
     "./write": "./src/write.ts",
     "./verify": "./src/verify.ts",
-    "./zstd": "./src/zstd.ts"
+    "./zstd": "./src/zstd.ts",
+    "./adapter": "./src/adapter.ts"
   },
   "dependencies": {
     "@sessionport/core": "workspace:*"

@@ -6,7 +6,8 @@
     ".": "./src/index.ts",
     "./read": "./src/read.ts",
     "./verify": "./src/verify.ts",
-    "./wire": "./src/wire.ts"
+    "./wire": "./src/wire.ts",
+    "./adapter": "./src/adapter.ts"
   },
   "dependencies": {
     "@sessionport/core": "workspace:*"

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-import { LossCollector } from '@sessionport/core';
+import { LossCollector, normalizeToolCall } from '@sessionport/core';
 import type { ExportCaps, IrBundle, IrContent, IrEvent, IrSession, LossEntry, WriteReport } from '@sessionport/core';
 
 import { codexHome, codexRolloutPath, threadIndexPath } from './wire.ts';
@@ -40,6 +40,8 @@ export interface WriteCodexOptions {
   filePath?: string;
   /** rollout 形态：legacy（默认，无 ordinal）或 paginated（每行带递增 ordinal） */
   historyMode?: 'legacy' | 'paginated';
+  /** 是否把跨源工具调用改写为 Codex 原生工具（默认 true；--raw-tools 可关闭） */
+  normalizeTools?: boolean;
   dryRun?: boolean;
 }
 
@@ -123,6 +125,11 @@ export async function writeCodexSession(bundle: IrBundle, options: WriteCodexOpt
   };
 
   let pendingCallIds: string[] = [];
+  const customCallIds = new Set<string>();
+  const toolOutputPayload = (callId: string, output: string): Record<string, unknown> =>
+    customCallIds.has(callId)
+      ? { type: 'custom_tool_call_output', id: 'ctco_' + randomUUID(), call_id: callId, output }
+      : { type: 'function_call_output', id: 'fco_' + randomUUID(), call_id: callId, output };
 
   for (const event of session.events) {
     const at = event.at;
@@ -171,20 +178,51 @@ export async function writeCodexSession(bundle: IrBundle, options: WriteCodexOpt
       continue;
     }
     if (event.kind === 'tool_call') {
+      const normalized = normalizeToolCall({
+        target: 'codex',
+        sourceAgent: session.source.agent,
+        name: event.name,
+        input: event.input,
+        enabled: options.normalizeTools,
+      });
+      if (normalized.status === 'normalized') {
+        losses.add('codex.tool-normalized', '工具调用已改写为目标端原生工具（--raw-tools 可关闭）', { severity: 'info' });
+      } else if (normalized.status === 'unmapped') {
+        losses.add('codex.tool-unmapped', '工具调用无法映射到目标端原生工具，保留源端工具名', { severity: 'info' });
+      }
       pendingCallIds.push(event.callId);
-      push(
-        {
-          type: 'response_item',
-          payload: {
-            type: 'function_call',
-            id: 'fc_' + randomUUID(),
-            name: event.name,
-            arguments: JSON.stringify(event.input ?? {}),
-            call_id: event.callId,
+      const useCustom = normalized.custom === true || typeof normalized.input === 'string';
+      if (useCustom) {
+        customCallIds.add(event.callId);
+        push(
+          {
+            type: 'response_item',
+            payload: {
+              type: 'custom_tool_call',
+              id: 'ctc_' + randomUUID(),
+              status: 'completed',
+              call_id: event.callId,
+              name: normalized.name,
+              input: typeof normalized.input === 'string' ? normalized.input : JSON.stringify(normalized.input ?? ''),
+            },
           },
-        },
-        at,
-      );
+          at,
+        );
+      } else {
+        push(
+          {
+            type: 'response_item',
+            payload: {
+              type: 'function_call',
+              id: 'fc_' + randomUUID(),
+              name: normalized.name,
+              arguments: JSON.stringify(normalized.input ?? {}),
+              call_id: event.callId,
+            },
+          },
+          at,
+        );
+      }
       counts.toolCalls += 1;
       continue;
     }
@@ -193,12 +231,7 @@ export async function writeCodexSession(bundle: IrBundle, options: WriteCodexOpt
       push(
         {
           type: 'response_item',
-          payload: {
-            type: 'function_call_output',
-            id: 'fco_' + randomUUID(),
-            call_id: event.callId,
-            output: textOf(event.content),
-          },
+          payload: toolOutputPayload(event.callId, textOf(event.content)),
         },
         at,
       );
@@ -216,12 +249,7 @@ export async function writeCodexSession(bundle: IrBundle, options: WriteCodexOpt
     push(
       {
         type: 'response_item',
-        payload: {
-          type: 'function_call_output',
-          id: 'fco_' + randomUUID(),
-          call_id: callId,
-          output: '[sessionport] 源会话没有这条工具调用的结果',
-        },
+        payload: toolOutputPayload(callId, '[sessionport] 源会话没有这条工具调用的结果'),
       },
       lastAt,
     );

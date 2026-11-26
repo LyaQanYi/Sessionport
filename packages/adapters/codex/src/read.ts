@@ -70,6 +70,20 @@ function parseArguments(raw: unknown): unknown {
   }
 }
 
+function customOutputText(output: unknown): string {
+  if (typeof output === 'string') return output;
+  if (Array.isArray(output)) {
+    const texts: string[] = [];
+    for (const item of output) {
+      if (item && typeof item === 'object' && typeof (item as { text?: unknown }).text === 'string') {
+        texts.push((item as { text: string }).text);
+      }
+    }
+    return texts.join('\n');
+  }
+  return JSON.stringify(output ?? '');
+}
+
 /** 解析 rollout 路径：支持直接路径、会话 uuid、或 'last' */
 export function resolveCodexSessionPath(input: string, options: ReadCodexOptions = {}): { path: string; home: string } {
   const home = codexHome(options.home);
@@ -187,14 +201,20 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
         }
         continue;
       }
-      if (itemType === 'function_call') {
+      if (itemType === 'function_call' || itemType === 'custom_tool_call') {
         const callId = String(payload.call_id ?? payload.id ?? '');
-        if (typeof payload.arguments === 'string') {
-          try {
-            JSON.parse(payload.arguments);
-          } catch {
-            counters.badToolArgs += 1;
+        let input: unknown;
+        if (itemType === 'function_call') {
+          if (typeof payload.arguments === 'string') {
+            try {
+              JSON.parse(payload.arguments);
+            } catch {
+              counters.badToolArgs += 1;
+            }
           }
+          input = parseArguments(payload.arguments);
+        } else {
+          input = typeof payload.input === 'string' ? payload.input : (payload.input ?? '');
         }
         pendingCalls.set(callId, (pendingCalls.get(callId) ?? 0) + 1);
         push({
@@ -202,22 +222,28 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
           at,
           callId,
           name: String(payload.name ?? 'unknown'),
-          input: parseArguments(payload.arguments),
+          input,
         });
         continue;
       }
-      if (itemType === 'function_call_output') {
+      if (itemType === 'function_call_output' || itemType === 'custom_tool_call_output') {
         const callId = String(payload.call_id ?? '');
         const pending = pendingCalls.get(callId) ?? 0;
         if (pending > 1) pendingCalls.set(callId, pending - 1);
         else if (pending === 1) pendingCalls.delete(callId);
         else counters.orphanToolResults += 1;
         const output = payload.output;
+        const text =
+          itemType === 'custom_tool_call_output'
+            ? customOutputText(output)
+            : typeof output === 'string'
+              ? output
+              : JSON.stringify(output ?? '');
         push({
           kind: 'tool_result',
           at,
           callId,
-          content: [{ type: 'text', text: typeof output === 'string' ? output : JSON.stringify(output ?? '') }],
+          content: [{ type: 'text', text }],
         });
         continue;
       }

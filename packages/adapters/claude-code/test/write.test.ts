@@ -104,3 +104,67 @@ test('--keep-thinking 时 reasoning 降级为 text 块', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('同一 assistant 块中部分 tool_use 缺结果时，合成结果合并进紧随其后的 user tool_result 行', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sessionport-claude-merge-'));
+  try {
+    const events = chain([
+      { kind: 'tool_call', id: 'e1', at: '2026-01-01T00:00:00Z', callId: 'call_a', name: 'Bash', input: { command: 'pwd' } },
+      { kind: 'message', id: 'e2', at: '2026-01-01T00:00:01Z', role: 'assistant', parts: [{ type: 'text', text: '再查一下' }] },
+      { kind: 'tool_call', id: 'e3', at: '2026-01-01T00:00:02Z', callId: 'call_b', name: 'Bash', input: { command: 'ls' } },
+      { kind: 'tool_result', id: 'e4', at: '2026-01-01T00:00:03Z', callId: 'call_b', content: [{ type: 'text', text: 'README.md' }] },
+    ] as IrEventDraft[]);
+    const report = await writeClaudeSession(makeBundle(events), {
+      configDir: dir,
+      sessionId: '44444444-4444-4444-8444-444444444444',
+      cwd: '/tmp/sessionport-test',
+    });
+    assert.ok(report.losses.some((l) => l.code === 'claude.tool-result-synthesized'));
+    const userRows = report.rows.filter((r) => r.type === 'user') as Array<{
+      message: { content: Array<{ type: string; tool_use_id?: string; is_error?: boolean }> };
+    }>;
+    assert.equal(userRows.length, 1);
+    const resultBlocks = userRows[0]!.message.content.filter((b) => b.type === 'tool_result');
+    assert.deepEqual(
+      resultBlocks.map((b) => b.tool_use_id).sort(),
+      ['call_a', 'call_b'],
+    );
+    assert.equal(resultBlocks.find((b) => b.tool_use_id === 'call_a')?.is_error, true);
+
+    const verify = await verifyClaudeSession({
+      configDir: dir,
+      cwd: '/tmp/sessionport-test',
+      sessionId: '44444444-4444-4444-8444-444444444444',
+    });
+    assert.equal(verify.ok, true, JSON.stringify(verify.checks));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('callId 为空字符串的孤立 tool_result 降级为文本', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sessionport-claude-empty-callid-'));
+  try {
+    const events = chain([
+      { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: '你好' }] },
+      { kind: 'tool_result', id: 'e2', at: '2026-01-01T00:00:01Z', callId: '', content: [{ type: 'text', text: 'orphan output' }] },
+      { kind: 'message', id: 'e3', at: '2026-01-01T00:00:02Z', role: 'assistant', parts: [{ type: 'text', text: '收到' }] },
+    ] as IrEventDraft[]);
+    const report = await writeClaudeSession(makeBundle(events), {
+      configDir: dir,
+      sessionId: '55555555-5555-4555-8555-555555555555',
+      cwd: '/tmp/sessionport-test',
+    });
+    assert.ok(report.losses.some((l) => l.code === 'claude.orphan-tool-result'));
+    const allBlocks = report.rows.flatMap((r) => (r.message?.content ?? []) as Array<{ type?: string; tool_use_id?: string }>);
+    assert.equal(allBlocks.some((b) => b.type === 'tool_result' && b.tool_use_id === ''), false);
+    const verify = await verifyClaudeSession({
+      configDir: dir,
+      cwd: '/tmp/sessionport-test',
+      sessionId: '55555555-5555-4555-8555-555555555555',
+    });
+    assert.equal(verify.ok, true, JSON.stringify(verify.checks));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

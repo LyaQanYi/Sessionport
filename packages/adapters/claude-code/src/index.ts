@@ -25,3 +25,4 @@ export {
 } from './paths.ts';
 export { buildAssistantRow, buildUserRow, textBlock, toolResultBlock, toolUseBlock } from './rows.ts';
 export type { ClaudeRow, ClaudeUserRow, ClaudeAssistantRow, RowContext } from './rows.ts';
+export { claudeCodeAdapter } from './adapter.ts';

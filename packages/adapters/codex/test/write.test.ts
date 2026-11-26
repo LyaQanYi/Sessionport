@@ -139,3 +139,61 @@ test('inferCodexHome 从 rollout 路径反推数据目录', () => {
   assert.equal(home, '/tmp/x/codex-home');
   assert.equal(inferCodexHome('/tmp/nowhere/file.jsonl'), undefined);
 });
+
+test('跨源工具归一：Claude Edit/Bash → apply_patch(custom)/exec_command，--raw-tools 可关闭', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'sessionport-codex-norm-'));
+  try {
+    const events = chain([
+      { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00Z', role: 'user', parts: [{ type: 'text', text: '改一下文件' }] },
+      {
+        kind: 'tool_call',
+        id: 'e2',
+        at: '2026-01-01T00:00:01Z',
+        callId: 'call_edit',
+        name: 'Edit',
+        input: { file_path: 'src/a.ts', old_string: 'old', new_string: 'new' },
+      },
+      { kind: 'tool_result', id: 'e3', at: '2026-01-01T00:00:02Z', callId: 'call_edit', content: [{ type: 'text', text: 'updated' }] },
+      { kind: 'tool_call', id: 'e4', at: '2026-01-01T00:00:03Z', callId: 'call_bash', name: 'Bash', input: { command: 'ls' } },
+      { kind: 'tool_result', id: 'e5', at: '2026-01-01T00:00:04Z', callId: 'call_bash', content: [{ type: 'text', text: 'a.ts' }] },
+    ] as Array<IrEventDraft>);
+    const bundle: IrBundle = {
+      ...makeBundle(events),
+      root: { ...makeBundle(events).root, source: { agent: 'claude-code', nativeSessionId: 'claude-src' } },
+    };
+
+    const idNorm = '44444444-4444-4444-8444-444444444444';
+    const report = await writeCodexSession(bundle, { home, cwd: TEST_CWD, id: idNorm });
+    assert.ok(report.losses.some((loss) => loss.code === 'codex.tool-normalized' && loss.count === 2));
+
+    const rows = readFileSync(report.filePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    const customCall = rows.find((r) => r.payload?.type === 'custom_tool_call');
+    const customOut = rows.find((r) => r.payload?.type === 'custom_tool_call_output');
+    const fnCall = rows.find((r) => r.payload?.type === 'function_call');
+    assert.equal(customCall?.payload?.name, 'apply_patch');
+    assert.ok(String(customCall?.payload?.input).startsWith('*** Begin Patch'));
+    assert.equal(customOut?.payload?.call_id, 'call_edit');
+    assert.equal(fnCall?.payload?.name, 'exec_command');
+    assert.equal(fnCall?.payload?.arguments, '{"cmd":"ls"}');
+
+    const verify = await verifyCodexSession({ filePath: report.filePath });
+    assert.equal(verify.ok, true, JSON.stringify(verify.checks));
+
+    const back = await readCodexSession(idNorm, { home });
+    const patchBack = back.root.events.find((e) => e.kind === 'tool_call' && e.callId === 'call_edit');
+    assert.ok(patchBack && patchBack.kind === 'tool_call');
+    assert.equal(typeof patchBack.input, 'string');
+    assert.ok(String(patchBack.input).startsWith('*** Begin Patch'));
+
+    const idRaw = '55555555-5555-4555-8555-555555555555';
+    const rawReport = await writeCodexSession(bundle, { home, cwd: TEST_CWD, id: idRaw, normalizeTools: false });
+    assert.ok(!rawReport.losses.some((loss) => loss.code === 'codex.tool-normalized'));
+    const rawRows = readFileSync(rawReport.filePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    const rawNames = rawRows
+      .filter((r) => r.payload?.type === 'function_call')
+      .map((r) => r.payload?.name);
+    assert.deepEqual(rawNames, ['Edit', 'Bash']);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});

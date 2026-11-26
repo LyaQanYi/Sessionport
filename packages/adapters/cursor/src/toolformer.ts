@@ -11,6 +11,7 @@
  * Cursor 3.25.9 workbench.desktop.main.js 的 protobuf-es 定义（makeMessageType）
  * 和真实库样本；证据与边界写在 research/cursor-toolformer.md。
  */
+import { classifyTool, renderTool } from '@sessionport/core';
 import type { IrContent } from '@sessionport/core';
 
 import { parseUnifiedDiff } from './diff.ts';
@@ -1375,8 +1376,24 @@ function toolExtension(
 export function buildCursorToolFormerData(
   call: CursorToolCallSpec,
   result: CursorToolResultSpec | undefined,
+  options?: { normalizeTools?: boolean },
 ): BuildToolFormerResult {
-  const definition = resolveCursorTool(call.name);
+  let definition = resolveCursorTool(call.name);
+  let effectiveInput: unknown = call.input;
+  let normalizedViaCore = false;
+  if (definition === undefined && options?.normalizeTools !== false) {
+    const classified = classifyTool(call.name, call.input);
+    const rendered = classified === undefined ? undefined : renderTool('generic', classified);
+    if (classified !== undefined && rendered !== undefined) {
+      const targetKind = classified.kind === 'list' ? 'list' : classified.kind;
+      const fallback = TOOL_DEFINITIONS.find((item) => item.kind === targetKind);
+      if (fallback !== undefined) {
+        definition = fallback;
+        effectiveInput = rendered.input;
+        normalizedViaCore = true;
+      }
+    }
+  }
   if (definition === undefined) {
     return {
       ok: false,
@@ -1391,9 +1408,9 @@ export function buildCursorToolFormerData(
       ],
     };
   }
-  let input = call.input === undefined ? undefined : recordOf(call.input);
-  if (input === undefined && typeof call.input === 'string') {
-    input = stringInput(definition.kind, call.input);
+  let input = effectiveInput === undefined ? undefined : recordOf(effectiveInput);
+  if (input === undefined && typeof effectiveInput === 'string') {
+    input = stringInput(definition.kind, effectiveInput);
   }
   let mapped = mapInput(definition.kind, input);
   if (mapped === undefined && definition.kind === 'write') {
@@ -1447,12 +1464,21 @@ export function buildCursorToolFormerData(
   const additional = data.additionalData;
   if (additional === undefined) delete data.additionalData;
 
+  const warnings = [...mappedResult.warnings];
+  if (normalizedViaCore) {
+    warnings.push({
+      code: 'cursor.tool-normalized',
+      message: '工具调用已改写为目标端原生工具（--raw-tools 可关闭）',
+      severity: 'info',
+    });
+  }
+
   return {
     ok: true,
     data,
     canonicalName: definition.cursorName,
     tool: definition.tool,
     status,
-    warnings: mappedResult.warnings,
+    warnings,
   };
 }

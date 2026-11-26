@@ -36,3 +36,4 @@ export type {
   OpencodeV2ToolError,
   OpencodeV2ToolState,
 } from './wire.ts';
+export { opencodeAdapter } from './adapter.ts';

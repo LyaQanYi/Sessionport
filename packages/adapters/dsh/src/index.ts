@@ -21,3 +21,4 @@ export {
 export type { ResolvedDshSession } from './paths.ts';
 export { decompressZstdJsonl, readZstdHeaderLine, readZstdJsonl, scanZstdFrames, writeZstdJsonl } from './zstd.ts';
 export type { WriteZstdOptions, WriteZstdResult, ZstdFrame, ZstdJsonl, ZstdScan } from './zstd.ts';
+export { dshAdapter } from './adapter.ts';

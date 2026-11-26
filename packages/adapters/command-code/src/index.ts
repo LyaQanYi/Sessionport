@@ -61,3 +61,4 @@ export type {
   CcCheckpoint,
   CcSessionPaths,
 } from './wire.ts';
+export { commandCodeAdapter } from './adapter.ts';

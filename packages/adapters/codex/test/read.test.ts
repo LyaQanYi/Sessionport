@@ -205,3 +205,52 @@ test('读取真实 Codex 会话：response_item 映射与双轨去重', { skip: 
 test('会话 id 找不到时给出明确错误', async () => {
   await assert.rejects(() => readCodexSession('00000000-0000-4000-8000-000000000000', { home: HOME }), /找不到 Codex 会话/);
 });
+
+test('fixture: custom_tool_call 与 custom_tool_call_output 读取并配对', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sessionport-codex-custom-'));
+  try {
+    const patch = '*** Begin Patch\n*** Add File: a.txt\n+hi\n*** End Patch';
+    const file = writeFixtureRollout(dir, [
+      {
+        timestamp: '2026-11-20T00:00:00.000Z',
+        type: 'session_meta',
+        payload: { id: '11111111-2222-4333-8444-555555555555', timestamp: '2026-11-20T00:00:00.000Z', cwd: '/tmp/codex-fixture', originator: 'codex_cli_rs', cli_version: '0.170.0' },
+      },
+      {
+        timestamp: '2026-11-20T00:00:01.000Z',
+        type: 'response_item',
+        payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '加个文件' }] },
+      },
+      {
+        timestamp: '2026-11-20T00:00:02.000Z',
+        type: 'response_item',
+        payload: { type: 'custom_tool_call', id: 'ctc_1', call_id: 'call_custom_1', status: 'completed', name: 'apply_patch', input: patch },
+      },
+      {
+        timestamp: '2026-11-20T00:00:03.000Z',
+        type: 'response_item',
+        payload: { type: 'custom_tool_call_output', id: 'ctco_1', call_id: 'call_custom_1', output: [{ type: 'input_text', text: 'Done' }] },
+      },
+    ]);
+
+    const bundle = await readCodexSession(file, { home: dir });
+    assert.deepEqual(validateIrBundle(bundle), []);
+    const call = bundle.root.events.find((e) => e.kind === 'tool_call');
+    const result = bundle.root.events.find((e) => e.kind === 'tool_result');
+    assert.equal(call?.kind, 'tool_call');
+    if (call?.kind === 'tool_call') {
+      assert.equal(call.name, 'apply_patch');
+      assert.equal(call.input, patch);
+      assert.equal(call.callId, 'call_custom_1');
+    }
+    assert.equal(result?.kind, 'tool_result');
+    if (result?.kind === 'tool_result') {
+      assert.deepEqual(result.content, [{ type: 'text', text: 'Done' }]);
+    }
+    assert.ok(!bundle.root.notices.some((n) => n.code === 'codex.unknown-line'));
+    assert.ok(!bundle.root.notices.some((n) => n.code === 'codex.tool-without-output'));
+    assert.ok(!bundle.root.notices.some((n) => n.code === 'codex.orphan-tool-result'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
