@@ -1,10 +1,33 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { bundleEventCount, describeDecision, eventKindCounts, findRef, listAllSessions, loadRegistry, planSync, saveRegistry, SESSION_AGENTS, sourceKeyOf, upsertRef, validateIrBundle } from '@sessionport/core';
-import type { AdapterWriteOutcome, AgentId, ExternalRef, SyncDecision } from '@sessionport/core';
+import {
+  applyUndo,
+  beginBackup,
+  buildDeltaAndMergedBundles,
+  bundleEventCount,
+  collectOutcomePaths,
+  describeDecision,
+  describeMergeBackDecision,
+  eventFingerprint,
+  eventKindCounts,
+  findRef,
+  latestUndoableRecord,
+  listAllSessions,
+  listHistory,
+  loadHistoryRecord,
+  loadRegistry,
+  planMergeBack,
+  planSync,
+  saveRegistry,
+  SESSION_AGENTS,
+  sourceKeyOf,
+  upsertRef,
+  validateIrBundle,
+} from '@sessionport/core';
+import type { AdapterWriteOutcome, AgentAdapter, AgentId, CursorUndoInfo, ExternalRef, HistoryAction, HistoryRecord, SyncDecision } from '@sessionport/core';
 import type { IrBundle, IrNotice } from '@sessionport/core';
 import { getAdapter, prefixTable, WRITE_TARGETS } from './adapters.ts';
 import { openTargetApp, planOfficialImport, officialSupport, verifyOfficialImport, type OfficialTarget } from './official.ts';
@@ -17,6 +40,10 @@ const USAGE = [
   '  sessionport pull <source> [--out ir.json]',
   '  sessionport push <source> --to <agent> [options]',
   '  sessionport sync <source> --to <agent> [options]   # 安全重推：不覆盖目标端新增内容',
+  '  sessionport merge-back <source> --from <agent> [options]',
+  '                        把目标端续写出来的新轮次增量合并回源会话（默认无损尾部追加）',
+  '  sessionport undo [<opId>] [--list] [--dry-run] [--state <dir>]',
+  '                        撤销最近一次（或指定 id）写操作，恢复被改写/新建的会话与 registry',
   '  sessionport verify --agent <agent> [options]',
   '  sessionport list [--agent <agent>] [--limit <n>] [--json]',
   '  sessionport import --into <zcode|qoder> <source> [--open] [--verify]',
@@ -64,7 +91,12 @@ const USAGE = [
   '  --into <app>           import 的目标 app：zcode | qoder | cursor（cursor 无官方导入）',
   '  --open                 import 时自动打开目标 app',
   '  --fork                 sync: 目标端有新增时另建一个目标会话，保留旧会话',
-  '  --state <dir>          registry 目录（默认 $SESSIONPORT_HOME 或 ~/.sessionport）',
+  '  --merge-back           sync: 目标端有新增时改为把目标新增内容合并回源会话',
+  '  --from <agent>         merge-back 的目标端 harness（也可用 --to）',
+  '  --target-home <dir>    merge-back 时目标端非默认数据目录（--home 为源端覆盖）',
+  '  --append-diverged      merge-back: 双方同步后都推进时仍写入（加 fork 边界）',
+  '  --list                 undo: 列出可撤销的操作历史',
+  '  --state <dir>          registry 与 history 目录（默认 $SESSIONPORT_HOME 或 ~/.sessionport）',
   '  --limit <n>            list: 最多显示多少条（默认 200）',
   '',
   'claude-code 专属:',
@@ -229,6 +261,134 @@ function printReport(report: {
   for (const loss of losses) process.stdout.write('  [' + loss.severity + '] ' + loss.code + ' x' + loss.count + ' — ' + loss.message + '\n');
 }
 
+async function readTargetBundle(
+  agent: AgentId,
+  targetId: string,
+  targetPath?: string,
+  targetHome?: string,
+): Promise<IrBundle> {
+  if (agent === 'cursor') {
+    const cursorInput = targetPath ? targetPath + '#' + targetId : targetId;
+    const adapter = await getAdapter('cursor');
+    if (!adapter?.read) fail('cursor adapter 缺少 read');
+    return adapter.read(cursorInput);
+  }
+  if (agent === 'opencode') {
+    if (targetHome !== undefined && targetHome.length > 0) {
+      const mod = await import('@sessionport/adapter-opencode');
+      const raw = await mod.exportOpencodeSession(targetId, { env: { XDG_DATA_HOME: targetHome } });
+      return mod.exportToBundle(raw);
+    }
+    const adapter = await getAdapter('opencode');
+    if (!adapter?.read) fail('opencode adapter 缺少 read');
+    return adapter.read(targetId);
+  }
+  const adapter = await getAdapter(agent);
+  if (!adapter?.read) fail('不支持读取目标 agent: ' + agent);
+  return adapter.read(targetPath ?? targetId);
+}
+
+function inferHomeFromPath(agent: AgentId, filePath: string | undefined): string | undefined {
+  if (!filePath) return undefined;
+  const abs = resolve(filePath);
+  if (agent === 'claude-code' || agent === 'command-code' || agent === 'qoder') {
+    // <home>/projects/<slug>/<id>.jsonl
+    return dirname(dirname(dirname(abs)));
+  }
+  if (agent === 'dsh') {
+    // <home>/sessions/<id>/session.v4.jsonl.zstd
+    return dirname(dirname(dirname(abs)));
+  }
+  if (agent === 'codex') {
+    // <home>/sessions/YYYY/MM/DD/rollout-*.jsonl
+    return dirname(dirname(dirname(dirname(dirname(abs)))));
+  }
+  return undefined;
+}
+
+function buildBackupCaveats(target: AgentId, opts: Record<string, unknown>): string[] {
+  const caveats: string[] = [];
+  if (target === 'opencode') {
+    caveats.push('opencode 会话写入共享数据库/外部进程，sessionport undo 仅还原 registry 而不回滚 opencode 库内消息');
+  }
+  if (opts.register === true || opts.registerWorkspace === true) {
+    caveats.push('--register 写入了目标应用索引（如 threads/session_index.jsonl/app-state.json/workspace.json），undo 不自动删除索引条目');
+  }
+  return caveats;
+}
+
+async function writeWithBackup(input: {
+  action: HistoryAction;
+  target: AgentId;
+  adapter: AgentAdapter & { write: NonNullable<AgentAdapter['write']> };
+  bundle: IrBundle;
+  opts: Record<string, unknown>;
+  sourceKey: string;
+  id?: string;
+  dryRun: boolean;
+  includeRegistry: boolean;
+  previewOutcome?: AdapterWriteOutcome;
+  afterWrite?: (outcome: AdapterWriteOutcome) => Promise<void> | void;
+}): Promise<{ outcome: AdapterWriteOutcome; backupRecord?: HistoryRecord }> {
+  if (input.dryRun) {
+    const outcome = await input.adapter.write(input.bundle, { ...input.opts, id: input.id, dryRun: true });
+    return { outcome };
+  }
+
+  const preview =
+    input.previewOutcome ??
+    (await input.adapter.write(input.bundle, { ...input.opts, id: input.id, dryRun: true }));
+  const lockedId = input.id ?? preview.targetId;
+  const lockedOpts: Record<string, unknown> = {
+    ...input.opts,
+    id: lockedId,
+    dryRun: false,
+    ...(input.target === 'codex' && typeof input.opts.targetPath !== 'string' && preview.paths[0]
+      ? { targetPath: preview.paths[0] }
+      : {}),
+  };
+
+  const plannedPaths =
+    input.target === 'cursor' || input.target === 'opencode' ? [] : collectOutcomePaths(preview);
+  const handle = beginBackup({
+    stateHome: typeof input.opts.stateHome === 'string' ? input.opts.stateHome : undefined,
+    action: input.action,
+    sourceKey: input.sourceKey,
+    target: input.target,
+    targetId: lockedId,
+    targetHome: typeof input.opts.home === 'string' ? input.opts.home : undefined,
+    plannedPaths,
+    includeRegistry: input.includeRegistry,
+    caveats: buildBackupCaveats(input.target, lockedOpts),
+  });
+
+  if (input.target === 'cursor' && lockedOpts.backupDir === undefined) {
+    lockedOpts.backupDir = handle.cursorBackupDir;
+  }
+
+  try {
+    const outcome = await input.adapter.write(input.bundle, lockedOpts);
+    if (input.afterWrite) await input.afterWrite(outcome);
+    const cursor: CursorUndoInfo | undefined =
+      input.target === 'cursor'
+        ? {
+            dbPath: outcome.paths[0] ?? '',
+            composerId: outcome.targetId,
+            ...(typeof outcome.report.backupPath === 'string' ? { backupPath: outcome.report.backupPath } : {}),
+          }
+        : undefined;
+    const backupRecord = handle.finalize({
+      targetId: outcome.targetId,
+      actualPaths: input.target === 'cursor' || input.target === 'opencode' ? [] : collectOutcomePaths(outcome),
+      ...(cursor !== undefined ? { cursor } : {}),
+    });
+    return { outcome, backupRecord };
+  } catch (error) {
+    handle.abort();
+    throw error;
+  }
+}
+
 async function cmdPush(source: string, values: Record<string, string | boolean | undefined>): Promise<void> {
   const to = typeof values.to === 'string' ? values.to : '';
   if (!to) fail('push 需要 --to <agent>（' + WRITE_TARGETS.join(' / ') + '）');
@@ -247,10 +407,26 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
     writeFileSync(values['write-ir'] as string, JSON.stringify(bundle, null, 2) + '\n', 'utf8');
   }
   const opts = commonTargetOptions(values);
-  const outcome = await adapter.write(bundle, opts);
+  opts.stateHome = typeof values.state === 'string' ? values.state : undefined;
+  const sourceKey = sourceKeyOf(bundle.root.source, bundle.root.id);
+  const id = typeof opts.id === 'string' ? opts.id : undefined;
+  const dryRun = Boolean(values['dry-run']);
+  const { outcome, backupRecord } = await writeWithBackup({
+    action: 'push',
+    target: to as AgentId,
+    adapter: adapter as AgentAdapter & { write: NonNullable<AgentAdapter['write']> },
+    bundle,
+    opts,
+    sourceKey,
+    id,
+    dryRun,
+    includeRegistry: false,
+  });
 
   if (values.json) {
-    process.stdout.write(JSON.stringify(outcome.report, null, 2) + '\n');
+    process.stdout.write(
+      JSON.stringify({ ...outcome.report, ...(backupRecord ? { backupId: backupRecord.id } : {}) }, null, 2) + '\n',
+    );
     return;
   }
   const report: Parameters<typeof printReport>[0] = {
@@ -260,6 +436,9 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
     paths: outcome.paths,
   };
   printReport(report);
+  if (backupRecord) {
+    process.stdout.write('backup      ' + backupRecord.id + '  (可用 sessionport undo 回滚)\n');
+  }
   printNotices(bundle.root.notices);
   process.stdout.write('\n下一步: 用目标 agent 打开/继续这个会话（' + report.paths[0] + '）\n');
 }
@@ -289,16 +468,30 @@ async function countTarget(
 async function cmdSync(source: string, values: Record<string, string | boolean | undefined>): Promise<void> {
   const to = typeof values.to === 'string' ? values.to : '';
   if (!to) fail('sync 需要 --to <agent>（claude-code / command-code / dsh）');
+  if (values['merge-back'] === true) {
+    await cmdMergeBack(source, {
+      ...values,
+      from: to,
+      'target-home': values['target-home'] ?? values.home,
+      home: undefined,
+    });
+    return;
+  }
+  const adapter = await getAdapter(to);
+  if (!adapter?.write) fail('不支持的目标 agent: ' + to);
+  const detected = detectSource(source);
   const bundle = await loadBundle(source);
   const opts = commonTargetOptions(values);
   const stateHome = typeof values.state === 'string' ? values.state : undefined;
+  opts.stateHome = stateHome;
   const registry = loadRegistry(stateHome);
   const sourceKey = sourceKeyOf(bundle.root.source, bundle.root.id);
   const ref: ExternalRef | undefined = findRef(registry, sourceKey, to as never);
   if (ref !== undefined) opts.targetPath = ref.targetPath;
 
   // 用 dry-run 先算出「如果现在写，会写到哪、有多少单位」
-  const preview = await writeTarget(to, bundle, opts, ref?.targetId ?? (typeof opts.id === 'string' ? opts.id : undefined), true);
+  const targetIdInput = ref?.targetId ?? (typeof opts.id === 'string' ? opts.id : undefined);
+  const preview = await writeTarget(to, bundle, opts, targetIdInput, true);
   const current = await countTarget(to, preview, opts);
 
   const decision: SyncDecision = planSync({
@@ -317,8 +510,9 @@ async function cmdSync(source: string, values: Record<string, string | boolean |
   if (diverged && !force && !fork) {
     process.stderr.write(
       '\n拒绝写入：目标端在上次同步后新增了 ' + decision.targetExtra + ' 单位。\n' +
-      '  --fork   另建目标会话，保留旧会话（推荐）\n' +
-      '  --force  直接覆盖（目标端新增内容会丢）\n',
+      '  --fork        另建目标会话，保留旧会话（推荐）\n' +
+      '  --merge-back  把目标端新增对话增量合并回源会话\n' +
+      '  --force       直接覆盖（目标端新增内容会丢）\n',
     );
     process.exit(2);
   }
@@ -328,35 +522,368 @@ async function cmdSync(source: string, values: Record<string, string | boolean |
   }
 
   const useFork = diverged && fork;
-  const targetId = useFork ? undefined : (ref?.targetId ?? (typeof opts.id === 'string' ? opts.id : undefined));
-  if (useFork) process.stdout.write('fork      为当前源快照新建目标会话（旧会话保持不动）\n');
+  const targetId = useFork ? undefined : targetIdInput;
+  if (useFork) {
+    process.stdout.write('fork      为当前源快照新建目标会话（旧会话保持不动）\n');
+    delete opts.targetPath;
+  }
 
-  // 只新增型目标（cursor/qoder）在 refresh/fork 覆盖时需要显式允许
+  // 只新增型目标（cursor/qoder）在 refresh/force 覆盖时需要显式允许
   if (to === 'cursor') {
     opts.confirmReal = true;
     opts.allowOverwrite = true;
   }
   if (to === 'qoder') opts.overwrite = true;
 
-  const outcome = await writeTarget(to, bundle, opts, targetId, false);
+  const dryRun = Boolean(values['dry-run']);
+  let savedRegistryFile = '';
+  const targetHome = typeof opts.home === 'string' ? opts.home : undefined;
+  const sourcePath = bundle.root.source.nativePath ?? (detected.kind === 'ir' ? undefined : detected.target);
+  const { outcome, backupRecord } = await writeWithBackup({
+    action: 'sync',
+    target: to as AgentId,
+    adapter: adapter as AgentAdapter & { write: NonNullable<AgentAdapter['write']> },
+    bundle,
+    opts,
+    sourceKey,
+    id: targetId,
+    dryRun,
+    includeRegistry: true,
+    previewOutcome: useFork ? undefined : preview,
+    afterWrite: async (written) => {
+      let targetIrEvents: number | undefined;
+      let targetIrHead: string | null | undefined;
+      let targetIrHeadHash: string | null | undefined;
+      const writtenPath = written.paths[0] ? resolve(written.paths[0]) : '';
+      try {
+        const readBack = await readTargetBundle(to as AgentId, written.targetId, writtenPath, targetHome);
+        targetIrEvents = readBack.root.events.length;
+        targetIrHead = readBack.root.head;
+        targetIrHeadHash = eventFingerprint(readBack.root.events.at(-1));
+      } catch {
+        // 无法回读目标（如 opencode 未安装）时留空，merge-back 自动回退内容指纹定位
+      }
+      const nextRef: ExternalRef = {
+        sourceKey,
+        target: to as never,
+        targetId: written.targetId,
+        targetPath: writtenPath,
+        unit: written.unit,
+        targetUnits: written.units,
+        sourceEvents: bundle.root.events.length,
+        sourceHead: bundle.root.head,
+        updatedAt: new Date().toISOString(),
+        sourceAgent: bundle.root.source.agent,
+        ...(sourcePath !== undefined ? { sourcePath } : {}),
+        ...(targetHome !== undefined ? { targetHome } : {}),
+        ...(targetIrEvents !== undefined ? { targetIrEvents } : {}),
+        ...(targetIrHead !== undefined ? { targetIrHead } : {}),
+        ...(targetIrHeadHash !== undefined ? { targetIrHeadHash } : {}),
+      };
+      upsertRef(registry, nextRef);
+      savedRegistryFile = saveRegistry(registry, stateHome);
+    },
+  });
+
   printReport(outcome.report as Parameters<typeof printReport>[0]);
   printNotices(bundle.root.notices);
+  if (dryRun) {
+    process.stdout.write('\n[dry-run] 未实际写入，未更新 registry。\n');
+    return;
+  }
+  const latestRef = findRef(registry, sourceKey, to as never);
+  process.stdout.write('\nregistry    ' + savedRegistryFile + '\n');
+  if (backupRecord) process.stdout.write('backup      ' + backupRecord.id + '  (可用 sessionport undo 回滚)\n');
+  if (latestRef) {
+    process.stdout.write('已记录同步状态：sourceHead=' + (latestRef.sourceHead ?? '-') + ' sourceEvents=' + latestRef.sourceEvents + ' targetUnits=' + latestRef.targetUnits + '\n');
+  }
+}
 
-  const nextRef: ExternalRef = {
+async function cmdUndo(values: Record<string, string | boolean | undefined>, positionals: string[]): Promise<void> {
+  const stateHome = typeof values.state === 'string' ? values.state : undefined;
+  const limit = typeof values.limit === 'string' ? Number(values.limit) : 20;
+  if (values.list === true) {
+    const records = listHistory(stateHome, Number.isFinite(limit) && limit > 0 ? limit : 20);
+    if (values.json) {
+      process.stdout.write(JSON.stringify(records, null, 2) + '\n');
+      return;
+    }
+    if (records.length === 0) {
+      process.stdout.write('暂无备份历史记录。\n');
+      return;
+    }
+    for (const r of records) {
+      const stateTag = r.undoneAt ? 'undone' : 'active';
+      process.stdout.write(
+        r.id + '  [' + stateTag + ']  ' + r.action + '  ' + r.sourceKey + ' -> ' + r.target + ':' + r.targetId +
+        '  files=' + r.files.length + (r.cursor ? '  cursor' : '') + '\n',
+      );
+    }
+    return;
+  }
+
+  const targetOpId = positionals[0];
+  const record = targetOpId ? loadHistoryRecord(targetOpId, stateHome) : latestUndoableRecord(stateHome);
+  if (!record) {
+    fail(targetOpId ? '找不到备份记录: ' + targetOpId : '没有可撤销的操作记录');
+  }
+
+  const dryRun = Boolean(values['dry-run']);
+  const result = await applyUndo(record, {
+    stateHome,
+    dryRun,
+    restoreCursor: async (backupPath) => {
+      const mod = await import('@sessionport/adapter-cursor');
+      mod.restoreCursorBackup(backupPath);
+    },
+  });
+
+  if (values.json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return;
+  }
+  process.stdout.write('undo        ' + result.opId + (result.dryRun ? '  [dry-run]' : '') + '\n');
+  process.stdout.write('restored    ' + result.restoredFiles.length + ' files\n');
+  for (const p of result.restoredFiles) process.stdout.write('  ↺ ' + p + '\n');
+  process.stdout.write('deleted     ' + result.deletedFiles.length + ' files\n');
+  for (const p of result.deletedFiles) process.stdout.write('  ✕ ' + p + '\n');
+  if (result.missingFiles.length > 0) {
+    process.stdout.write('missing     ' + result.missingFiles.length + ' files（已不存在）\n');
+  }
+  if (result.registryRestored) process.stdout.write('registry    已还原\n');
+  if (result.registryDeleted) process.stdout.write('registry    已删除（操作前不存在）\n');
+  if (result.cursorRestored) process.stdout.write('cursor      已事务级还原 composerHeaders 与 cursorDiskKV\n');
+  for (const c of result.caveats) process.stdout.write('note        ' + c + '\n');
+}
+
+async function cmdMergeBack(source: string, values: Record<string, string | boolean | undefined>): Promise<void> {
+  const from = typeof values.from === 'string' ? values.from : typeof values.to === 'string' ? values.to : '';
+  if (!from) fail('merge-back 需要 --from <target>（也可用 --to <target>）');
+
+  const detected = detectSource(source);
+  if (detected.kind === 'ir') {
+    fail('merge-back 需要原生可写源会话，不能直接合并回裸 IR 文件');
+  }
+  const sourceBundle = await loadBundle(source);
+  const sourceAgent = sourceBundle.root.source.agent;
+  const sourceAdapter = await getAdapter(sourceAgent);
+  const sourceWritable = Boolean(sourceAdapter?.write);
+
+  const stateHome = typeof values.state === 'string' ? values.state : undefined;
+  const registry = loadRegistry(stateHome);
+  const sourceKey = sourceKeyOf(sourceBundle.root.source, sourceBundle.root.id);
+  const ref = findRef(registry, sourceKey, from as AgentId);
+
+  if (ref === undefined) {
+    const decision = planMergeBack({
+      ref: undefined,
+      source: sourceBundle.root,
+      target: sourceBundle.root,
+      sourceWritable,
+    });
+    if (values.json) process.stdout.write(JSON.stringify({ decision: decision.kind, message: describeMergeBackDecision(decision) }, null, 2) + '\n');
+    fail(describeMergeBackDecision(decision));
+  }
+
+  const targetHome = typeof values['target-home'] === 'string' ? values['target-home'] : ref.targetHome;
+  const targetBundle = await readTargetBundle(from as AgentId, ref.targetId, ref.targetPath, targetHome);
+  const decision = planMergeBack({
+    ref,
+    source: sourceBundle.root,
+    target: targetBundle.root,
+    sourceWritable,
+  });
+
+  if (!values.json) {
+    process.stdout.write('source      ' + sourceKey + '  events=' + sourceBundle.root.events.length + '  head=' + (sourceBundle.root.head ?? '-') + '\n');
+    process.stdout.write('from        ' + from + ':' + ref.targetId + '  events=' + targetBundle.root.events.length + '\n');
+    process.stdout.write('decision    ' + describeMergeBackDecision(decision) + '\n');
+  }
+
+  if (decision.kind === 'source-read-only' || decision.kind === 'unanchored') {
+    if (values.json) process.stdout.write(JSON.stringify({ decision: decision.kind, message: describeMergeBackDecision(decision) }, null, 2) + '\n');
+    fail(describeMergeBackDecision(decision));
+  }
+  if (decision.kind === 'up-to-date') {
+    if (values.json) process.stdout.write(JSON.stringify({ decision: decision.kind, mergedEvents: 0 }, null, 2) + '\n');
+    return;
+  }
+
+  const appendDiverged = values['append-diverged'] === true;
+  if (decision.kind === 'both-changed' && !appendDiverged) {
+    const msg = describeMergeBackDecision(decision);
+    if (values.json) {
+      process.stdout.write(JSON.stringify({ decision: decision.kind, refused: true, deltaEvents: decision.deltaEvents.length, sourceDelta: decision.sourceDelta, message: msg }, null, 2) + '\n');
+    } else {
+      process.stderr.write('\n拒绝回写：' + msg + '\n');
+    }
+    process.exit(2);
+  }
+  if (decision.kind !== 'fast-forward' && decision.kind !== 'both-changed') return;
+  const deltaEvents = decision.deltaEvents;
+  const decisionKind = decision.kind;
+
+  const built = buildDeltaAndMergedBundles({
+    sourceBundle,
+    targetAgent: from as AgentId,
+    targetId: ref.targetId,
+    deltaEvents,
+    normalizeTools: values['raw-tools'] !== true,
+    includeDivergedBoundary: decisionKind === 'both-changed',
+  });
+
+  const sourcePath = sourceBundle.root.source.nativePath ?? ref.sourcePath ?? (existsSync(detected.target) ? resolve(detected.target) : undefined);
+  const explicitSourceHome = typeof values.home === 'string' ? values.home : typeof values['config-dir'] === 'string' ? values['config-dir'] : undefined;
+  const sourceHome = explicitSourceHome ?? ref.sourceHome ?? inferHomeFromPath(sourceAgent, sourcePath);
+  const sourceId = sourceBundle.root.source.nativeSessionId ?? sourceBundle.root.id;
+  const canAppend = Boolean(sourceAdapter?.appendDelta && sourcePath && existsSync(sourcePath));
+  const strategy = canAppend ? 'appendDelta' : 'rewrite';
+  const dryRun = Boolean(values['dry-run']);
+
+  if (dryRun) {
+    if (values.json) {
+      process.stdout.write(
+        JSON.stringify({ dryRun: true, decision: decisionKind, strategy, deltaEvents: deltaEvents.length, losses: built.losses, sourcePath }, null, 2) + '\n',
+      );
+    } else {
+      process.stdout.write('strategy    ' + strategy + ' (dry-run)\n');
+      process.stdout.write('delta       ' + deltaEvents.length + ' events -> ' + (sourcePath ?? sourceId) + '\n');
+    }
+    return;
+  }
+
+  let plannedPaths: string[] = [];
+  if (sourceAgent !== 'cursor' && sourceAgent !== 'opencode') {
+    if (strategy === 'appendDelta' && sourcePath) {
+      plannedPaths = [sourcePath];
+    } else {
+      const previewWrite = await sourceAdapter!.write!(built.mergedBundle, {
+        id: sourceId,
+        home: sourceHome,
+        cwd: sourceBundle.root.meta.cwd,
+        targetPath: sourcePath,
+        includeChildren: sourceBundle.children.length > 0,
+        normalizeTools: false,
+        dryRun: true,
+      });
+      plannedPaths = collectOutcomePaths(previewWrite);
+      if (sourcePath && !plannedPaths.includes(resolve(sourcePath))) plannedPaths.unshift(resolve(sourcePath));
+    }
+  }
+
+  const handle = beginBackup({
+    stateHome,
+    action: 'merge-back',
     sourceKey,
-    target: to as never,
-    targetId: outcome.targetId,
-    targetPath: resolve(outcome.paths[0]!),
-    unit: outcome.unit,
-    targetUnits: outcome.units,
-    sourceEvents: bundle.root.events.length,
-    sourceHead: bundle.root.head,
-    updatedAt: new Date().toISOString(),
-  };
-  upsertRef(registry, nextRef);
-  const registryFile = saveRegistry(registry, stateHome);
-  process.stdout.write('\nregistry    ' + registryFile + '\n');
-  process.stdout.write('已记录同步状态：sourceHead=' + (nextRef.sourceHead ?? '-') + ' sourceEvents=' + nextRef.sourceEvents + ' targetUnits=' + nextRef.targetUnits + '\n');
+    target: sourceAgent,
+    targetId: sourceId,
+    targetHome: sourceHome,
+    plannedPaths,
+    includeRegistry: true,
+    caveats: buildBackupCaveats(sourceAgent, {}),
+  });
+
+  try {
+    const outcome =
+      strategy === 'appendDelta'
+        ? await sourceAdapter!.appendDelta!(sourcePath!, built.deltaBundle, {
+            id: sourceId,
+            home: sourceHome,
+            cwd: sourceBundle.root.meta.cwd,
+            model: sourceBundle.root.meta.model,
+            normalizeTools: false,
+            dryRun: false,
+          })
+        : await sourceAdapter!.write!(built.mergedBundle, {
+            id: sourceId,
+            home: sourceHome,
+            dbPath: sourceAgent === 'cursor' ? sourcePath : undefined,
+            targetPath: sourcePath,
+            cwd: sourceBundle.root.meta.cwd,
+            model: sourceBundle.root.meta.model,
+            includeChildren: sourceBundle.children.length > 0,
+            allowOverwrite: true,
+            overwrite: true,
+            confirmReal: true,
+            backupDir: handle.cursorBackupDir,
+            normalizeTools: false,
+            dryRun: false,
+          });
+
+    const writtenSourcePath = outcome.paths[0] ? resolve(outcome.paths[0]) : sourcePath;
+    const updatedSource = await readTargetBundle(sourceAgent, outcome.targetId, writtenSourcePath, sourceHome);
+    const countedTarget = await countTarget(
+      from,
+      {
+        target: from as AgentId,
+        targetId: ref.targetId,
+        paths: ref.targetPath ? [ref.targetPath] : [],
+        unit: ref.unit,
+        units: ref.targetUnits,
+        report: {},
+      },
+      { home: targetHome, targetPath: ref.targetPath },
+    );
+
+    const nextRef: ExternalRef = {
+      ...ref,
+      sourceAgent,
+      ...(writtenSourcePath !== undefined ? { sourcePath: writtenSourcePath } : {}),
+      ...(sourceHome !== undefined ? { sourceHome } : {}),
+      ...(targetHome !== undefined ? { targetHome } : {}),
+      targetUnits: countedTarget.exists ? countedTarget.units : ref.targetUnits,
+      sourceEvents: updatedSource.root.events.length,
+      sourceHead: updatedSource.root.head,
+      targetIrEvents: targetBundle.root.events.length,
+      targetIrHead: targetBundle.root.head,
+      targetIrHeadHash: eventFingerprint(targetBundle.root.events.at(-1)),
+      updatedAt: new Date().toISOString(),
+    };
+    upsertRef(registry, nextRef);
+    const registryFile = saveRegistry(registry, stateHome);
+
+    const cursor: CursorUndoInfo | undefined =
+      sourceAgent === 'cursor'
+        ? {
+            dbPath: outcome.paths[0] ?? '',
+            composerId: outcome.targetId,
+            ...(typeof outcome.report.backupPath === 'string' ? { backupPath: outcome.report.backupPath } : {}),
+          }
+        : undefined;
+    const backupRecord = handle.finalize({
+      targetId: outcome.targetId,
+      actualPaths: sourceAgent === 'cursor' || sourceAgent === 'opencode' ? [] : collectOutcomePaths(outcome),
+      ...(cursor !== undefined ? { cursor } : {}),
+    });
+
+    const allLosses = [...built.losses, ...((outcome.report.losses ?? []) as typeof built.losses)];
+    if (values.json) {
+      process.stdout.write(
+        JSON.stringify(
+          {
+            decision: decisionKind,
+            strategy,
+            mergedEvents: deltaEvents.length,
+            sourcePath: writtenSourcePath,
+            backupId: backupRecord.id,
+            losses: allLosses,
+            registryFile,
+          },
+          null,
+          2,
+        ) + '\n',
+      );
+      return;
+    }
+
+    process.stdout.write('strategy    ' + strategy + '\n');
+    process.stdout.write('merged      ' + deltaEvents.length + ' events -> ' + (writtenSourcePath ?? sourceId) + '\n');
+    process.stdout.write('registry    ' + registryFile + '\n');
+    process.stdout.write('backup      ' + backupRecord.id + '  (可用 sessionport undo 回滚)\n');
+  } catch (error) {
+    handle.abort();
+    throw error;
+  }
 }
 
 
@@ -682,6 +1209,11 @@ async function main(): Promise<void> {
       resume: { type: 'boolean' },
       force: { type: 'boolean' },
       fork: { type: 'boolean' },
+      'merge-back': { type: 'boolean' },
+      from: { type: 'string' },
+      'target-home': { type: 'string' },
+      'append-diverged': { type: 'boolean' },
+      list: { type: 'boolean' },
       state: { type: 'string' },
       limit: { type: 'string' },
       json: { type: 'boolean' },
@@ -722,6 +1254,16 @@ async function main(): Promise<void> {
     const source = positionals[0];
     if (!source) fail('sync 需要 <source>');
     await cmdSync(source, values);
+    return;
+  }
+  if (command === 'merge-back') {
+    const source = positionals[0];
+    if (!source) fail('merge-back 需要 <source>');
+    await cmdMergeBack(source, values);
+    return;
+  }
+  if (command === 'undo') {
+    await cmdUndo(values, positionals);
     return;
   }
   if (command === 'verify') {
