@@ -173,3 +173,53 @@ test('normalizeToolCall：skipped / native / normalized / unmapped 四路径', (
     { name: 'exec', input: 'console.log(1)', status: 'unmapped' },
   );
 });
+
+test('classifyTool 与 renderTool：覆盖 Antigravity 8 种原生工具并归一到 claude-code / codex', () => {
+  const sh = classifyTool('run_command', { CommandLine: 'npm test', Cwd: '/repo', WaitMsBeforeAsync: 5000, toolSummary: 'Run tests' })!;
+  assert.deepEqual(sh, { kind: 'shell', command: 'npm test', cwd: '/repo', timeoutMs: 5000, description: 'Run tests' });
+  assert.deepEqual(renderTool('claude-code', sh), { name: 'Bash', input: { command: 'npm test', timeout: 5000, description: 'Run tests' } });
+
+  const rf = classifyTool('read_file', { Path: '/repo/a.ts', StartLine: 10, EndLine: 14 })!;
+  assert.deepEqual(rf, { kind: 'read', path: '/repo/a.ts', offset: 10, limit: 5 });
+  assert.deepEqual(renderTool('claude-code', rf), { name: 'Read', input: { file_path: '/repo/a.ts', offset: 10, limit: 5 } });
+
+  const vf = classifyTool('view_file', { AbsolutePath: '/repo/b.ts', StartLine: 1, EndLine: 3 })!;
+  assert.deepEqual(vf, { kind: 'read', path: '/repo/b.ts', offset: 1, limit: 3 });
+
+  const wf = classifyTool('write_file', { Path: '/repo/c.ts', Content: 'export const x = 1;\n' })!;
+  assert.deepEqual(wf, { kind: 'write', path: '/repo/c.ts', content: 'export const x = 1;\n' });
+  assert.deepEqual(renderTool('claude-code', wf), { name: 'Write', input: { file_path: '/repo/c.ts', content: 'export const x = 1;\n' } });
+
+  const wtf = classifyTool('write_to_file', { TargetFile: '/repo/d.ts', CodeContent: 'hi' })!;
+  assert.deepEqual(wtf, { kind: 'write', path: '/repo/d.ts', content: 'hi' });
+
+  const ef = classifyTool('edit_file', { Path: '/repo/a.ts', Target: 'old\nline', Replacement: 'new\nline' })!;
+  assert.deepEqual(ef, { kind: 'edit', path: '/repo/a.ts', oldText: 'old\nline', newText: 'new\nline' });
+  assert.equal(renderTool('codex', ef)?.name, 'apply_patch');
+
+  const rfc = classifyTool('replace_file_content', { TargetFile: '/repo/a.ts', TargetContent: 'a', ReplacementContent: 'b' })!;
+  assert.deepEqual(rfc, { kind: 'edit', path: '/repo/a.ts', oldText: 'a', newText: 'b' });
+
+  const gs = classifyTool('grep_search', { Query: 'TODO', SearchPath: 'src', CaseInsensitive: true })!;
+  assert.deepEqual(gs, { kind: 'grep', pattern: 'TODO', path: 'src', caseInsensitive: true });
+  assert.deepEqual(renderTool('claude-code', gs), { name: 'Grep', input: { pattern: 'TODO', path: 'src', '-i': true } });
+
+  const fb = classifyTool('find_by_name', { Pattern: '*.ts', SearchDirectory: 'packages' })!;
+  assert.deepEqual(fb, { kind: 'glob', pattern: '*.ts', path: 'packages' });
+  assert.deepEqual(renderTool('claude-code', fb), { name: 'Glob', input: { pattern: '*.ts', path: 'packages' } });
+
+  const ld = classifyTool('list_dir', { DirectoryPath: 'packages/core' })!;
+  assert.deepEqual(ld, { kind: 'list', path: 'packages/core' });
+
+  const us = classifyTool('update_steps', { steps: [{ title: 'Step one', status: 'done' }, { title: 'Step two', status: 'in_progress' }] })!;
+  assert.deepEqual(us, { kind: 'todo', todos: [{ content: 'Step one', status: 'completed' }, { content: 'Step two', status: 'in_progress' }] });
+  assert.deepEqual(renderTool('claude-code', us), {
+    name: 'TodoWrite',
+    input: {
+      todos: [
+        { content: 'Step one', status: 'completed', activeForm: 'Step one' },
+        { content: 'Step two', status: 'in_progress', activeForm: 'Step two' },
+      ],
+    },
+  });
+});

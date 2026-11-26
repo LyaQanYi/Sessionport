@@ -18,7 +18,7 @@ import {
 } from '../src/main/services.ts';
 
 test('capabilities：可读/可写 agent 列表', () => {
-  assert.deepEqual(readableAgents().sort(), ['claude-code', 'codex', 'command-code', 'cursor', 'dsh', 'kimi-code', 'opencode', 'qoder', 'workbuddy'].sort());
+  assert.deepEqual(readableAgents().sort(), ['antigravity', 'claude-code', 'codex', 'command-code', 'cursor', 'dsh', 'kimi-code', 'opencode', 'qoder', 'workbuddy'].sort());
   assert.deepEqual(writableAgents().sort(), ['claude-code', 'command-code', 'codex', 'cursor', 'dsh', 'opencode', 'qoder'].sort());
 });
 
@@ -323,6 +323,62 @@ test('desktop merge-back: Claude -> Codex 同步后 Codex 续写 -> preview/runM
     // undo merge-back 后字节级还原回原文件
     await undoBackup(mbRun.backupId, { stateHome });
     assert.deepEqual(readFileSync(claudeFile), originalBytes);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('antigravity：桌面端 readSession 与 previewMigration 触发跨源工具归一', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sessionport-desktop-agy-'));
+  try {
+    const convId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const transcriptPath = join(dir, 'antigravity', 'brain', convId, '.system_generated', 'logs', 'transcript_full.jsonl');
+    mkdirSync(dirname(transcriptPath), { recursive: true });
+    writeFileSync(
+      transcriptPath,
+      [
+        {
+          step_index: 0,
+          type: 'USER_INPUT',
+          status: 'DONE',
+          created_at: '2026-11-26T04:00:00Z',
+          content: '<USER_REQUEST>\n检查构建状态\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nignored\n</ADDITIONAL_METADATA>',
+        },
+        {
+          step_index: 1,
+          type: 'PLANNER_RESPONSE',
+          status: 'DONE',
+          created_at: '2026-11-26T04:00:01Z',
+          model: 'gemini-4-neon',
+          thinking: '先读取 package.json。',
+          content: '我来检查构建文件。',
+          tool_calls: [{ name: 'read_file', args: { Path: '/repo/package.json', StartLine: 1, EndLine: 20 } }],
+        },
+        {
+          step_index: 2,
+          type: 'GENERIC',
+          status: 'DONE',
+          created_at: '2026-11-26T04:00:02Z',
+          content: 'Created At: 2026-11-26T12:00:02+08:00\n{"name":"demo"}',
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join('\n') + '\n',
+      'utf8',
+    );
+
+    const read = await readSession('antigravity', { nativePath: transcriptPath, sessionId: convId });
+    assert.equal(read.agent, 'antigravity');
+    assert.equal(read.sessionId, convId);
+    assert.ok(read.events.some((event) => event.kind === 'message' && event.role === 'user' && event.text === '检查构建状态'));
+    assert.ok(read.events.some((event) => event.kind === 'tool_call' && event.toolName === 'read_file'));
+
+    const preview = await previewMigration('antigravity', { nativePath: transcriptPath, sessionId: convId }, 'claude-code', {
+      stateHome: join(dir, 'state'),
+      home: join(dir, 'claude-dst'),
+    });
+    assert.equal(preview.target, 'claude-code');
+    assert.ok(preview.losses.some((loss) => loss.code === 'claude.tool-normalized'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

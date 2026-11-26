@@ -33,6 +33,7 @@
     "typescript": "^5.9.0",
     "vite": "^7.0.0",
     "@sessionport/core": "workspace:*",
+    "@sessionport/adapter-antigravity": "workspace:*",
     "@sessionport/adapter-claude-code": "workspace:*",
     "@sessionport/adapter-command-code": "workspace:*",
     "@sessionport/adapter-codex": "workspace:*",

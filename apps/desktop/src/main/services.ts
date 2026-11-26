@@ -1056,6 +1056,13 @@ export function pathsInfo(): PathsInfo {
     cursor: { label: 'Cursor', path: join(home, 'Library', 'Application Support', 'Cursor') },
     qoder: { label: 'Qoder', path: join(home, '.qoder-cn') },
     workbuddy: { label: 'WorkBuddy', path: join(home, '.workbuddy') },
+    antigravity: {
+      label: 'Antigravity',
+      path:
+        !existsSync(join(home, '.gemini', 'antigravity')) && existsSync(join(home, '.gemini', 'antigravity-cli'))
+          ? join(home, '.gemini', 'antigravity-cli')
+          : join(home, '.gemini', 'antigravity'),
+    },
   };
   const registryDir = sessionportHome();
   return {
@@ -1080,6 +1087,8 @@ export function detectHomes(): Record<string, boolean> {
     cursor: existsSync(join(home, 'Library', 'Application Support', 'Cursor')),
     qoder: existsSync(join(home, '.qoder-cn')),
     workbuddy: existsSync(join(home, '.workbuddy')),
+    antigravity:
+      existsSync(join(home, '.gemini', 'antigravity')) || existsSync(join(home, '.gemini', 'antigravity-cli')),
   };
 }
 /** 官方导入支持矩阵（ZCode/Qoder 有，Cursor 没有） */

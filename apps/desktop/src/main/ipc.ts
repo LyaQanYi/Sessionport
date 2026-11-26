@@ -32,6 +32,7 @@ const agentSchema = z.enum([
   'cursor',
   'qoder',
   'workbuddy',
+  'antigravity',
 ]);
 
 const migrateInputSchema = z.object({
@@ -117,7 +118,7 @@ const channelSchemas = {
   }).default({}),
   'app:capabilities': z.object({}).default({}),
   'app:paths': z.object({}).default({}),
-  'app:openPath': z.object({ key: z.enum(['kimi', 'claude', 'commandCode', 'dsh', 'codex', 'opencode', 'cursor', 'qoder', 'workbuddy', 'registry']) }),
+  'app:openPath': z.object({ key: z.enum(['kimi', 'claude', 'commandCode', 'dsh', 'codex', 'opencode', 'cursor', 'qoder', 'workbuddy', 'antigravity', 'registry']) }),
   'official:list': z.object({}).default({}),
   'official:verify': z.object({ target: z.enum(['zcode', 'qoder', 'cursor']), cwd: z.string().optional(), title: z.string().optional() }),
   'official:open': z.object({ target: z.enum(['zcode', 'qoder', 'cursor']) }),

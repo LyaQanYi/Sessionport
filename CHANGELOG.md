@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
+## [Unreleased]
+
+### Added
+
+- **Antigravity read-only source adapter (CLI + Desktop).** Added
+  `packages/adapters/antigravity` (`antigravity:` / `agy:` prefixes), merging
+  `~/.gemini/antigravity` (App/IDE) and `~/.gemini/antigravity-cli` (`agy` CLI) transcripts
+  (`transcript_full.jsonl` with `transcript.jsonl` fallback), SQLite summaries/archive/parent
+  links, `.pbtxt` annotation titles, `invoke_subagent` + swarm children, structural
+  verification (`verify --agent antigravity`), and tool normalization (`run_command`,
+  `read_file`/`view_file`, `write_file`/`write_to_file`, `edit_file`/`replace_file_content`,
+  `grep_search`, `find_by_name`, `list_dir`, `update_steps`).
+
 ## [0.1.13] — 2026-11-26
 
 npm: `sesport@0.1.13` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the

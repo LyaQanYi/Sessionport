@@ -73,6 +73,7 @@ export const SESSION_AGENTS: readonly AgentId[] = [
   'cursor',
   'qoder',
   'workbuddy',
+  'antigravity',
 ];
 
 export const DEFAULT_SESSION_LIMIT = 200;
@@ -147,6 +148,10 @@ async function loadBuiltinLister(agent: AgentId): Promise<SessionLister> {
     case 'workbuddy': {
       const mod = await import('../../adapters/workbuddy/src/index.ts');
       return (options) => mod.listWorkBuddySessions(options);
+    }
+    case 'antigravity': {
+      const mod = await import('../../adapters/antigravity/src/index.ts');
+      return (options) => mod.listAntigravitySessions(options);
     }
   }
 }

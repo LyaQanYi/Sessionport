@@ -320,4 +320,20 @@ export const enNoticeMessages: Record<string, string> = {
   'workbuddy.subagents': 'Subagent sessions were read as children (triggered by the Agent tool)',
   'workbuddy.tool-without-result': 'Tool calls have no result (in progress or interrupted)',
   'workbuddy.unknown-line': 'Unknown line type was skipped',
+
+  'antigravity.bad-json-lines': 'Unparseable JSONL lines were skipped (possibly a partial write)',
+  'antigravity.bad-tool-arguments': 'Malformed tool call entries were kept as { raw }',
+  'antigravity.compact-boundary': 'CHECKPOINT compaction event was mapped to boundary(compact)',
+  'antigravity.compact-transcript-truncated':
+    'Loaded truncated transcript.jsonl because transcript_full.jsonl was missing; some long tool outputs or thinking blocks may be incomplete',
+  'antigravity.empty-reasoning': 'Empty thinking fields were skipped',
+  'antigravity.empty-user-message': 'Empty USER_INPUT lines were skipped',
+  'antigravity.error-messages-skipped': 'ERROR_MESSAGE stream error notifications were skipped',
+  'antigravity.failed-tool-result': 'Tool results with ERROR status were marked isError',
+  'antigravity.orphan-tool-result': 'GENERIC tool results without a preceding call (truncated or interrupted session)',
+  'antigravity.subagents': 'Subagent / swarm child sessions were read as children',
+  'antigravity.synthetic-user-message': 'Context-compaction CONTEXT_SUMMARY user prompts were marked synthetic',
+  'antigravity.system-messages-skipped': 'SYSTEM_MESSAGE runtime notifications were skipped',
+  'antigravity.tool-without-result': 'Tool calls have no matching GENERIC result (in progress or interrupted)',
+  'antigravity.unknown-line': 'Unknown step type was skipped',
 };

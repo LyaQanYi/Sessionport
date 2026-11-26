@@ -1,0 +1,50 @@
+{
+  "name": "@sessionport/adapter-antigravity",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./read": "./src/read.ts",
+    "./verify": "./src/verify.ts",
+    "./wire": "./src/wire.ts",
+    "./adapter": "./src/adapter.ts"
+  },
+  "dependencies": {
+    "@sessionport/core": "workspace:*"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "description": "Antigravity adapter (read/verify)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LyaQanYi/Sessionport.git",
+    "directory": "packages/adapters/antigravity"
+  },
+  "homepage": "https://github.com/LyaQanYi/Sessionport#readme",
+  "bugs": {
+    "url": "https://github.com/LyaQanYi/Sessionport/issues"
+  },
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "session",
+    "migration",
+    "antigravity",
+    "claude-code",
+    "codex",
+    "cursor",
+    "dsh"
+  ],
+  "author": {
+    "name": "sessionport contributors"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "private": true
+}

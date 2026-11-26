@@ -18,6 +18,7 @@ const AGENT_FOR_HOME: Record<string, string> = {
   cursor: 'cursor',
   qoder: 'qoder',
   workbuddy: 'workbuddy',
+  antigravity: 'antigravity',
 };
 
 export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: ThemeMode) => void; prefs: AgentPreferences }) {

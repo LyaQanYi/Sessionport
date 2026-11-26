@@ -1,4 +1,4 @@
-import { Braces, Briefcase, Hexagon, Moon, MousePointer2, Sparkles, SquareTerminal, Wand2, Waves, type LucideIcon } from 'lucide-react';
+import { Braces, Briefcase, Hexagon, Moon, MousePointer2, Orbit, Sparkles, SquareTerminal, Wand2, Waves, type LucideIcon } from 'lucide-react';
 
 import { cn } from './ui.tsx';
 
@@ -20,6 +20,7 @@ export const AGENT_META: Record<string, AgentMeta> = {
   cursor: { label: 'Cursor', short: 'Cursor', icon: MousePointer2, tile: 'bg-teal-500/15 text-teal-600 dark:text-teal-400', dot: 'bg-teal-500' },
   qoder: { label: 'Qoder', short: 'Qoder', icon: Wand2, tile: 'bg-blue-500/15 text-blue-600 dark:text-blue-400', dot: 'bg-blue-500' },
   workbuddy: { label: 'WorkBuddy', short: 'WorkBuddy', icon: Briefcase, tile: 'bg-orange-500/15 text-orange-600 dark:text-orange-400', dot: 'bg-orange-500' },
+  antigravity: { label: 'Antigravity', short: 'Antigravity', icon: Orbit, tile: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400', dot: 'bg-indigo-500' },
 };
 
 export function agentLabel(agent: string): string {

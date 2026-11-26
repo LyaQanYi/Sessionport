@@ -62,6 +62,7 @@ const USAGE = [
   '  cursor:<id>            Cursor composer id（state.vscdb 内的 composerId）',
   '  qoder:<路径|id>        Qoder CN transcript（~/.qoder-cn/projects/.../<uuid>.jsonl）',
   '  workbuddy:<路径|id>    WorkBuddy transcript（~/.workbuddy/projects/...，只读）',
+  '  antigravity:<路径|id>  Antigravity 对话（~/.gemini/antigravity/brain/...，兼容 agy CLI，只读）',
   '  <ir.json>              已有 IR 文件',
   '  <无前缀目录/文件>      按结构自动识别',
   '',
@@ -128,15 +129,31 @@ function detectSource(raw: string): SourceKind {
   }
   if (raw.endsWith('.json') && existsSync(raw) && !existsSync(join(raw, 'state.json'))) return { kind: 'ir', target: raw };
   if (existsSync(join(raw, 'state.json'))) return { kind: 'kimi-code', target: raw };
+  if (
+    existsSync(join(raw, '.system_generated', 'logs', 'transcript_full.jsonl')) ||
+    existsSync(join(raw, '.system_generated', 'logs', 'transcript.jsonl')) ||
+    existsSync(join(raw, 'transcript_full.jsonl'))
+  ) {
+    return { kind: 'antigravity', target: raw };
+  }
   if (existsSync(join(raw, 'session.v4.jsonl.zstd'))) return { kind: 'dsh', target: raw };
   if (raw.endsWith('.jsonl.zstd')) return { kind: 'dsh', target: raw };
   if (raw.endsWith('.jsonl')) {
-    // rollout 与 Command Code transcript 都是 .jsonl，按首行类型区分
+    // rollout 与 Command Code / Antigravity transcript 都是 .jsonl，按首行或文件名区分
+    if (raw.endsWith('/transcript_full.jsonl') || raw === 'transcript_full.jsonl') {
+      return { kind: 'antigravity', target: raw };
+    }
     try {
       const first = readFileSync(raw, 'utf8').split('\n', 1)[0] ?? '';
       if (first.includes('"session_meta"')) return { kind: 'codex', target: raw };
       if (first.includes('"session-meta"')) return { kind: 'workbuddy', target: raw };
       if (first.includes('"workspace-directories"')) return { kind: 'qoder', target: raw };
+      if (
+        first.includes('"step_index"') &&
+        (first.includes('"USER_INPUT"') || first.includes('"PLANNER_RESPONSE"') || first.includes('"SYSTEM_MESSAGE"') || first.includes('"CHECKPOINT"'))
+      ) {
+        return { kind: 'antigravity', target: raw };
+      }
       if (first.includes('"parentUuid"') || (first.includes('"sessionId"') && first.includes('"cwd"'))) return { kind: 'claude-code', target: raw };
     } catch {
       // 读不到就按后缀兜底
@@ -144,7 +161,7 @@ function detectSource(raw: string): SourceKind {
     return { kind: 'command-code', target: raw };
   }
   if (existsSync(raw) && existsSync(join(raw, 'agents'))) return { kind: 'kimi-code', target: raw };
-  fail('无法识别的 source: ' + raw + '（可以显式加 kimi: / commandcode: / dsh: 前缀）');
+  fail('无法识别的 source: ' + raw + '（可以显式加 antigravity: / kimi: / commandcode: / dsh: 前缀）');
 }
 
 async function loadBundle(source: string): Promise<IrBundle> {
@@ -899,6 +916,7 @@ const AGENT_SOURCE_PREFIX: Record<AgentId, string> = {
   cursor: 'cursor',
   qoder: 'qoder',
   workbuddy: 'workbuddy',
+  antigravity: 'antigravity',
 };
 
 interface StatusRow {
@@ -1063,6 +1081,8 @@ const AGENT_ALIASES: Record<string, AgentId> = {
   qoder: 'qoder',
   workbuddy: 'workbuddy',
   wb: 'workbuddy',
+  antigravity: 'antigravity',
+  agy: 'antigravity',
 };
 
 function resolveListAgent(raw: string): AgentId {
@@ -1215,6 +1235,12 @@ async function cmdVerify(values: Record<string, string | boolean | undefined>): 
     const file = typeof values.file === 'string' ? values.file : String(opts.id ?? '');
     if (!file) fail('workbuddy 校验需要 --file 或 --id');
     const report = await mod.verifyWorkBuddySession(file, { home: opts.home as string | undefined });
+    result = { ok: report.ok, checks: report.checks };
+  } else if (agent === 'antigravity') {
+    const mod = await import('@sessionport/adapter-antigravity');
+    const file = typeof values.file === 'string' ? values.file : String(opts.id ?? '');
+    if (!file) fail('antigravity 校验需要 --file 或 --id');
+    const report = await mod.verifyAntigravitySession(file, { home: opts.home as string | undefined });
     result = { ok: report.ok, checks: report.checks };
   } else {
     const mod = await import('@sessionport/adapter-dsh');

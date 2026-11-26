@@ -20,6 +20,7 @@ const HOME_KEY: Record<string, string> = {
   cursor: 'cursor',
   qoder: 'qoder',
   workbuddy: 'workbuddy',
+  antigravity: 'antigravity',
 };
 
 function Capability(props: { ok: boolean; label: string }) {

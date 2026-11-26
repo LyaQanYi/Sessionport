@@ -1,6 +1,7 @@
 import type { AgentAdapter, AgentId } from '@sessionport/core';
 
 const LOADERS: Record<AgentId, () => Promise<AgentAdapter>> = {
+  antigravity: async () => (await import('@sessionport/adapter-antigravity')).antigravityAdapter,
   'claude-code': async () => (await import('@sessionport/adapter-claude-code')).claudeCodeAdapter,
   codex: async () => (await import('@sessionport/adapter-codex')).codexAdapter,
   'command-code': async () => (await import('@sessionport/adapter-command-code')).commandCodeAdapter,
@@ -22,6 +23,7 @@ export const READABLE_AGENTS: readonly AgentId[] = [
   'cursor',
   'qoder',
   'workbuddy',
+  'antigravity',
 ];
 
 export const WRITABLE_AGENTS: readonly AgentId[] = [

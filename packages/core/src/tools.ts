@@ -51,14 +51,14 @@ const SHELL_ALIASES = new Set([
   'localshell',
 ]);
 
-const READ_ALIASES = new Set(['read', 'readfile', 'readfilev2', 'view', 'openfile']);
-const WRITE_ALIASES = new Set(['write', 'writefile', 'createfile', 'savefile']);
-const EDIT_ALIASES = new Set(['edit', 'editfile', 'editfilev2', 'strreplace', 'strreplaceeditor']);
+const READ_ALIASES = new Set(['read', 'readfile', 'readfilev2', 'view', 'viewfile', 'openfile']);
+const WRITE_ALIASES = new Set(['write', 'writefile', 'writetofile', 'createfile', 'savefile']);
+const EDIT_ALIASES = new Set(['edit', 'editfile', 'editfilev2', 'replacefilecontent', 'strreplace', 'strreplaceeditor']);
 const PATCH_ALIASES = new Set(['applypatch']);
 const GREP_ALIASES = new Set(['grep', 'ripgrep', 'ripgrepsearch', 'ripgreprawsearch', 'grepsearch', 'rg']);
-const GLOB_ALIASES = new Set(['glob', 'globfilesearch', 'filesearch', 'globsearch']);
+const GLOB_ALIASES = new Set(['glob', 'globfilesearch', 'filesearch', 'globsearch', 'findbyname']);
 const LIST_ALIASES = new Set(['ls', 'list', 'listdir', 'listdirv2', 'listdirectory', 'readdirectory']);
-const TODO_ALIASES = new Set(['todowrite', 'updateplan', 'todos', 'updatetodos']);
+const TODO_ALIASES = new Set(['todowrite', 'updateplan', 'todos', 'updatetodos', 'updatesteps']);
 
 const CLAUDE_STYLE_NATIVE_TOOLS = new Set([
   'Bash',
@@ -204,12 +204,12 @@ export function classifyTool(name: string, input: unknown): CanonicalTool | unde
       rawString !== undefined
         ? rawString
         : record !== undefined
-          ? extractShellCommand(record.command ?? record.cmd ?? record.script)
+          ? extractShellCommand(record.command ?? record.cmd ?? record.script ?? record.CommandLine)
           : undefined;
     if (command === undefined || command.trim().length === 0) return undefined;
-    const cwd = record ? firstNonEmptyString(record, ['cwd', 'workdir', 'working_directory']) : undefined;
-    const timeoutMs = record ? firstFiniteNumber(record, ['timeout', 'timeout_ms', 'timeoutMs']) : undefined;
-    const description = record ? firstNonEmptyString(record, ['description']) : undefined;
+    const cwd = record ? firstNonEmptyString(record, ['cwd', 'workdir', 'working_directory', 'Cwd']) : undefined;
+    const timeoutMs = record ? firstFiniteNumber(record, ['timeout', 'timeout_ms', 'timeoutMs', 'WaitMsBeforeAsync']) : undefined;
+    const description = record ? firstNonEmptyString(record, ['description', 'toolSummary']) : undefined;
     return {
       kind: 'shell',
       command,
@@ -221,10 +221,17 @@ export function classifyTool(name: string, input: unknown): CanonicalTool | unde
 
   if (READ_ALIASES.has(key)) {
     if (!record) return undefined;
-    const path = firstNonEmptyString(record, ['file_path', 'filePath', 'path', 'target_file', 'targetFile', 'absolute_path']);
+    const path = firstNonEmptyString(record, ['file_path', 'filePath', 'path', 'target_file', 'targetFile', 'absolute_path', 'Path', 'AbsolutePath']);
     if (path === undefined) return undefined;
-    const offset = firstFiniteNumber(record, ['offset', 'start_line', 'startLine']);
-    const limit = firstFiniteNumber(record, ['limit', 'line_count', 'lineCount']);
+    const offset = firstFiniteNumber(record, ['offset', 'start_line', 'startLine', 'StartLine']);
+    let limit = firstFiniteNumber(record, ['limit', 'line_count', 'lineCount']);
+    if (limit === undefined) {
+      const endLine = firstFiniteNumber(record, ['EndLine', 'endLine', 'end_line']);
+      if (endLine !== undefined) {
+        const start = offset ?? 1;
+        if (endLine >= start) limit = endLine - start + 1;
+      }
+    }
     return {
       kind: 'read',
       path,
@@ -235,8 +242,8 @@ export function classifyTool(name: string, input: unknown): CanonicalTool | unde
 
   if (WRITE_ALIASES.has(key)) {
     if (!record) return undefined;
-    const path = firstNonEmptyString(record, ['file_path', 'filePath', 'path', 'target_file', 'targetFile']);
-    const content = firstStringValue(record, ['content', 'contents', 'file_text', 'new_content', 'newContent', 'text']);
+    const path = firstNonEmptyString(record, ['file_path', 'filePath', 'path', 'target_file', 'targetFile', 'Path', 'TargetFile']);
+    const content = firstStringValue(record, ['content', 'contents', 'file_text', 'new_content', 'newContent', 'text', 'Content', 'CodeContent']);
     if (path === undefined || content === undefined) return undefined;
     return { kind: 'write', path, content };
   }
@@ -249,12 +256,14 @@ export function classifyTool(name: string, input: unknown): CanonicalTool | unde
       'path',
       'target_file',
       'targetFile',
+      'Path',
+      'TargetFile',
       'relativeWorkspacePath',
       'relative_workspace_path',
     ]);
     if (path === undefined) return undefined;
-    const oldText = firstStringValue(record, ['old_string', 'oldString', 'old_str', 'old_text', 'oldText']);
-    const newText = firstStringValue(record, ['new_string', 'newString', 'new_str', 'new_text', 'newText']);
+    const oldText = firstStringValue(record, ['old_string', 'oldString', 'old_str', 'old_text', 'oldText', 'Target', 'TargetContent']);
+    const newText = firstStringValue(record, ['new_string', 'newString', 'new_str', 'new_text', 'newText', 'Replacement', 'ReplacementContent']);
     if (oldText !== undefined && newText !== undefined) {
       const replaceAll = firstBoolValue(record, ['replace_all', 'replaceAll']);
       return {
@@ -274,6 +283,8 @@ export function classifyTool(name: string, input: unknown): CanonicalTool | unde
         'file_text',
         'new_content',
         'newContent',
+        'Content',
+        'CodeContent',
       ]);
       if (content !== undefined) return { kind: 'write', path, content };
     }
@@ -288,11 +299,11 @@ export function classifyTool(name: string, input: unknown): CanonicalTool | unde
 
   if (GREP_ALIASES.has(key)) {
     if (!record) return undefined;
-    const pattern = firstNonEmptyString(record, ['pattern', 'query', 'regex']);
+    const pattern = firstNonEmptyString(record, ['pattern', 'query', 'regex', 'Query', 'Pattern']);
     if (pattern === undefined) return undefined;
-    const path = firstNonEmptyString(record, ['path', 'directory', 'target_directory', 'targetDirectory']);
+    const path = firstNonEmptyString(record, ['path', 'directory', 'target_directory', 'targetDirectory', 'SearchDirectory', 'SearchPath', 'Path']);
     const glob = firstNonEmptyString(record, ['glob', 'include']);
-    const caseInsensitive = firstBoolValue(record, ['-i', 'case_insensitive', 'caseInsensitive']);
+    const caseInsensitive = firstBoolValue(record, ['-i', 'case_insensitive', 'caseInsensitive', 'CaseInsensitive']);
     const outputMode = normalizeGrepOutputMode(firstNonEmptyString(record, ['output_mode', 'outputMode']));
     return {
       kind: 'grep',
@@ -306,9 +317,9 @@ export function classifyTool(name: string, input: unknown): CanonicalTool | unde
 
   if (GLOB_ALIASES.has(key)) {
     if (!record) return undefined;
-    const pattern = firstNonEmptyString(record, ['pattern', 'glob_pattern', 'globPattern']);
+    const pattern = firstNonEmptyString(record, ['pattern', 'glob_pattern', 'globPattern', 'Pattern']);
     if (pattern === undefined) return undefined;
-    const path = firstNonEmptyString(record, ['path', 'target_directory', 'targetDirectory']);
+    const path = firstNonEmptyString(record, ['path', 'target_directory', 'targetDirectory', 'SearchDirectory', 'Path']);
     return {
       kind: 'glob',
       pattern,
@@ -317,13 +328,13 @@ export function classifyTool(name: string, input: unknown): CanonicalTool | unde
   }
 
   if (LIST_ALIASES.has(key)) {
-    const path = (record ? firstNonEmptyString(record, ['path', 'target_directory', 'targetDirectory', 'directory', 'dir']) : undefined) ?? '.';
+    const path = (record ? firstNonEmptyString(record, ['path', 'target_directory', 'targetDirectory', 'directory', 'dir', 'DirectoryPath', 'Path']) : undefined) ?? '.';
     return { kind: 'list', path };
   }
 
   if (TODO_ALIASES.has(key)) {
     if (!record) return undefined;
-    const rawTodos = record.todos ?? record.items ?? record.plan;
+    const rawTodos = record.todos ?? record.items ?? record.plan ?? record.steps;
     if (!Array.isArray(rawTodos)) return undefined;
     const todos: Array<{ content: string; status: 'pending' | 'in_progress' | 'completed' }> = [];
     for (const item of rawTodos) {

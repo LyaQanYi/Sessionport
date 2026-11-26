@@ -13,9 +13,10 @@ export const HOME_TO_AGENT: Record<string, string> = {
   cursor: 'cursor',
   qoder: 'qoder',
   workbuddy: 'workbuddy',
+  antigravity: 'antigravity',
 };
 
-export const ALL_AGENTS = ['claude-code', 'codex', 'command-code', 'dsh', 'opencode', 'kimi-code', 'cursor', 'qoder', 'workbuddy'];
+export const ALL_AGENTS = ['claude-code', 'codex', 'command-code', 'dsh', 'opencode', 'kimi-code', 'cursor', 'qoder', 'workbuddy', 'antigravity'];
 
 function readStored(): string[] | null {
   try {

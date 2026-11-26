@@ -27,8 +27,8 @@
 |---|---|
 | 分支 | `main`（含 `v0.1.13`、路线 A 写前自动备份/`undo`/双向增量 `merge-back`、`sessionport status` 与桌面端备份历史面板，具体见 `git log -n 8`） |
 | 最新发布 | **v0.1.13**（npm `sesport@0.1.13` + GitHub Release 4 个 macOS 产物） |
-| 测试 | 268 tests / 261 pass / **0 fail** / 7 skip；桌面端 `apps/desktop/test/*.test.ts` **37/37 pass** |
-| 适配器 | 9 个：claude-code / codex / command-code / cursor / dsh / kimi-code / opencode / qoder / workbuddy |
+| 测试 | 272 tests / 265 pass / **0 fail** / 7 skip；桌面端 `apps/desktop/test/*.test.ts` **38/38 pass** |
+| 适配器 | 10 个：claude-code / codex / command-code / cursor / dsh / kimi-code / opencode / qoder / workbuddy / antigravity（只读源） |
 
 ### 可读可写矩阵
 
@@ -43,6 +43,7 @@
 | Command Code | ✅ | ✅ | 含桌面端注册 |
 | Kimi Code | ✅ | — | 纯 source（已覆盖 2.6.x wire 事件） |
 | WorkBuddy | ✅ | — | 纯 source |
+| Antigravity | ✅ | — | 纯 source（合并 App/IDE 与 CLI 目录，含 SQLite 摘要与 subagent/swarm） |
 
 ---
 
