@@ -17,6 +17,8 @@ interface Counters {
   eventMsg: number;
   systemLines: number;
   developerMessages: number;
+  interAgentMessages: number;
+  ambientToolOutputs: number;
   unknownLines: Map<string, number>;
   opaqueReasoning: number;
   badToolArgs: number;
@@ -28,6 +30,8 @@ function emptyCounters(): Counters {
     eventMsg: 0,
     systemLines: 0,
     developerMessages: 0,
+    interAgentMessages: 0,
+    ambientToolOutputs: 0,
     unknownLines: new Map(),
     opaqueReasoning: 0,
     badToolArgs: 0,
@@ -160,13 +164,21 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
       continue;
     }
 
-    if (line.type === 'token_usage_record' || line.type === 'world_state') {
+    if (line.type === 'token_usage_record' || line.type === 'world_state' || line.type === 'inter_agent_communication_metadata') {
       counters.systemLines += 1;
       continue;
     }
 
     if (line.type === 'response_item') {
       const itemType = typeof payload.type === 'string' ? payload.type : '';
+      if (itemType === 'additional_tools' || itemType === 'configuration_update') {
+        counters.systemLines += 1;
+        continue;
+      }
+      if (itemType === 'agent_message') {
+        counters.interAgentMessages += 1;
+        continue;
+      }
       if (itemType === 'message') {
         const role = payload.role;
         if (role === 'user') {
@@ -227,6 +239,13 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
         continue;
       }
       if (itemType === 'function_call_output' || itemType === 'custom_tool_call_output') {
+        if (
+          line.metadata?.additional_context_tool_output === true &&
+          (payload.call_id === undefined || payload.call_id === null || payload.call_id === '')
+        ) {
+          counters.ambientToolOutputs += 1;
+          continue;
+        }
         const callId = String(payload.call_id ?? '');
         const pending = pendingCalls.get(callId) ?? 0;
         if (pending > 1) pendingCalls.set(callId, pending - 1);
@@ -275,6 +294,22 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
       code: 'codex.developer-messages-skipped',
       message: 'developer/system 消息是运行时注入的指令（skills、环境说明等），目标端会生成自己的，已跳过',
       count: counters.developerMessages,
+      severity: 'info',
+    });
+  }
+  if (counters.interAgentMessages > 0) {
+    notices.push({
+      code: 'codex.agent-message-skipped',
+      message: 'agent_message 是 Codex 内部多代理通信消息（含加密负载），已跳过',
+      count: counters.interAgentMessages,
+      severity: 'info',
+    });
+  }
+  if (counters.ambientToolOutputs > 0) {
+    notices.push({
+      code: 'codex.ambient-context-skipped',
+      message: '附加环境状态输出（additional_context_tool_output，如浏览器标签/应用页面快照）不属于对话工具调用，已跳过',
+      count: counters.ambientToolOutputs,
       severity: 'info',
     });
   }

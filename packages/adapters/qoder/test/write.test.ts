@@ -6,6 +6,8 @@ import { join } from 'node:path';
 
 import { readWorkBuddySession } from '../../workbuddy/src/index.ts';
 import { writeWorkBuddyFixture } from '../../workbuddy/test/fixtures.ts';
+import { IR_VERSION } from '@sessionport/core';
+import type { IrBundle } from '@sessionport/core';
 import {
   QODER_CAPS,
   listQoderSessions,
@@ -124,4 +126,50 @@ test('Qoder list/read: 真实目录（SESSIONPORT_QODER_HOME 门控）', { skip:
   assert.ok(bundle.root.events.length > 0);
   const report = await verifyQoderSession(first.sessionId, { home: realHome });
   assert.equal(report.ok, true, report.checks.filter((check) => !check.ok).map((check) => check.name + ': ' + check.detail).join('; '));
+});
+
+test('Qoder write: 跨源工具归一 Codex exec_command → Bash，normalizeTools:false 保留原名', async () => {
+  const outHome = makeHome('sessionport-qd-norm-');
+  try {
+    const bundle: IrBundle = {
+      irVersion: IR_VERSION,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      root: {
+        id: 'ir_qd_norm',
+        source: { agent: 'codex', nativeSessionId: 'codex-src' },
+        meta: { cwd: '/tmp/qoder-norm', title: 'qoder norm' },
+        events: [
+          { kind: 'message', id: 'e1', parentId: null, at: '2026-01-01T00:00:00.000Z', role: 'user', parts: [{ type: 'text', text: '列文件' }] },
+          { kind: 'tool_call', id: 'e2', parentId: 'e1', at: '2026-01-01T00:00:01.000Z', callId: 'c1', name: 'exec_command', input: { cmd: 'ls' } },
+          { kind: 'tool_result', id: 'e3', parentId: 'e2', at: '2026-01-01T00:00:02.000Z', callId: 'c1', content: [{ type: 'text', text: 'a.ts' }] },
+        ],
+        head: 'e3',
+        notices: [],
+      },
+      children: [],
+    };
+    const findToolUseName = (rows: typeof norm.rows): string | undefined => {
+      for (const row of rows) {
+        if (row.type !== 'assistant') continue;
+        const msg = row.message as { content?: Array<{ type: string; name?: string }> } | undefined;
+        const block = msg?.content?.find((b) => b.type === 'tool_use');
+        if (block) return block.name;
+      }
+      return undefined;
+    };
+
+    const norm = await writeQoderSession(bundle, { home: outHome, sessionId: '99999999-9999-4999-8999-999999999999' });
+    assert.ok(norm.losses.some((l) => l.code === 'qoder.tool-normalized' && l.count === 1));
+    assert.equal(findToolUseName(norm.rows), 'Bash');
+
+    const raw = await writeQoderSession(bundle, {
+      home: outHome,
+      sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      normalizeTools: false,
+    });
+    assert.ok(!raw.losses.some((l) => l.code === 'qoder.tool-normalized'));
+    assert.equal(findToolUseName(raw.rows), 'exec_command');
+  } finally {
+    rmSync(outHome, { recursive: true, force: true });
+  }
 });

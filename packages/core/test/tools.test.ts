@@ -73,6 +73,7 @@ test('classifyTool：覆盖 9 种 CanonicalTool', () => {
     path: 'packages',
   });
   assert.deepEqual(classifyTool('ls', {}), { kind: 'list', path: '.' });
+  assert.deepEqual(classifyTool('read_directory', { path: 'packages' }), { kind: 'list', path: 'packages' });
   assert.deepEqual(classifyTool('update_plan', { plan: [{ step: 'step 1', status: 'in_progress' }, { step: 'step 2', status: 'done' }] }), {
     kind: 'todo',
     todos: [
@@ -127,6 +128,26 @@ test('renderTool：三个目标端快照与 codex edit apply_patch 精确断言'
     name: 'todowrite',
     input: { todos: [{ id: 'todo-1', content: 'do it', status: 'in_progress', priority: 'medium' }] },
   });
+
+  assert.deepEqual(renderTool('command-code', editTool), {
+    name: 'edit_file',
+    input: { file_path: 'src/app.ts', old_string: 'const a = 1;\nconst b = 2;', new_string: 'const a = 10;\nconst b = 20;' },
+  });
+  assert.deepEqual(renderTool('command-code', classifyTool('Bash', { command: 'pwd' })!), {
+    name: 'shell_command',
+    input: { command: 'pwd' },
+  });
+  assert.deepEqual(renderTool('command-code', classifyTool('ls', { path: 'src' })!), {
+    name: 'read_directory',
+    input: { path: 'src' },
+  });
+  assert.equal(renderTool('command-code', classifyTool('Glob', { pattern: '*.ts' })!), undefined);
+  assert.deepEqual(renderTool('qoder', classifyTool('exec_command', { cmd: 'pwd' })!), {
+    name: 'Bash',
+    input: { command: 'pwd' },
+  });
+  assert.equal(isNativeToolName('qoder', 'Bash'), true);
+  assert.equal(isNativeToolName('command-code', 'shell_command'), true);
 });
 
 test('normalizeToolCall：skipped / native / normalized / unmapped 四路径', () => {

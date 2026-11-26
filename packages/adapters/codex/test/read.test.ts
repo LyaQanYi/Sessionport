@@ -254,3 +254,66 @@ test('fixture: custom_tool_call 与 custom_tool_call_output 读取并配对', as
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('fixture: 0.169+ 运行时结构与无 call_id 的环境输出归类为 info notice', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sessionport-codex-noise-'));
+  try {
+    const file = writeFixtureRollout(dir, [
+      {
+        timestamp: '2026-11-22T00:00:00.000Z',
+        type: 'session_meta',
+        payload: { id: '22222222-3333-4333-8444-555555555555', timestamp: '2026-11-22T00:00:00.000Z', cwd: '/tmp/codex-fixture', originator: 'codex_cli_rs', cli_version: '0.171.0' },
+      },
+      {
+        timestamp: '2026-11-22T00:00:00.100Z',
+        type: 'response_item',
+        payload: { type: 'additional_tools', id: 'at_1', role: 'developer', tools: [] },
+      },
+      {
+        timestamp: '2026-11-22T00:00:00.200Z',
+        type: 'response_item',
+        payload: { type: 'configuration_update', reasoning: { effort: 'xhigh' } },
+      },
+      {
+        timestamp: '2026-11-22T00:00:00.300Z',
+        type: 'inter_agent_communication_metadata',
+        payload: { trigger_turn: true },
+      },
+      {
+        timestamp: '2026-11-22T00:00:00.400Z',
+        type: 'response_item',
+        payload: { type: 'agent_message', id: 'amsg_1', author: '/root', recipient: '/root/a', content: [] },
+      },
+      {
+        timestamp: '2026-11-22T00:00:00.500Z',
+        type: 'response_item',
+        payload: { type: 'function_call_output', id: 'fco_1', name: 'codex_apps_open_page', namespace: 'agent', output: '{"page_id":null}' },
+        metadata: { additional_context_tool_output: true },
+      },
+      {
+        timestamp: '2026-11-22T00:00:01.000Z',
+        type: 'response_item',
+        payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '继续' }] },
+      },
+    ]);
+
+    const bundle = await readCodexSession(file, { home: dir });
+    assert.deepEqual(validateIrBundle(bundle), []);
+    assert.equal(bundle.root.events.length, 1);
+    assert.equal(bundle.root.events[0]!.kind, 'message');
+    assert.ok(!bundle.root.notices.some((n) => n.code === 'codex.unknown-line'));
+    assert.ok(!bundle.root.notices.some((n) => n.code === 'codex.orphan-tool-result'));
+
+    const sys = bundle.root.notices.find((n) => n.code === 'codex.system-lines-skipped');
+    const agentMsg = bundle.root.notices.find((n) => n.code === 'codex.agent-message-skipped');
+    const ambient = bundle.root.notices.find((n) => n.code === 'codex.ambient-context-skipped');
+    assert.equal(sys?.count, 3);
+    assert.equal(sys?.severity, 'info');
+    assert.equal(agentMsg?.count, 1);
+    assert.equal(agentMsg?.severity, 'info');
+    assert.equal(ambient?.count, 1);
+    assert.equal(ambient?.severity, 'info');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

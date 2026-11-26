@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
-import { LossCollector } from '@sessionport/core';
+import { LossCollector, normalizeToolCall } from '@sessionport/core';
 import type { ExportCaps, IrBundle, IrChildSession, IrContent, IrPart, IrSession, LossEntry, WriteReport } from '@sessionport/core';
 
 import type {
@@ -64,6 +64,8 @@ export interface WriteQoderOptions {
   overwrite?: boolean;
   /** 是否把 bundle.children 写成 Qoder 原生 subagents transcript（默认否） */
   includeChildren?: boolean;
+  /** 是否把跨源工具调用改写为 Qoder 原生工具（默认 true；--raw-tools 可关闭） */
+  normalizeTools?: boolean;
 }
 
 /** 子代理 meta.json（字段对齐真实 Qoder 1.1.69 样本，另有可选的 toolUseId） */
@@ -141,6 +143,8 @@ interface RowContext {
   keepSyntheticUser: boolean;
   /** 子代理 user 文本行不写 requestSetId/permissionMode（真实样本没有） */
   lightUserFields: boolean;
+  /** 是否把跨源工具调用改写为 Qoder 原生工具 */
+  normalizeTools?: boolean;
 }
 
 function contentText(content: IrContent[]): string {
@@ -424,7 +428,22 @@ function buildRows(session: IrSession, ctx: RowContext, losses: LossCollector): 
     }
 
     if (event.kind === 'tool_call') {
-      const uuid = emitAssistantBlock({ type: 'tool_use', id: event.callId, name: event.name, input: event.input ?? {} }, at);
+      const normalized = normalizeToolCall({
+        target: 'qoder',
+        sourceAgent: session.source.agent,
+        name: event.name,
+        input: event.input,
+        enabled: ctx.normalizeTools,
+      });
+      if (normalized.status === 'normalized') {
+        losses.add('qoder.tool-normalized', '工具调用已改写为目标端原生工具（--raw-tools 可关闭）', { severity: 'info' });
+      } else if (normalized.status === 'unmapped') {
+        losses.add('qoder.tool-unmapped', '工具调用无法映射到目标端原生工具，保留源端工具名', { severity: 'info' });
+      }
+      const isPlainObject =
+        normalized.input !== null && typeof normalized.input === 'object' && !Array.isArray(normalized.input);
+      const toolInput = normalized.status === 'unmapped' && !isPlainObject ? { input: normalized.input } : normalized.input;
+      const uuid = emitAssistantBlock({ type: 'tool_use', id: event.callId, name: normalized.name, input: toolInput ?? {} }, at);
       toolUseUuid.set(event.callId, uuid);
       counts.pendingCalls += 1;
       counts.toolCalls += 1;
@@ -524,7 +543,17 @@ export async function writeQoderSession(bundle: IrBundle, options: WriteQoderOpt
 
   const rootBuilt = buildRows(
     session,
-    { sessionId, cwd, model, title, controlRows: true, isSidechain: false, keepSyntheticUser: false, lightUserFields: false },
+    {
+      sessionId,
+      cwd,
+      model,
+      title,
+      controlRows: true,
+      isSidechain: false,
+      keepSyntheticUser: false,
+      lightUserFields: false,
+      normalizeTools: options.normalizeTools,
+    },
     losses,
   );
   const rows = rootBuilt.rows;
@@ -564,6 +593,7 @@ export async function writeQoderSession(bundle: IrBundle, options: WriteQoderOpt
           fixedPromptId: sessionId,
           keepSyntheticUser: true,
           lightUserFields: true,
+          normalizeTools: options.normalizeTools,
         },
         losses,
       );

@@ -73,6 +73,8 @@ export const enLossMessages: Record<string, string> = {
   'command-code.subagent-separate-session':
     'Subagent sessions were exported as standalone sessions; Command Code has no parent/child structure, so the relationship cannot be expressed',
   'command-code.register-skipped': 'Desktop registration did not complete',
+  'command-code.tool-normalized': "Tool calls were rewritten to the target's native tools (disable with --raw-tools)",
+  'command-code.tool-unmapped': 'Tool calls with no native equivalent on the target kept their source tool names',
 
   'cursor.synthetic-user-dropped':
     'Runtime-injected user messages (synthetic) were dropped; Cursor injects its own context',
@@ -164,6 +166,8 @@ export const enLossMessages: Record<string, string> = {
   'qoder.tool-without-result': 'Tool calls have no result and appear as unfinished calls in Qoder',
   'qoder.empty-session': 'No rows were written',
   'qoder.backup': 'Backed up the previous file before overwriting',
+  'qoder.tool-normalized': "Tool calls were rewritten to the target's native tools (disable with --raw-tools)",
+  'qoder.tool-unmapped': 'Tool calls with no native equivalent on the target kept their source tool names',
 };
 
 export const enNoticeMessages: Record<string, string> = {
@@ -187,6 +191,9 @@ export const enNoticeMessages: Record<string, string> = {
   'claude.unknown-line-type': 'Unknown line type was skipped',
 
   'codex.bad-lines': 'The rollout contains unparseable lines',
+  'codex.agent-message-skipped': 'Internal Codex inter-agent messages (agent_message) were skipped',
+  'codex.ambient-context-skipped':
+    'Ambient UI context outputs (additional_context_tool_output) are not conversation tool calls; skipped',
   'codex.developer-messages-skipped':
     'developer/system messages are runtime-injected instructions (skills, environment notes, etc.); the target generates its own, so they were skipped',
   'codex.event-msg-skipped': 'event_msg is a UI mirror duplicating response_item; skipped',

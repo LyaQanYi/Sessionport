@@ -189,3 +189,49 @@ test(
   },
 );
 
+test('跨源工具归一：Claude Edit/Bash → edit_file/shell_command，normalizeTools:false 保留原名', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'cc-norm-'));
+  try {
+    const events = chain([
+      { kind: 'message', id: 'e1', at: '2026-01-01T00:00:00.000Z', role: 'user', parts: [{ type: 'text', text: '改文件' }] },
+      { kind: 'tool_call', id: 'e2', at: '2026-01-01T00:00:01.000Z', callId: 'call_edit', name: 'Edit', input: { file_path: 'a.ts', old_string: 'a', new_string: 'b' } },
+      { kind: 'tool_result', id: 'e3', at: '2026-01-01T00:00:02.000Z', callId: 'call_edit', content: [{ type: 'text', text: 'ok' }] },
+      { kind: 'tool_call', id: 'e4', at: '2026-01-01T00:00:03.000Z', callId: 'call_bash', name: 'Bash', input: { command: 'ls' } },
+      { kind: 'tool_result', id: 'e5', at: '2026-01-01T00:00:04.000Z', callId: 'call_bash', content: [{ type: 'text', text: 'README.md' }] },
+    ]);
+    const bundle: IrBundle = {
+      ...makeBundle(events),
+      root: { ...makeBundle(events).root, source: { agent: 'claude-code', nativeSessionId: 'src-claude' } },
+    };
+
+    const norm = await writeCommandCodeSession(bundle, {
+      home,
+      id: '66666666-6666-4666-8666-666666666666',
+      cwd: TEST_CWD,
+    });
+    assert.ok(norm.losses.some((l) => l.code === 'command-code.tool-normalized' && l.count === 2));
+    const normNames = norm.rows
+      .filter((r) => r.type === 'message' && r.message.role === 'assistant')
+      .flatMap((r) => (r.type === 'message' ? r.message.content : []))
+      .filter((b) => b.type === 'tool_use')
+      .map((b) => (b as { name: string }).name);
+    assert.deepEqual(normNames, ['edit_file', 'shell_command']);
+
+    const raw = await writeCommandCodeSession(bundle, {
+      home,
+      id: '77777777-7777-4777-8777-777777777777',
+      cwd: TEST_CWD,
+      normalizeTools: false,
+    });
+    assert.ok(!raw.losses.some((l) => l.code === 'command-code.tool-normalized'));
+    const rawNames = raw.rows
+      .filter((r) => r.type === 'message' && r.message.role === 'assistant')
+      .flatMap((r) => (r.type === 'message' ? r.message.content : []))
+      .filter((b) => b.type === 'tool_use')
+      .map((b) => (b as { name: string }).name);
+    assert.deepEqual(rawNames, ['Edit', 'Bash']);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+

@@ -16,7 +16,7 @@ export type CanonicalTool =
   | { kind: 'list'; path: string }
   | { kind: 'todo'; todos: Array<{ content: string; status: 'pending' | 'in_progress' | 'completed' }> };
 
-export type ToolRenderTarget = 'claude-code' | 'codex' | 'opencode' | 'generic';
+export type ToolRenderTarget = 'claude-code' | 'codex' | 'opencode' | 'command-code' | 'qoder' | 'generic';
 
 export interface RenderedTool {
   name: string;
@@ -57,27 +57,46 @@ const EDIT_ALIASES = new Set(['edit', 'editfile', 'editfilev2', 'strreplace', 's
 const PATCH_ALIASES = new Set(['applypatch']);
 const GREP_ALIASES = new Set(['grep', 'ripgrep', 'ripgrepsearch', 'ripgreprawsearch', 'grepsearch', 'rg']);
 const GLOB_ALIASES = new Set(['glob', 'globfilesearch', 'filesearch', 'globsearch']);
-const LIST_ALIASES = new Set(['ls', 'list', 'listdir', 'listdirv2', 'listdirectory']);
+const LIST_ALIASES = new Set(['ls', 'list', 'listdir', 'listdirv2', 'listdirectory', 'readdirectory']);
 const TODO_ALIASES = new Set(['todowrite', 'updateplan', 'todos', 'updatetodos']);
 
+const CLAUDE_STYLE_NATIVE_TOOLS = new Set([
+  'Bash',
+  'Read',
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'Grep',
+  'Glob',
+  'TodoWrite',
+  'Agent',
+  'Task',
+  'WebFetch',
+  'WebSearch',
+  'NotebookEdit',
+]);
+
 const NATIVE_TOOL_NAMES: Record<ToolRenderTarget, ReadonlySet<string>> = {
-  'claude-code': new Set([
-    'Bash',
-    'Read',
-    'Write',
-    'Edit',
-    'MultiEdit',
-    'Grep',
-    'Glob',
-    'TodoWrite',
-    'Agent',
-    'Task',
-    'WebFetch',
-    'WebSearch',
-    'NotebookEdit',
-  ]),
+  'claude-code': CLAUDE_STYLE_NATIVE_TOOLS,
+  qoder: CLAUDE_STYLE_NATIVE_TOOLS,
   codex: new Set(['exec_command', 'shell', 'apply_patch', 'update_plan', 'write_stdin', 'view_image']),
   opencode: new Set(['bash', 'read', 'write', 'edit', 'grep', 'glob', 'list', 'todowrite', 'todoread', 'task', 'webfetch', 'patch']),
+  'command-code': new Set([
+    'shell_command',
+    'bash',
+    'read_file',
+    'write_file',
+    'edit_file',
+    'grep',
+    'read_directory',
+    'todo_write',
+    'run_code',
+    'agent',
+    'web_fetch',
+    'ask_user_question',
+    'exit_plan_mode',
+    'plugin_manager',
+  ]),
   generic: new Set(),
 };
 
@@ -338,9 +357,20 @@ function renderPatchLines(text: string, prefix: '+' | '-'): string[] {
   return text.split(/\r?\n/).map((line) => prefix + line);
 }
 
+function grepInputFields(tool: Extract<CanonicalTool, { kind: 'grep' }>): Record<string, unknown> {
+  return {
+    pattern: tool.pattern,
+    ...(tool.path !== undefined ? { path: tool.path } : {}),
+    ...(tool.glob !== undefined ? { glob: tool.glob } : {}),
+    ...(tool.outputMode !== undefined ? { output_mode: tool.outputMode } : {}),
+    ...(tool.caseInsensitive === true ? { '-i': true } : {}),
+  };
+}
+
 export function renderTool(target: ToolRenderTarget, tool: CanonicalTool): RenderedTool | undefined {
   switch (target) {
     case 'claude-code':
+    case 'qoder':
       switch (tool.kind) {
         case 'shell':
           return {
@@ -373,16 +403,7 @@ export function renderTool(target: ToolRenderTarget, tool: CanonicalTool): Rende
             },
           };
         case 'grep':
-          return {
-            name: 'Grep',
-            input: {
-              pattern: tool.pattern,
-              ...(tool.path !== undefined ? { path: tool.path } : {}),
-              ...(tool.glob !== undefined ? { glob: tool.glob } : {}),
-              ...(tool.outputMode !== undefined ? { output_mode: tool.outputMode } : {}),
-              ...(tool.caseInsensitive === true ? { '-i': true } : {}),
-            },
-          };
+          return { name: 'Grep', input: grepInputFields(tool) };
         case 'glob':
           return {
             name: 'Glob',
@@ -398,6 +419,49 @@ export function renderTool(target: ToolRenderTarget, tool: CanonicalTool): Rende
             name: 'TodoWrite',
             input: { todos: tool.todos.map((item) => ({ content: item.content, status: item.status, activeForm: item.content })) },
           };
+        case 'patch':
+          return undefined;
+      }
+
+    case 'command-code':
+      switch (tool.kind) {
+        case 'shell':
+          return {
+            name: 'shell_command',
+            input: {
+              command: tool.command,
+              ...(tool.description !== undefined ? { description: tool.description } : {}),
+              ...(tool.timeoutMs !== undefined ? { timeout: tool.timeoutMs } : {}),
+            },
+          };
+        case 'read':
+          return {
+            name: 'read_file',
+            input: {
+              file_path: tool.path,
+              ...(tool.offset !== undefined ? { offset: tool.offset } : {}),
+              ...(tool.limit !== undefined ? { limit: tool.limit } : {}),
+            },
+          };
+        case 'write':
+          return { name: 'write_file', input: { file_path: tool.path, content: tool.content } };
+        case 'edit':
+          return {
+            name: 'edit_file',
+            input: {
+              file_path: tool.path,
+              old_string: tool.oldText,
+              new_string: tool.newText,
+              ...(tool.replaceAll === true ? { replace_all: true } : {}),
+            },
+          };
+        case 'grep':
+          return { name: 'grep', input: grepInputFields(tool) };
+        case 'list':
+          return { name: 'read_directory', input: { path: tool.path } };
+        case 'todo':
+          return { name: 'todo_write', input: { todos: tool.todos } };
+        case 'glob':
         case 'patch':
           return undefined;
       }

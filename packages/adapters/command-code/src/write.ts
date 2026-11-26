@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { extname, isAbsolute } from 'node:path';
 
-import { LossCollector } from '@sessionport/core';
+import { LossCollector, normalizeToolCall } from '@sessionport/core';
 import type { ExportCaps, IrBundle, IrContent, IrEvent, IrSession, LossEntry, WriteReport } from '@sessionport/core';
 
 import {
@@ -60,6 +60,8 @@ export interface WriteCommandCodeOptions {
   register?: boolean;
   /** 桌面端数据目录覆盖（默认 ~/Library/Application Support/Command Code） */
   userDataDir?: string;
+  /** 是否把跨源工具调用改写为 Command Code 原生工具（默认 true；--raw-tools 可关闭） */
+  normalizeTools?: boolean;
 }
 
 export interface WriteCommandCodeResult extends WriteReport {
@@ -167,7 +169,7 @@ function toolResultText(content: CcBlock[] | string | undefined): string {
   return content.map((block) => (block.type === 'text' ? block.text : '[' + block.type + ']')).join('\n');
 }
 
-async function buildItems(session: IrSession, options: { keepInjected?: boolean } = {}): Promise<BuildResult> {
+async function buildItems(session: IrSession, options: { keepInjected?: boolean; normalizeTools?: boolean } = {}): Promise<BuildResult> {
   const losses = new LossCollector();
   const counts = { messages: 0, toolCalls: 0, toolResults: 0, reasoning: 0 };
   const items: Item[] = [];
@@ -247,7 +249,22 @@ async function buildItems(session: IrSession, options: { keepInjected?: boolean 
     }
     if (event.kind === 'tool_call') {
       const chunk = ensureAssistant(at);
-      chunk.blocks.push({ type: 'tool_use', id: event.callId, name: event.name, input: event.input ?? {} });
+      const normalized = normalizeToolCall({
+        target: 'command-code',
+        sourceAgent: session.source.agent,
+        name: event.name,
+        input: event.input,
+        enabled: options.normalizeTools,
+      });
+      if (normalized.status === 'normalized') {
+        losses.add('command-code.tool-normalized', '工具调用已改写为目标端原生工具（--raw-tools 可关闭）', { severity: 'info' });
+      } else if (normalized.status === 'unmapped') {
+        losses.add('command-code.tool-unmapped', '工具调用无法映射到目标端原生工具，保留源端工具名', { severity: 'info' });
+      }
+      const isPlainObject =
+        normalized.input !== null && typeof normalized.input === 'object' && !Array.isArray(normalized.input);
+      const toolInput = normalized.status === 'unmapped' && !isPlainObject ? { input: normalized.input } : normalized.input;
+      chunk.blocks.push({ type: 'tool_use', id: event.callId, name: normalized.name, input: toolInput ?? {} });
       chunk.toolUseIds.push(event.callId);
       counts.toolCalls += 1;
       continue;
@@ -383,7 +400,7 @@ export async function writeCommandCodeSession(bundle: IrBundle, options: WriteCo
   const projectDir = commandCodeProjectDir(home, cwd);
   const paths = ccSessionPaths(projectDir, sessionId);
 
-  const built = await buildItems(session, { keepInjected: options.keepInjected });
+  const built = await buildItems(session, { keepInjected: options.keepInjected, normalizeTools: options.normalizeTools });
   const items = repairToolPairs(built.items, built.losses);
   const rows = materialize(items, { sessionId, cwd, model, losses: built.losses });
   const header: CcSessionHeader = {
