@@ -111,7 +111,8 @@ system prompt）和**可修的能力缺口**（无 sidechain 的目标端的子�
 详见 [DESIGN.md §6.1](./DESIGN.md)。
 
 跨端导出时，常见工具调用（shell/read/write/edit/grep/glob/list/todo）默认会改写为目标端原生工具
-（`claude-code`、`codex`、`opencode`、`cursor`），改写与未命中条目均会写入损失清单；传 `--raw-tools` 可保留源端原始工具名。
+（`claude-code`、`codex`、`opencode`、`cursor`、`command-code`、`qoder`），改写与未命中条目均会写入损失清单；
+传 `--raw-tools` 可保留源端原始工具名。
 
 ## 命令
 
@@ -133,8 +134,8 @@ Codex `threads` + `session_index.jsonl`）。在 `push`/`sync` 时传 `--raw-too
 大会话：`dsh` 目标支持 `--slim`——截断工具结果/参数、较早的 step 只保留消息、丢弃 reasoning，
 让导入的会话装进目标模型的上下文窗口（每一处裁剪都会进损失清单）。
 
-桌面端迁移页对 `dsh` 目标提供同样的选择（压缩 / 全量 / 精简），外加摘要引擎选择（抽取式 / Claude / Codex）——
-LLM 摘要保持可选，默认抽取式。
+桌面端迁移页同样暴露了跨源工具归一开关，并对 `dsh` 目标提供模式选择（压缩 / 全量 / 精简）与摘要引擎选择
+（抽取式 / Claude / Codex）—— LLM 摘要保持可选，默认抽取式。
 
 `--compact` 是「日志无损」的变体：完整事件日志全部保留，并写入**DSH 原生 compaction 链**
 （`compaction/start` → `compaction/summary` → checkpoint `surfaceOp: replace` → `compaction/end`），

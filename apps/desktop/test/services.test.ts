@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -106,6 +106,91 @@ test('sync 语义：fresh -> up-to-date -> diverged 拒绝 -> fork 另建（用�
 
     const afterFork = await previewMigration('codex', ref, 'claude-code', { stateHome, home: claudeHome });
     assert.equal(afterFork.sync.decision, 'up-to-date');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function writeCodexFixtureFile(dir: string, sessionUuid = '11111111-2222-4333-8444-555555555555'): string {
+  const file = join(dir, `rollout-2026-11-20T00-00-00-${sessionUuid}.jsonl`);
+  const rows = [
+    {
+      timestamp: '2026-11-20T00:00:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: sessionUuid,
+        timestamp: '2026-11-20T00:00:00.000Z',
+        cwd: '/tmp/desktop-fixture',
+        originator: 'codex_cli_rs',
+        cli_version: '0.171.0',
+      },
+    },
+    {
+      timestamp: '2026-11-20T00:00:01.000Z',
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '列文件' }] },
+    },
+    {
+      timestamp: '2026-11-20T00:00:02.000Z',
+      type: 'response_item',
+      payload: { type: 'function_call', name: 'exec_command', call_id: 'call_desktop_1', arguments: '{"cmd":"ls"}' },
+    },
+    {
+      timestamp: '2026-11-20T00:00:03.000Z',
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'call_desktop_1', output: 'a.ts' },
+    },
+  ];
+  writeFileSync(file, rows.map((row) => JSON.stringify(row)).join('\n') + '\n', 'utf8');
+  return file;
+}
+
+test('qoder 目标路由与 adapter 写入：不再误走 opencode，且支持 diverged force 覆盖', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sessionport-desktop-qoder-'));
+  const stateHome = join(dir, 'state');
+  const qoderHome = join(dir, 'qoder');
+  try {
+    const srcFile = writeCodexFixtureFile(dir);
+    const ref = { nativePath: srcFile };
+    const preview = await previewMigration('codex', ref, 'qoder', { stateHome, home: qoderHome });
+    assert.equal(preview.target, 'qoder');
+    assert.equal(preview.sync.decision, 'fresh');
+    assert.ok(preview.losses.some((loss) => loss.code === 'qoder.tool-normalized'));
+
+    const run = await runMigration('codex', ref, 'qoder', { stateHome, home: qoderHome });
+    assert.equal(run.refused, undefined);
+    assert.equal(run.target, 'qoder');
+    assert.ok(run.paths[0]?.endsWith('.jsonl'));
+    assert.ok(existsSync(run.paths[0]!));
+
+    // 目标文件追加一行后，force 模式应经 allowOverwrite -> overwrite: true 成功备份并覆写
+    appendFileSync(run.paths[0]!, JSON.stringify({ type: 'custom-title', customTitle: 'edited' }) + '\n');
+    const forced = await runMigration('codex', ref, 'qoder', { stateHome, home: qoderHome, onDiverged: 'force' });
+    assert.equal(forced.refused, undefined);
+    assert.ok(forced.losses.some((loss) => loss.code === 'qoder.backup'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('normalizeTools：默认归一化，设为 false 时保留源工具名并跳过工具映射损失', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sessionport-desktop-raw-tools-'));
+  const stateHome = join(dir, 'state');
+  const claudeHome = join(dir, 'claude');
+  try {
+    const srcFile = writeCodexFixtureFile(dir, '22222222-2222-4333-8444-555555555555');
+    const ref = { nativePath: srcFile };
+
+    const normalizedPreview = await previewMigration('codex', ref, 'claude-code', { stateHome, home: claudeHome });
+    assert.ok(normalizedPreview.losses.some((loss) => loss.code === 'claude.tool-normalized'));
+
+    const rawPreview = await previewMigration('codex', ref, 'claude-code', { stateHome, home: claudeHome, normalizeTools: false });
+    assert.ok(!rawPreview.losses.some((loss) => loss.code === 'claude.tool-normalized'));
+
+    const rawRun = await runMigration('codex', ref, 'claude-code', { stateHome, home: claudeHome, normalizeTools: false });
+    assert.equal(rawRun.refused, undefined);
+    const written = readFileSync(rawRun.paths[0]!, 'utf8');
+    assert.ok(written.includes('"name":"exec_command"'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -21,13 +21,13 @@
 
 ---
 
-## 2. 当前状态（截至 2026-11-21）
+## 2. 当前状态（截至 2026-11-26）
 
 | 项 | 值 |
 |---|---|
-| 分支 | `main`（含 `v0.1.11` 与 Cursor 3.31.15 桌面复核记录，具体见 `git log -n 5`） |
+| 分支 | `main`（含 Phase 1 / Phase 1.5：Adapter 契约与 CLI/桌面端注册表、工具语义归一、Codex 0.169+ 噪音归类，具体见 `git log -n 6`） |
 | 最新发布 | **v0.1.11**（npm `sesport@0.1.11` + GitHub Release 4 个 macOS 产物） |
-| 测试 | 241 tests / 234 pass / **0 fail** / 7 skip；桌面端 `apps/desktop/test/*.test.ts` **33/33 pass** |
+| 测试 | 256 tests / 249 pass / **0 fail** / 7 skip；桌面端 `apps/desktop/test/*.test.ts` **35/35 pass** |
 | 适配器 | 9 个：claude-code / codex / command-code / cursor / dsh / kimi-code / opencode / qoder / workbuddy |
 
 ### 可读可写矩阵

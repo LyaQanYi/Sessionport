@@ -10,15 +10,21 @@ All notable changes to this project are documented here. Format loosely follows
 - **Cross-agent tool semantic normalization (enabled by default; `--raw-tools` to opt out).**
   `packages/core/src/tools.ts` classifies common coding tools (`shell`, `read`, `write`, `edit`,
   `patch`, `grep`, `glob`, `list`, `todo`) and renders target-native tool calls for `claude-code`,
-  `codex` (including `custom_tool_call` `apply_patch`), `opencode`, and `cursor` fallback, while
-  preserving native-named tools and recording `<prefix>.tool-normalized` / `<prefix>.tool-unmapped`
-  info entries in the loss list.
-- **`AgentAdapter` contract and CLI adapter registry.** Added `AgentAdapter` in
-  `packages/core/src/adapter.ts` with adapter implementations across all 9 harnesses and lazy
-  registry dispatch in `packages/cli/src/adapters.ts`.
+  `codex` (including `custom_tool_call` `apply_patch`), `opencode`, `cursor` fallback,
+  `command-code`, and `qoder`, while preserving native-named tools and recording
+  `<prefix>.tool-normalized` / `<prefix>.tool-unmapped` info entries in the loss list.
+- **`AgentAdapter` contract, CLI registry, and desktop adapter migration.** Added `AgentAdapter` in
+  `packages/core/src/adapter.ts` with adapter implementations across all 9 harnesses, lazy
+  registry dispatch in `packages/cli/src/adapters.ts` and `apps/desktop/src/main/adapters.ts`, and
+  the cross-agent tool-normalization toggle on the desktop migration page.
 
 ### Changed
 
+- **Codex 0.169+ / 0.171 runtime noise classification.** Classified
+  `inter_agent_communication_metadata`, `response_item:additional_tools`,
+  `response_item:configuration_update`, `response_item:agent_message`, and
+  `additional_context_tool_output` ambient `function_call_output` rows without `call_id` into
+  structured counters and info notices instead of `unknown-line` / `orphan-tool-result` warnings.
 - **Cursor 3.31.15 desktop rendering re-verified (2026-11-21).** Re-checked a freshly pushed
   229-bubble session and the 4-tools regression composer in a `sandbox-exec`-isolated copy of
   Cursor 3.31.15 via CDP and visual screenshot inspection: human messages, assistant markdown,
@@ -29,6 +35,11 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Fixed
 
+- **Desktop `cursor` / `qoder` target routing, DSH `migrate:run` forwarding, and `app:openPath`.**
+  Replaced legacy desktop `writeTarget` / `countTargetUnits` switches (which lacked `cursor` /
+  `qoder` branches and fell through to `opencode`) with unified `AgentAdapter` dispatch, forwarded
+  DSH compression/summary flags in `migrate:run`, and added `cursor` / `qoder` / `workbuddy` keys to
+  `app:openPath`.
 - **Codex `custom_tool_call` / `custom_tool_call_output` read, write, and verify support.** Codex
   0.169+ emits `custom_tool_call` (such as `exec` and `apply_patch`) in rollouts; the Codex
   reader now parses them with raw string inputs instead of skipping them as unknown lines, the

@@ -43,6 +43,7 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
   const [target, setTarget] = useState<AgentId | null>(null);
   const [register, setRegister] = useState(true);
   const [includeChildren, setIncludeChildren] = useState(false);
+  const [normalizeTools, setNormalizeTools] = useState(true);
   const [dshMode, setDshMode] = useState<'full' | 'slim' | 'compact'>('compact');
   const [summaryEngine, setSummaryEngine] = useState<'off' | 'claude' | 'codex'>('off');
   const [mode, setMode] = useState<DivergedMode>('auto');
@@ -73,21 +74,24 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
     if (targets.length > 0) setTarget(targets[0] ?? null);
   }, [target, targets]);
 
+  const migrationOptions = () => ({
+    register,
+    includeChildren,
+    normalizeTools,
+    ...(target === 'dsh'
+      ? {
+          slim: dshMode === 'slim',
+          compact: dshMode === 'compact',
+          ...(summaryEngine === 'off'
+            ? {}
+            : { summaryCommand: summaryEngine === 'claude' ? 'claude -p' : 'codex exec -' }),
+        }
+      : {}),
+  });
+
   const preview = useMutation({
     mutationFn: () =>
-      api.previewMigration(source!.agent, sessionRefOf(source!), target!, {
-        register,
-        includeChildren,
-        ...(target === 'dsh'
-          ? {
-              slim: dshMode === 'slim',
-              compact: dshMode === 'compact',
-              ...(summaryEngine === 'off'
-                ? {}
-                : { summaryCommand: summaryEngine === 'claude' ? 'claude -p' : 'codex exec -' }),
-            }
-          : {}),
-      }),
+      api.previewMigration(source!.agent, sessionRefOf(source!), target!, migrationOptions()),
   });
   const run = useMutation({
     mutationFn: () =>
@@ -95,18 +99,8 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
         agent: source!.agent,
         ref: sessionRefOf(source!),
         target: target!,
-        register,
-        includeChildren,
         onDiverged: mode,
-        ...(target === 'dsh'
-          ? {
-              slim: dshMode === 'slim',
-              compact: dshMode === 'compact',
-              ...(summaryEngine === 'off'
-                ? {}
-                : { summaryCommand: summaryEngine === 'claude' ? 'claude -p' : 'codex exec -' }),
-            }
-          : {}),
+        ...migrationOptions(),
       }),
     onSuccess: (result) => {
       if (!result.refused) preview.mutate();
@@ -270,6 +264,9 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
               </CheckboxRow>
               <CheckboxRow checked={includeChildren} onChange={setIncludeChildren}>
                 {t('migrate.includeChildren')}
+              </CheckboxRow>
+              <CheckboxRow checked={normalizeTools} onChange={setNormalizeTools}>
+                {t('migrate.normalizeTools')}
               </CheckboxRow>
               <Button
                 className="ml-auto"

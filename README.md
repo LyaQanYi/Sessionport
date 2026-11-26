@@ -132,8 +132,8 @@ bindings are never migrated; the target keeps its own default model and system p
 [DESIGN.md §6.1](./DESIGN.md).
 
 Tool calls (shell/read/write/edit/grep/glob/list/todo) are rewritten by default to the target's native
-tools (`claude-code`, `codex`, `opencode`, `cursor`), with every rewrite or fallback recorded in the
-loss list; pass `--raw-tools` to keep source tool names unchanged.
+tools (`claude-code`, `codex`, `opencode`, `cursor`, `command-code`, `qoder`), with every rewrite or fallback
+recorded in the loss list; pass `--raw-tools` to keep source tool names unchanged.
 
 ## Commands
 
@@ -156,8 +156,9 @@ Large sessions: the `dsh` target supports `--slim` — tool results/call argumen
 only messages, and reasoning is dropped, so the imported session fits the target model's context window
 (each cut is reported in the loss list).
 
-The desktop migration page exposes the same choice for the `dsh` target (compressed / full / slim) plus a
-summary engine selector (extractive / Claude / Codex) — LLM summaries stay opt-in and default to extractive.
+The desktop migration page exposes the cross-agent tool-normalization toggle alongside the `dsh` target
+options (compressed / full / slim) and summary engine selector (extractive / Claude / Codex) — LLM
+summaries stay opt-in and default to extractive.
 
 `--compact` is the lossless-log variant: the full event log is kept and a **native DSH compaction chain**
 (`compaction/start` → `compaction/summary` → checkpoint `surfaceOp: replace` → `compaction/end`) is written,

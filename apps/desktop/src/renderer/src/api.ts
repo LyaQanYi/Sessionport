@@ -1,5 +1,5 @@
 /** renderer 侧的类型化 API（与主进程 services.ts 的 DTO 对齐） */
-export type AgentId = 'claude-code' | 'command-code' | 'dsh' | 'codex' | 'opencode' | 'kimi-code';
+export type AgentId = 'claude-code' | 'command-code' | 'dsh' | 'codex' | 'opencode' | 'kimi-code' | 'cursor' | 'qoder' | 'workbuddy';
 
 export interface SessionRow {
   agent: AgentId;
@@ -111,6 +111,8 @@ export interface MigrationOptions {
   compactKeepRecentSteps?: number;
   /** dsh：外部 CLI 摘要命令（如 claude -p） */
   summaryCommand?: string;
+  /** 是否把跨源工具调用归一化为目标端原生工具（默认 true） */
+  normalizeTools?: boolean;
 }
 
 export interface Capabilities {

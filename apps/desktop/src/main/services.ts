@@ -7,10 +7,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { describeDecision, findRef, loadRegistry, OFFICIAL_IMPORTS, officialSupport, planSync, saveRegistry, sessionportHome, sourceKeyOf, upsertRef, verifyOfficialImport } from '@sessionport/core';
+import { READABLE_AGENTS, WRITABLE_AGENTS, getAdapter } from './adapters.ts';
 import { AppError } from './errors.ts';
-import type { AgentId, ExternalRef, IrBundle, IrSession, LossEntry, OfficialSupport, OfficialTarget, OfficialVerifyResult, SyncDecision } from '@sessionport/core';
+import type { AdapterWriteOptions, AgentAdapter, AgentId, ExternalRef, IrBundle, IrSession, LossEntry, OfficialSupport, OfficialTarget, OfficialVerifyResult, SyncDecision } from '@sessionport/core';
 
-export type ReadableAgent = 'kimi-code' | 'command-code' | 'dsh' | 'codex' | 'opencode';
+export type ReadableAgent = AgentId;
 
 export interface SessionRow {
   agent: AgentId;
@@ -116,6 +117,8 @@ export interface MigrationOptions {
   compactKeepRecentSteps?: number;
   /** dsh 目标：用外部 CLI 生成 LLM 摘要（prompt 走 stdin），如 "claude -p" */
   summaryCommand?: string;
+  /** 是否把跨源工具调用归一化为目标 harness 原生工具（默认 true） */
+  normalizeTools?: boolean;
 }
 
 export interface MigrationResult {
@@ -135,17 +138,11 @@ export interface SessionRefInput {
   sessionId?: string;
 }
 
-const READERS: Record<string, (input: SessionRefInput) => Promise<IrBundle>> = {
-  'claude-code': async (input) => (await import('@sessionport/adapter-claude-code')).readClaudeSession(requirePath(input)),
-  'kimi-code': async (input) => (await import('@sessionport/adapter-kimi-code')).readKimiBundle(requirePath(input)),
-  'command-code': async (input) => (await import('@sessionport/adapter-command-code')).readCommandCodeSession(requirePath(input)),
-  dsh: async (input) => (await import('@sessionport/adapter-dsh')).readDshSession(requirePath(input)),
-  codex: async (input) => (await import('@sessionport/adapter-codex')).readCodexSession(input.sessionId ?? requirePath(input)),
-  opencode: async (input) => (await import('@sessionport/adapter-opencode')).readOpencodeSession(requireId(input)),
-  cursor: async (input) => (await import('@sessionport/adapter-cursor')).readCursorSession(input.sessionId ?? requirePath(input)),
-  qoder: async (input) => (await import('@sessionport/adapter-qoder')).readQoderSession(requirePath(input)),
-  workbuddy: async (input) => (await import('@sessionport/adapter-workbuddy')).readWorkBuddySession(requirePath(input)),
-};
+function resolveReadInput(agent: AgentId, input: SessionRefInput): string {
+  if (agent === 'opencode') return requireId(input);
+  if (agent === 'codex' || agent === 'cursor') return input.sessionId ?? requirePath(input);
+  return requirePath(input);
+}
 
 function requirePath(input: SessionRefInput): string {
   if (!input.nativePath) {
@@ -161,8 +158,40 @@ function requireId(input: SessionRefInput): string {
   return input.sessionId;
 }
 
-export function readableAgents(): ReadableAgent[] {
-  return Object.keys(READERS) as ReadableAgent[];
+export function readableAgents(): AgentId[] {
+  return [...READABLE_AGENTS];
+}
+
+export function writableAgents(): AgentId[] {
+  return [...WRITABLE_AGENTS];
+}
+
+async function requireReader(
+  agent: AgentId,
+  code: string,
+  message: string,
+): Promise<AgentAdapter & { read: NonNullable<AgentAdapter['read']> }> {
+  const adapter = await getAdapter(agent);
+  if (!adapter?.read) {
+    throw new AppError(code, message, {
+      agent,
+      agents: readableAgents().join(', '),
+    });
+  }
+  return adapter as AgentAdapter & { read: NonNullable<AgentAdapter['read']> };
+}
+
+async function requireWriter(
+  target: AgentId,
+): Promise<AgentAdapter & { write: NonNullable<AgentAdapter['write']> }> {
+  const adapter = await getAdapter(target);
+  if (!adapter?.write) {
+    throw new AppError('session.noWriter', target + ' 还没有 writer（当前可写：' + writableAgents().join(', ') + '）', {
+      agent: target,
+      agents: writableAgents().join(', '),
+    });
+  }
+  return adapter as AgentAdapter & { write: NonNullable<AgentAdapter['write']> };
 }
 
 /** 列出所有 agent 的会话。core 的 listAllSessions 落地前，先兜底 codex。 */
@@ -248,14 +277,12 @@ function summarizeChildren(bundle: IrBundle): ChildSessionSummary[] {
 }
 
 export async function readSession(agent: AgentId, ref: SessionRefInput, limit = 400, childId?: string): Promise<ReadResult> {
-  const reader = READERS[agent];
-  if (!reader) {
-    throw new AppError('session.noReader', agent + ' 还没有 reader（当前可读：' + readableAgents().join(', ') + '）', {
-      agent,
-      agents: readableAgents().join(', '),
-    });
-  }
-  const bundle = await reader(ref);
+  const adapter = await requireReader(
+    agent,
+    'session.noReader',
+    agent + ' 还没有 reader（当前可读：' + readableAgents().join(', ') + '）',
+  );
+  const bundle = await adapter.read(resolveReadInput(agent, ref));
   const picked = selectSession(bundle, childId);
   const events = picked.session.events;
   const rows: SessionEventRow[] = [];
@@ -291,127 +318,43 @@ export async function readSession(agent: AgentId, ref: SessionRefInput, limit = 
 
 /** 加载源会话（桌面端内部用） */
 export async function loadSource(agent: AgentId, ref: SessionRefInput): Promise<IrBundle> {
-  const reader = READERS[agent];
-  if (!reader) {
-    throw new AppError('session.noReaderMigrate', agent + ' 没有 reader，无法迁移', {
-      agent,
-      agents: readableAgents().join(', '),
-    });
-  }
-  return reader(ref);
+  const adapter = await requireReader(
+    agent,
+    'session.noReaderMigrate',
+    agent + ' 没有 reader，无法迁移',
+  );
+  return adapter.read(resolveReadInput(agent, ref));
 }
 
-const WRITERS: Record<string, (bundle: IrBundle, options: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
-  'claude-code': async (bundle, options) => (await import('@sessionport/adapter-claude-code')).writeClaudeSession(bundle, options as never) as unknown as Promise<Record<string, unknown>>,
-  'command-code': async (bundle, options) => (await import('@sessionport/adapter-command-code')).writeCommandCodeSession(bundle, options as never) as unknown as Promise<Record<string, unknown>>,
-  dsh: async (bundle, options) => (await import('@sessionport/adapter-dsh')).writeDshSession(bundle, options as never) as unknown as Promise<Record<string, unknown>>,
-  codex: async (bundle, options) => (await import('@sessionport/adapter-codex')).writeCodexSession(bundle, options as never) as unknown as Promise<Record<string, unknown>>,
-  opencode: async (bundle, options) => (await import('@sessionport/adapter-opencode')).writeOpencodeSession(bundle, options as never) as unknown as Promise<Record<string, unknown>>,
-  cursor: async (bundle, options) => (await import('@sessionport/adapter-cursor')).writeCursorSession(bundle, { ...(options as object), composerId: (options as { id?: string }).id, confirmReal: (options as { dryRun?: boolean }).dryRun !== true } as never) as unknown as Promise<Record<string, unknown>>,
-  qoder: async (bundle, options) => (await import('@sessionport/adapter-qoder')).writeQoderSession(bundle, { ...(options as object), sessionId: (options as { id?: string }).id } as never) as unknown as Promise<Record<string, unknown>>,
-};
-
-export function writableAgents(): AgentId[] {
-  return Object.keys(WRITERS) as AgentId[];
-}
-
-interface WriteOutcome {
-  sessionId: string;
-  paths: string[];
-  losses: LossEntry[];
-  caps: Record<string, unknown>;
-  imported: boolean;
-  units: number;
-  unit: 'rows' | 'events';
-}
-
-/** 调目标 adapter 写（或 dryRun 预览），返回统一的度量 */
-async function writeTarget(
+function buildAdapterWriteOpts(
   target: AgentId,
   bundle: IrBundle,
-  options: MigrationOptions & { dryRun?: boolean; id?: string; filePath?: string },
-): Promise<WriteOutcome> {
-  const base = {
-    dryRun: options.dryRun === true,
-    includeChildren: options.includeChildren === true,
-    model: options.model,
-    register: options.register === true && options.dryRun !== true,
-  };
-  if (target === 'claude-code') {
-    const mod = await import('@sessionport/adapter-claude-code');
-    const report = await mod.writeClaudeSession(bundle, { ...base, configDir: options.home, sessionId: options.id, cwd: bundle.root.meta.cwd });
-    return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.rows.length, unit: 'rows' };
-  }
-  if (target === 'command-code') {
-    const mod = await import('@sessionport/adapter-command-code');
-    const report = await mod.writeCommandCodeSession(bundle, { ...base, home: options.home, id: options.id });
-    return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.rows.length + 1, unit: 'rows' };
-  }
-  if (target === 'dsh') {
-    const mod = await import('@sessionport/adapter-dsh');
-    const report = await mod.writeDshSession(bundle, {
-      ...base,
-      home: options.home,
-      id: options.id,
-      slim: options.slim === true,
-      compact: options.compact === true,
-      compactBudgetChars: options.compactBudgetChars,
-      compactKeepRecentSteps: options.compactKeepRecentSteps,
-      summaryCommand: options.summaryCommand,
-    });
-    return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.written.events, unit: 'events' };
-  }
-  if (target === 'codex') {
-    const mod = await import('@sessionport/adapter-codex');
-    const report = await mod.writeCodexSession(bundle, { ...base, home: options.home, id: options.id, filePath: options.filePath });
-    return { sessionId: report.sessionId, paths: report.paths, losses: report.losses, caps: report.caps as unknown as Record<string, unknown>, imported: false, units: report.rows.length + 1, unit: 'rows' };
-  }
-  const mod = await import('@sessionport/adapter-opencode');
-  const report = await mod.writeOpencodeSession(bundle, { dryRun: options.dryRun === true, model: options.model, id: options.id });
+  options: MigrationOptions & { dryRun: boolean; id?: string; targetPath?: string; allowOverwrite?: boolean },
+): AdapterWriteOptions {
+  const register = options.register === true && !options.dryRun;
   return {
-    sessionId: report.sessionId,
-    paths: report.paths,
-    losses: report.losses,
-    caps: report.caps as unknown as Record<string, unknown>,
-    imported: report.imported,
-    units: report.exportData.messages?.length ?? 0,
-    unit: 'rows',
+    dryRun: options.dryRun,
+    id: options.id,
+    home: options.home,
+    model: options.model,
+    cwd: bundle.root.meta.cwd,
+    includeChildren: options.includeChildren === true,
+    register,
+    registerWorkspace: register,
+    normalizeTools: options.normalizeTools ?? true,
+    targetPath: options.targetPath,
+    slim: options.slim === true,
+    compact: options.compact === true,
+    compactBudgetChars: options.compactBudgetChars,
+    compactKeepRecentSteps: options.compactKeepRecentSteps,
+    summaryCommand: options.summaryCommand,
+    ...(target === 'cursor' && !options.dryRun
+      ? { confirmReal: true, ...(options.allowOverwrite ? { allowOverwrite: true } : {}) }
+      : {}),
+    ...(target === 'qoder' && !options.dryRun && options.allowOverwrite
+      ? { overwrite: true }
+      : {}),
   };
-}
-
-async function countLineFile(path: string | undefined): Promise<{ exists: boolean; units: number }> {
-  if (!path) return { exists: false, units: 0 };
-  try {
-    const { readFile } = await import('node:fs/promises');
-    const text = await readFile(path, 'utf8');
-    return { exists: true, units: text.split('\n').filter((line) => line.trim().length > 0).length };
-  } catch {
-    return { exists: false, units: 0 };
-  }
-}
-
-async function countTargetUnits(
-  target: AgentId,
-  state: { targetId?: string; targetPath?: string; home?: string },
-): Promise<{ exists: boolean; units: number }> {
-  if (target === 'claude-code' || target === 'codex') return countLineFile(state.targetPath);
-  if (target === 'command-code') {
-    const mod = await import('@sessionport/adapter-command-code');
-    return mod.countCommandCodeTarget(state.targetPath ?? '');
-  }
-  if (target === 'dsh') {
-    if (!state.targetId) return { exists: false, units: 0 };
-    const mod = await import('@sessionport/adapter-dsh');
-    return mod.countDshTarget({ home: state.home, sessionId: state.targetId });
-  }
-  if (!state.targetId) return { exists: false, units: 0 };
-  try {
-    const mod = await import('@sessionport/adapter-opencode');
-    const raw = await mod.exportOpencodeSession(state.targetId);
-    return mod.countOpencodeTarget(raw);
-  } catch {
-    return { exists: false, units: 0 };
-  }
 }
 
 interface PreparedMigration {
@@ -427,12 +370,7 @@ interface PreparedMigration {
 }
 
 async function prepareMigration(agent: AgentId, ref: SessionRefInput, target: AgentId, options: MigrationOptions): Promise<PreparedMigration> {
-  if (!WRITERS[target]) {
-    throw new AppError('session.noWriter', target + ' 还没有 writer（当前可写：' + writableAgents().join(', ') + '）', {
-      agent: target,
-      agents: writableAgents().join(', '),
-    });
-  }
+  const writer = await requireWriter(target);
   const bundle = await loadSource(agent, ref);
   const sourceKey = sourceKeyOf(bundle.root.source, bundle.root.id);
   const registry = loadRegistry(options.stateHome);
@@ -441,9 +379,18 @@ async function prepareMigration(agent: AgentId, ref: SessionRefInput, target: Ag
   const filePath = extRef?.targetPath;
 
   // dryRun 预测本次会写到哪里（fresh 时用来算目标端初始状态）
-  const preview = await writeTarget(target, bundle, { ...options, dryRun: true, id, filePath });
+  const preview = await writer.write(
+    bundle,
+    buildAdapterWriteOpts(target, bundle, { ...options, dryRun: true, id, targetPath: filePath }),
+  );
   const targetPath = filePath ?? preview.paths[0];
-  const current = extRef === undefined ? { exists: false, units: 0 } : await countTargetUnits(target, { targetId: extRef.targetId, targetPath, home: options.home });
+  const countOutcome = targetPath
+    ? { ...preview, paths: [targetPath, ...preview.paths.slice(1)] }
+    : preview;
+  const current =
+    extRef === undefined || !writer.countTarget
+      ? { exists: false, units: 0 }
+      : await writer.countTarget(countOutcome, { home: options.home, targetPath });
   const decision: SyncDecision = planSync({
     ref: extRef,
     source: { head: bundle.root.head, events: bundle.root.events.length },
@@ -462,7 +409,17 @@ async function prepareMigration(agent: AgentId, ref: SessionRefInput, target: Ag
     stateFile: sessionportHome(options.stateHome) + '/registry.json',
   };
 
-  return { bundle, sync, losses: preview.losses, caps: preview.caps, registry, extRef, stateHome: options.stateHome, targetId: id, targetPath };
+  return {
+    bundle,
+    sync,
+    losses: (preview.report.losses ?? []) as LossEntry[],
+    caps: (preview.report.caps ?? {}) as Record<string, unknown>,
+    registry,
+    extRef,
+    stateHome: options.stateHome,
+    targetId: id,
+    targetPath,
+  };
 }
 
 export async function previewMigration(agent: AgentId, ref: SessionRefInput, target: AgentId, options: MigrationOptions = {}): Promise<MigrationPreview> {
@@ -518,17 +475,22 @@ export async function runMigration(
   }
 
   const fork = prepared.sync.decision === 'diverged' && mode === 'fork';
-  const outcome = await writeTarget(target, prepared.bundle, {
-    ...options,
-    dryRun: false,
-    id: fork ? undefined : (options.targetId ?? prepared.extRef?.targetId),
-    filePath: fork ? undefined : prepared.extRef?.targetPath,
-  });
+  const writer = await requireWriter(target);
+  const outcome = await writer.write(
+    prepared.bundle,
+    buildAdapterWriteOpts(target, prepared.bundle, {
+      ...options,
+      dryRun: false,
+      id: fork ? undefined : (options.targetId ?? prepared.extRef?.targetId),
+      targetPath: fork ? undefined : prepared.extRef?.targetPath,
+      allowOverwrite: prepared.extRef !== undefined && !fork,
+    }),
+  );
 
   const nextRef: ExternalRef = {
     sourceKey: prepared.sync.sourceKey,
     target,
-    targetId: outcome.sessionId,
+    targetId: outcome.targetId,
     targetPath: outcome.paths[0] ?? prepared.targetPath ?? '',
     unit: outcome.unit,
     targetUnits: outcome.units,
@@ -541,11 +503,11 @@ export async function runMigration(
 
   return {
     target,
-    sessionId: outcome.sessionId,
+    sessionId: outcome.targetId,
     paths: outcome.paths,
-    losses: outcome.losses,
-    imported: outcome.imported,
-    sync: { ...prepared.sync, targetId: outcome.sessionId, targetPath: nextRef.targetPath, targetUnits: outcome.units },
+    losses: (outcome.report.losses ?? []) as LossEntry[],
+    imported: outcome.report.imported === true,
+    sync: { ...prepared.sync, targetId: outcome.targetId, targetPath: nextRef.targetPath, targetUnits: outcome.units },
   };
 }
 

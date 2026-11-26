@@ -5,8 +5,55 @@ import { z } from 'zod';
 
 import { AppError } from './errors.ts';
 import { detectHomes, listSessions, officialImports, officialVerify, pathsInfo, previewMigration, readSession, readableAgents, runMigration, writableAgents } from './services.ts';
+import type { MigrationOptions } from './services.ts';
 
-const agentSchema = z.enum(['claude-code', 'command-code', 'dsh', 'codex', 'opencode', 'kimi-code']);
+const agentSchema = z.enum([
+  'claude-code',
+  'command-code',
+  'dsh',
+  'codex',
+  'opencode',
+  'kimi-code',
+  'cursor',
+  'qoder',
+  'workbuddy',
+]);
+
+const migrateInputSchema = z.object({
+  agent: agentSchema,
+  nativePath: z.string().optional(),
+  sessionId: z.string().optional(),
+  target: agentSchema,
+  home: z.string().optional(),
+  model: z.string().optional(),
+  register: z.boolean().optional(),
+  includeChildren: z.boolean().optional(),
+  normalizeTools: z.boolean().optional(),
+  stateHome: z.string().optional(),
+  onDiverged: z.enum(['auto', 'force', 'fork']).optional(),
+  slim: z.boolean().optional(),
+  compact: z.boolean().optional(),
+  compactBudgetChars: z.number().int().positive().optional(),
+  compactKeepRecentSteps: z.number().int().positive().optional(),
+  summaryCommand: z.string().optional(),
+});
+
+function extractMigrationOptions(input: z.infer<typeof migrateInputSchema>): MigrationOptions {
+  return {
+    home: input.home,
+    model: input.model,
+    register: input.register,
+    includeChildren: input.includeChildren,
+    normalizeTools: input.normalizeTools,
+    stateHome: input.stateHome,
+    onDiverged: input.onDiverged,
+    slim: input.slim,
+    compact: input.compact,
+    compactBudgetChars: input.compactBudgetChars,
+    compactKeepRecentSteps: input.compactKeepRecentSteps,
+    summaryCommand: input.summaryCommand,
+  };
+}
 
 const channelSchemas = {
   'sessions:list': z.object({}).default({}),
@@ -18,43 +65,11 @@ const channelSchemas = {
     /** 读子代理会话时传 IR child session id（不传则读根会话） */
     childId: z.string().optional(),
   }),
-  'migrate:preview': z.object({
-    agent: agentSchema,
-    nativePath: z.string().optional(),
-    sessionId: z.string().optional(),
-    target: agentSchema,
-    home: z.string().optional(),
-    model: z.string().optional(),
-    register: z.boolean().optional(),
-    includeChildren: z.boolean().optional(),
-    stateHome: z.string().optional(),
-    onDiverged: z.enum(['auto', 'force', 'fork']).optional(),
-    slim: z.boolean().optional(),
-    compact: z.boolean().optional(),
-    compactBudgetChars: z.number().int().positive().optional(),
-    compactKeepRecentSteps: z.number().int().positive().optional(),
-    summaryCommand: z.string().optional(),
-  }),
-  'migrate:run': z.object({
-    agent: agentSchema,
-    nativePath: z.string().optional(),
-    sessionId: z.string().optional(),
-    target: agentSchema,
-    register: z.boolean().optional(),
-    includeChildren: z.boolean().optional(),
-    home: z.string().optional(),
-    model: z.string().optional(),
-    stateHome: z.string().optional(),
-    onDiverged: z.enum(['auto', 'force', 'fork']).optional(),
-    slim: z.boolean().optional(),
-    compact: z.boolean().optional(),
-    compactBudgetChars: z.number().int().positive().optional(),
-    compactKeepRecentSteps: z.number().int().positive().optional(),
-    summaryCommand: z.string().optional(),
-  }),
+  'migrate:preview': migrateInputSchema,
+  'migrate:run': migrateInputSchema,
   'app:capabilities': z.object({}).default({}),
   'app:paths': z.object({}).default({}),
-  'app:openPath': z.object({ key: z.enum(['kimi', 'claude', 'commandCode', 'dsh', 'codex', 'opencode', 'registry']) }),
+  'app:openPath': z.object({ key: z.enum(['kimi', 'claude', 'commandCode', 'dsh', 'codex', 'opencode', 'cursor', 'qoder', 'workbuddy', 'registry']) }),
   'official:list': z.object({}).default({}),
   'official:verify': z.object({ target: z.enum(['zcode', 'qoder', 'cursor']), cwd: z.string().optional(), title: z.string().optional() }),
   'official:open': z.object({ target: z.enum(['zcode', 'qoder', 'cursor']) }),
@@ -71,30 +86,21 @@ export function registerIpc(): void {
   }));
   ipcMain.handle('migrate:preview', async (_event, payload: unknown) => wrap(() => {
     const input = channelSchemas['migrate:preview'].parse(payload);
-    return previewMigration(input.agent, { nativePath: input.nativePath, sessionId: input.sessionId }, input.target, {
-      home: input.home,
-      model: input.model,
-      register: input.register,
-      includeChildren: input.includeChildren,
-      stateHome: input.stateHome,
-      onDiverged: input.onDiverged,
-      slim: input.slim,
-      compact: input.compact,
-      compactBudgetChars: input.compactBudgetChars,
-      compactKeepRecentSteps: input.compactKeepRecentSteps,
-      summaryCommand: input.summaryCommand,
-    });
+    return previewMigration(
+      input.agent,
+      { nativePath: input.nativePath, sessionId: input.sessionId },
+      input.target,
+      extractMigrationOptions(input),
+    );
   }));
   ipcMain.handle('migrate:run', async (_event, payload: unknown) => wrap(() => {
     const input = channelSchemas['migrate:run'].parse(payload);
-    return runMigration(input.agent, { nativePath: input.nativePath, sessionId: input.sessionId }, input.target, {
-      register: input.register,
-      includeChildren: input.includeChildren,
-      home: input.home,
-      model: input.model,
-      stateHome: input.stateHome,
-      onDiverged: input.onDiverged,
-    });
+    return runMigration(
+      input.agent,
+      { nativePath: input.nativePath, sessionId: input.sessionId },
+      input.target,
+      extractMigrationOptions(input),
+    );
   }));
   ipcMain.handle('app:capabilities', async () => wrap(() => ({
     readable: readableAgents(),
