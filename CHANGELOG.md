@@ -3,7 +3,10 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
-## [Unreleased]
+## [0.1.12] — 2026-11-26
+
+npm: `sesport@0.1.12` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the
+`v0.1.12` GitHub release.
 
 ### Added
 
