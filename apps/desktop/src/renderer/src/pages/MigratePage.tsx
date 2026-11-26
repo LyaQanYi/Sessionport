@@ -1,14 +1,43 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, Check, CheckCircle2, Copy, ExternalLink, GitMerge, History, Info, ListChecks, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowDown,
+  ArrowLeftRight,
+  ArrowRight,
+  BookOpen,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  Copy,
+  ExternalLink,
+  FileText,
+  GitMerge,
+  History,
+  Info,
+  ListChecks,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+} from 'lucide-react';
 
 import { api, sessionRefOf } from '../api.ts';
-import type { AgentId, DivergedMode, HistoryRecordSummary, SessionRow } from '../api.ts';
-import { Badge, Button, Card, CheckboxRow, Select, Spinner, Topbar, cn } from '../ui.tsx';
-import type { OfficialTarget, OfficialVerifyRow } from '../api.ts';
-import { agentLabel } from '../agents.tsx';
+import type {
+  AgentId,
+  DivergedMode,
+  HistoryRecordSummary,
+  LossEntry,
+  OfficialSupportRow,
+  OfficialTarget,
+  OfficialVerifyRow,
+  SessionRow,
+  UndoResult,
+} from '../api.ts';
+import { AgentGlyph, agentLabel } from '../agents.tsx';
+import { SourceSessionPicker, TargetAgentSelector } from '../components/MigrateSelectors.tsx';
 import { useT } from '../i18n/I18nProvider.tsx';
-import type { MessageKey } from '../i18n/messages.ts';
+import type { MessageKey, MessageParams } from '../i18n/messages.ts';
+import { Badge, Button, Card, CheckboxRow, Spinner, Topbar, cn } from '../ui.tsx';
 
 const DECISION_TONE = {
   fresh: 'default',
@@ -44,13 +73,516 @@ const HISTORY_ACTION_KEY: Record<HistoryRecordSummary['action'], MessageKey> = {
   'desktop-migrate': 'migrate.history.action.desktop-migrate',
 };
 
+type CapBadgeVariant = 'success' | 'warning' | 'outline' | 'secondary';
+
+interface FormattedCap {
+  key: string;
+  label: string;
+  variant: CapBadgeVariant;
+}
+
+const CAP_ORDER = [
+  'nativeHistory',
+  'contextHandoff',
+  'createConversationApi',
+  'reasoning',
+  'toolResults',
+  'subagents',
+  'branching',
+  'modelPinned',
+];
+
+function formatCapabilities(
+  caps: Record<string, unknown>,
+  t: (key: MessageKey, params?: MessageParams) => string,
+): FormattedCap[] {
+  const entries = Object.entries(caps).filter(([key]) => key !== 'agent');
+  entries.sort(([a], [b]) => {
+    const idxA = CAP_ORDER.indexOf(a);
+    const idxB = CAP_ORDER.indexOf(b);
+    if (idxA === -1 && idxB === -1) return a.localeCompare(b);
+    if (idxA === -1) return 1;
+    if (idxB === -1) return -1;
+    return idxA - idxB;
+  });
+
+  return entries.map(([key, value]) => {
+    if (key === 'reasoning') {
+      if (value === 'plain') return { key, label: t('migrate.caps.reasoning.plain'), variant: 'success' };
+      if (value === 'opaque') return { key, label: t('migrate.caps.reasoning.opaque'), variant: 'outline' };
+      return { key, label: t('migrate.caps.reasoning.none'), variant: 'warning' };
+    }
+    if (key === 'toolResults') {
+      if (value === 'inline') return { key, label: t('migrate.caps.toolResults.inline'), variant: 'success' };
+      if (value === 'separate') return { key, label: t('migrate.caps.toolResults.separate'), variant: 'success' };
+      return { key, label: t('migrate.caps.toolResults.none'), variant: 'warning' };
+    }
+    if (key === 'branching') {
+      return {
+        key,
+        label: t(value === true ? 'migrate.caps.branching.true' : 'migrate.caps.branching.false'),
+        variant: value === true ? 'success' : 'outline',
+      };
+    }
+    if (key === 'subagents') {
+      return {
+        key,
+        label: t(value === true ? 'migrate.caps.subagents.true' : 'migrate.caps.subagents.false'),
+        variant: value === true ? 'success' : 'outline',
+      };
+    }
+    if (key === 'modelPinned') {
+      return {
+        key,
+        label: t(value === true ? 'migrate.caps.modelPinned.true' : 'migrate.caps.modelPinned.false'),
+        variant: value === true ? 'warning' : 'secondary',
+      };
+    }
+    if (key === 'nativeHistory') {
+      return {
+        key,
+        label: t(value === true ? 'migrate.caps.nativeHistory.true' : 'migrate.caps.nativeHistory.false'),
+        variant: value === true ? 'success' : 'warning',
+      };
+    }
+    if (key === 'contextHandoff') {
+      return {
+        key,
+        label: t(value === true ? 'migrate.caps.contextHandoff.true' : 'migrate.caps.contextHandoff.false'),
+        variant: value === true ? 'success' : 'outline',
+      };
+    }
+    if (key === 'createConversationApi') {
+      return {
+        key,
+        label: t(value === true ? 'migrate.caps.createConversationApi.true' : 'migrate.caps.createConversationApi.false'),
+        variant: value === true ? 'success' : 'outline',
+      };
+    }
+    if (typeof value === 'boolean') {
+      return {
+        key,
+        label: t(value ? 'migrate.caps.unknownTrue' : 'migrate.caps.unknownFalse', { key }),
+        variant: value ? 'secondary' : 'outline',
+      };
+    }
+    return { key, label: `${key}: ${String(value)}`, variant: 'outline' };
+  });
+}
+
+function rowKey(row: SessionRow): string {
+  return row.agent + '|' + row.sessionId + '|' + row.nativePath;
+}
+
+interface SelectionCtx {
+  sourceKey: string | null;
+  target: AgentId | null;
+  version: number;
+}
+
+function UndoActionRow(props: {
+  backupId?: string;
+  undoData?: UndoResult;
+  undoPending: boolean;
+  undoError: unknown;
+  onUndo: (backupId: string) => void;
+}) {
+  const { t, tError } = useT();
+  if (!props.backupId) return null;
+  const undoneThis = props.undoData?.opId === props.backupId ? props.undoData : undefined;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+      {!undoneThis ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={props.undoPending}
+          onClick={() => props.onUndo(props.backupId!)}
+        >
+          {props.undoPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+          {props.undoPending ? t('migrate.undoing') : t('migrate.undo')}
+        </Button>
+      ) : (
+        <span className="text-caption text-fg-2">
+          {t('migrate.undone', {
+            id: undoneThis.opId,
+            restored: undoneThis.restoredFiles.length,
+            deleted: undoneThis.deletedFiles.length,
+          })}
+        </span>
+      )}
+      {props.undoError ? <span className="text-caption text-destructive">{tError(props.undoError)}</span> : null}
+    </div>
+  );
+}
+
+function LossesCard(props: { losses: LossEntry[] }) {
+  const { t, tLoss } = useT();
+  const warningLosses = props.losses.filter((loss) => loss.severity === 'warning');
+  const infoLosses = props.losses.filter((loss) => loss.severity !== 'warning');
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
+        <span className="text-section text-fg-1">{t('migrate.losses.title')}</span>
+        {props.losses.length > 0 ? (
+          <Badge variant="secondary" className="shrink-0 whitespace-nowrap">
+            {t('migrate.losses.types', { count: props.losses.length })}
+          </Badge>
+        ) : null}
+        {warningLosses.length > 0 ? (
+          <Badge variant="warning" className="shrink-0 whitespace-nowrap">
+            {t('migrate.losses.warnings', { count: warningLosses.length })}
+          </Badge>
+        ) : (
+          <Badge variant="success" className="shrink-0 whitespace-nowrap">
+            {t('migrate.losses.noWarnings')}
+          </Badge>
+        )}
+        {infoLosses.length > 0 ? (
+          <Badge variant="outline" className="shrink-0 whitespace-nowrap">
+            {t('migrate.losses.infos', { count: infoLosses.length })}
+          </Badge>
+        ) : null}
+      </div>
+
+      {props.losses.length === 0 ? (
+        <div className="flex items-center gap-2 px-4 py-4 text-caption text-fg-2">
+          <CheckCircle2 className="h-4 w-4 text-success" />
+          <span>{t('migrate.losses.empty')}</span>
+        </div>
+      ) : (
+        <div>
+          {warningLosses.length > 0 ? (
+            <div>
+              <div className="flex items-center gap-1.5 border-b border-warning/20 bg-warning/10 px-4 py-1.5 text-caption font-medium text-warning">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>{t('migrate.losses.groupWarning', { count: warningLosses.length })}</span>
+              </div>
+              <div className="divide-y divide-border">
+                {warningLosses.map((loss) => {
+                  const message = tLoss(loss);
+                  return (
+                    <div key={loss.code + loss.message} className="flex items-start gap-3 px-4 py-2.5">
+                      <Badge variant="warning" className="mt-0.5 shrink-0 tabular-nums">
+                        ×{loss.count}
+                      </Badge>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-body text-fg-1" title={message === loss.message ? undefined : loss.message}>
+                          {message}
+                        </div>
+                        <div className="mt-0.5 font-mono text-3xs text-fg-3">{loss.code}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {infoLosses.length > 0 ? (
+            <div className={cn(warningLosses.length > 0 && 'border-t border-border')}>
+              <div className="flex items-center gap-1.5 border-b border-border bg-subtle px-4 py-1.5 text-caption font-medium text-fg-2">
+                <Info className="h-3.5 w-3.5 shrink-0 text-fg-3" />
+                <span>{t('migrate.losses.groupInfo', { count: infoLosses.length })}</span>
+              </div>
+              <div className="divide-y divide-border">
+                {infoLosses.map((loss) => {
+                  const message = tLoss(loss);
+                  return (
+                    <div key={loss.code + loss.message} className="flex items-start gap-3 px-4 py-2.5">
+                      <Badge variant="outline" className="mt-0.5 shrink-0 tabular-nums">
+                        ×{loss.count}
+                      </Badge>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-body text-fg-2" title={message === loss.message ? undefined : loss.message}>
+                          {message}
+                        </div>
+                        <div className="mt-0.5 font-mono text-3xs text-fg-3">{loss.code}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function OfficialGuidesCard(props: {
+  rows: OfficialSupportRow[];
+  source: SessionRow | null;
+  open: boolean;
+  onToggle: () => void;
+  results: Partial<Record<OfficialTarget, OfficialVerifyRow>>;
+  onVerifyResult: (target: OfficialTarget, result: OfficialVerifyRow) => void;
+}) {
+  const { t, tMechanism } = useT();
+  const sourceMatchesOfficial =
+    props.source !== null && props.rows.some((row) => row.supported && row.sources.includes(props.source!.agent));
+
+  return (
+    <Card className="overflow-hidden">
+      <button
+        type="button"
+        aria-expanded={props.open}
+        onClick={props.onToggle}
+        className="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-subtle/70"
+      >
+        <BookOpen className="h-4 w-4 shrink-0 text-fg-2" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-section text-fg-1">{t('migrate.official.title')}</span>
+            {sourceMatchesOfficial ? (
+              <Badge variant="success" className="shrink-0 whitespace-nowrap">
+                {t('migrate.official.sourceMatchHint')}
+              </Badge>
+            ) : null}
+          </div>
+          <div className="truncate text-caption text-fg-3">{t('migrate.official.subtitle')}</div>
+        </div>
+        <span className="shrink-0 text-caption text-fg-2">
+          {props.open ? t('migrate.official.toggleHide') : t('migrate.official.toggleShow')}
+        </span>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn('h-4 w-4 shrink-0 text-fg-3 transition-transform', props.open && 'rotate-180')}
+        />
+      </button>
+
+      {props.open ? (
+        <div className="grid gap-3 border-t border-border p-4 lg:grid-cols-3">
+          {props.rows.map((row) => {
+            const sourceOk = props.source !== null && row.sources.includes(props.source.agent);
+            const verify = props.results[row.target];
+            const copy = OFFICIAL_TEXT[row.target];
+            // 以 core 的步骤/说明数量为准：core 增删步骤时回退到原文，避免漏展示
+            const steps = row.steps.length === copy.steps.length ? copy.steps.map((key) => t(key)) : row.steps;
+            const notes = row.notes.length === copy.notes.length ? copy.notes.map((key) => t(key)) : row.notes;
+            return (
+              <div key={row.target} className="flex flex-col gap-2 rounded-panel border border-border bg-subtle/40 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-body font-medium text-fg-1">{row.appName}</span>
+                  {row.supported ? (
+                    <Badge variant="success" className="shrink-0 whitespace-nowrap">
+                      {t('migrate.official.supported')}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="shrink-0 whitespace-nowrap">
+                      {t('migrate.official.unsupported')}
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-2 text-3xs text-fg-3">
+                  <span className="min-w-0 truncate font-mono" title={row.store}>
+                    {row.store}
+                  </span>
+                  <span className="shrink-0 whitespace-nowrap">{tMechanism(row.mechanism)}</span>
+                </div>
+                {row.supported ? (
+                  <ol className="list-inside list-decimal space-y-1 text-caption leading-relaxed text-fg-2">
+                    {steps.slice(0, 3).map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                    {steps.length > 3 ? (
+                      <li className="list-none text-3xs text-fg-3">{t('migrate.official.moreSteps')}</li>
+                    ) : null}
+                  </ol>
+                ) : (
+                  <ul className="list-inside list-disc space-y-1 text-caption leading-relaxed text-fg-2">
+                    {notes.map((note) => (
+                      <li key={note}>{note}</li>
+                    ))}
+                  </ul>
+                )}
+                <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!row.supported}
+                    onClick={() => void api.officialOpen(row.target).catch(() => undefined)}
+                  >
+                    {t('migrate.official.open', { app: row.appName })}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!row.supported || !sourceOk}
+                    title={
+                      sourceOk
+                        ? t('migrate.official.verifyHint')
+                        : t('migrate.official.sourceHint', { sources: row.sources.join(' / ') })
+                    }
+                    onClick={() => {
+                      void api
+                        .officialVerify(row.target, { cwd: props.source?.cwd, title: props.source?.title })
+                        .then((result) => props.onVerifyResult(row.target, result))
+                        .catch(() => undefined);
+                    }}
+                  >
+                    {t('migrate.official.verify')}
+                  </Button>
+                </div>
+                {verify ? (
+                  <div
+                    className={cn(
+                      'rounded-control border px-2 py-1.5 text-caption',
+                      verify.ok
+                        ? 'border-success/30 bg-success/10 text-success'
+                        : 'border-warning/30 bg-warning/10 text-warning',
+                    )}
+                  >
+                    {verify.ok ? t('migrate.official.found') : t('migrate.official.notFound')} ·{' '}
+                    {t('migrate.official.matches', { count: verify.matches.length })}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+function BackupHistoryCard(props: {
+  records: HistoryRecordSummary[];
+  loading: boolean;
+  fetching: boolean;
+  error: unknown;
+  undoData?: UndoResult;
+  undoPending: boolean;
+  undoVariable?: string;
+  undoError: unknown;
+  onRefresh: () => void;
+  onUndo: (id: string) => void;
+}) {
+  const { t, tError, formatTime } = useT();
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
+        <History className="h-4 w-4 shrink-0 text-fg-2" />
+        <span className="text-section text-fg-1">{t('migrate.history.title')}</span>
+        <span className="text-caption text-fg-3">{t('migrate.history.subtitle')}</span>
+        <Button className="ml-auto" size="sm" variant="outline" disabled={props.fetching} onClick={props.onRefresh}>
+          <RefreshCw className={cn('h-3.5 w-3.5', props.fetching && 'animate-spin')} />
+          {t('migrate.history.refresh')}
+        </Button>
+      </div>
+
+      {props.error || props.undoError ? (
+        <div className="border-b border-border bg-destructive/10 px-4 py-2 text-caption text-destructive">
+          {tError(props.error ?? props.undoError)}
+        </div>
+      ) : null}
+      {props.undoData ? (
+        <div className="border-b border-border bg-success/10 px-4 py-2 text-caption text-success">
+          {t('migrate.undone', {
+            id: props.undoData.opId,
+            restored: props.undoData.restoredFiles.length,
+            deleted: props.undoData.deletedFiles.length,
+          })}
+        </div>
+      ) : null}
+
+      {props.loading ? (
+        <div className="flex items-center gap-2 px-4 py-4 text-caption text-fg-2">
+          <Spinner /> {t('migrate.loadingSessions')}
+        </div>
+      ) : props.records.length === 0 ? (
+        <div className="px-4 py-4 text-caption text-fg-3">{t('migrate.history.empty')}</div>
+      ) : (
+        <div className="divide-y divide-border">
+          {props.records.map((record) => {
+            const isUndoing = props.undoPending && props.undoVariable === record.id;
+            const isUndone = Boolean(record.undoneAt);
+            return (
+              <div
+                key={record.id}
+                className={cn(
+                  'flex flex-wrap items-center gap-3 px-4 py-2.5 transition-colors',
+                  isUndone ? 'bg-subtle/40 opacity-75' : 'hover:bg-subtle/40',
+                )}
+              >
+                <AgentGlyph agent={record.target} size="sm" />
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-body font-medium text-fg-1">{agentLabel(record.target)}</span>
+                    <Badge variant="outline" className="shrink-0 whitespace-nowrap">
+                      {t(HISTORY_ACTION_KEY[record.action])}
+                    </Badge>
+                    <span className="truncate font-mono text-3xs text-fg-3">{record.id}</span>
+                    {record.caveats.length > 0 ? (
+                      <span
+                        title={`${t('migrate.history.caveats')}: ${record.caveats.join('; ')}`}
+                        className="inline-flex items-center text-fg-3"
+                      >
+                        <Info className="h-3 w-3" />
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-caption text-fg-2">
+                    <span className="truncate font-mono" title={record.sourceKey}>
+                      {record.sourceKey}
+                    </span>
+                    <ArrowRight className="h-3 w-3 shrink-0 text-fg-3" />
+                    <span className="truncate font-mono" title={record.targetId}>
+                      {record.targetId}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-3xs text-fg-3">
+                    <span className="tabular-nums">{formatTime(record.createdAt)}</span>
+                    <span>·</span>
+                    <span>
+                      {record.cursor
+                        ? t('migrate.history.cursorDb')
+                        : t('migrate.history.files', { count: record.files.length })}
+                    </span>
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  {record.undoneAt ? (
+                    <span title={formatTime(record.undoneAt)}>
+                      <Badge variant="secondary" className="shrink-0 whitespace-nowrap">
+                        {t('migrate.history.undoneBadge')}
+                      </Badge>
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={props.undoPending}
+                      onClick={() => props.onUndo(record.id)}
+                    >
+                      {isUndoing ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      )}
+                      {isUndoing ? t('migrate.undoing') : t('migrate.history.undo')}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function MigratePage(props: { initial: SessionRow | null; enabledAgents: string[] }) {
-  const { locale, t, tError, tLoss, tDecision, tSyncDescription, tMechanism, formatTime } = useT();
+  const { locale, t, tError, tDecision, tSyncDescription } = useT();
   const sessionsQuery = useQuery({ queryKey: ['sessions'], queryFn: api.listSessions });
   const capsQuery = useQuery({ queryKey: ['capabilities'], queryFn: api.capabilities });
   const backupsQuery = useQuery({ queryKey: ['backups'], queryFn: () => api.listBackups({ limit: 15 }) });
+  const officialQuery = useQuery({ queryKey: ['official'], queryFn: api.officialList });
 
-  const rowKey = (row: SessionRow): string => row.agent + '|' + row.sessionId + '|' + row.nativePath;
   const [sourceKey, setSourceKey] = useState<string | null>(props.initial ? rowKey(props.initial) : null);
   const [target, setTarget] = useState<AgentId | null>(null);
   const [register, setRegister] = useState(true);
@@ -61,38 +593,68 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
   const [agHandoffOnly, setAgHandoffOnly] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [mode, setMode] = useState<DivergedMode>('auto');
+  const [guidesOpen, setGuidesOpen] = useState(false);
   const [officialResults, setOfficialResults] = useState<Partial<Record<OfficialTarget, OfficialVerifyRow>>>({});
-  const officialQuery = useQuery({ queryKey: ['official'], queryFn: api.officialList });
+
+  const copyTimerRef = useRef<number | null>(null);
+  const initialKey = props.initial ? rowKey(props.initial) : null;
+  const prevInitialRef = useRef<string | null>(initialKey);
 
   useEffect(() => {
-    if (props.initial && sourceKey === null) setSourceKey(rowKey(props.initial));
-  }, [props.initial, sourceKey]);
+    if (initialKey && initialKey !== prevInitialRef.current) {
+      prevInitialRef.current = initialKey;
+      setSourceKey(initialKey);
+    }
+  }, [initialKey]);
 
-  const sessions = (sessionsQuery.data?.sessions ?? []).filter(
-    (row) => props.enabledAgents.length === 0 || props.enabledAgents.includes(row.agent),
-  );
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
+  const sessions = useMemo(() => {
+    const base = (sessionsQuery.data?.sessions ?? []).filter(
+      (row) => props.enabledAgents.length === 0 || props.enabledAgents.includes(row.agent),
+    );
+    if (props.initial && !base.some((row) => rowKey(row) === rowKey(props.initial!))) {
+      return [props.initial, ...base];
+    }
+    return base;
+  }, [sessionsQuery.data?.sessions, props.enabledAgents, props.initial]);
   const source = useMemo(() => sessions.find((row) => rowKey(row) === sourceKey) ?? null, [sessions, sourceKey]);
-  const writableAll = capsQuery.data?.writable ?? [];
-  const writable = writableAll.filter(
-    (agent) => props.enabledAgents.length === 0 || props.enabledAgents.includes(agent),
-  );
-  const targets = writable.length > 0 ? writable : writableAll;
+
+  const writableAll = useMemo(() => capsQuery.data?.writable ?? [], [capsQuery.data?.writable]);
+  const targets = useMemo(() => {
+    const filtered = writableAll.filter(
+      (agent) => props.enabledAgents.length === 0 || props.enabledAgents.includes(agent),
+    );
+    return filtered.length > 0 ? filtered : writableAll;
+  }, [writableAll, props.enabledAgents]);
 
   useEffect(() => {
-    if (target !== null) return;
+    if (target !== null && targets.includes(target)) return;
     const preset = window.sessionport?.initialTarget;
     if (preset !== null && preset !== undefined && targets.includes(preset as AgentId)) {
       setTarget(preset as AgentId);
       return;
     }
-    if (targets.length > 0) setTarget(targets[0] ?? null);
+    if (targets.length > 0) {
+      setTarget(targets[0] ?? null);
+    } else if (target !== null) {
+      setTarget(null);
+    }
   }, [target, targets]);
 
-  const migrationOptions = () => ({
+  const selectionVersionRef = useRef(0);
+  const prevSelectionRef = useRef<{ sourceKey: string | null; target: AgentId | null }>({ sourceKey, target });
+  const previewActiveRef = useRef(false);
+
+  const migrationOptions = (forTarget: AgentId) => ({
     register,
     includeChildren,
     normalizeTools,
-    ...(target === 'dsh'
+    ...(forTarget === 'dsh'
       ? {
           slim: dshMode === 'slim',
           compact: dshMode === 'compact',
@@ -101,249 +663,252 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
             : { summaryCommand: summaryEngine === 'claude' ? 'claude -p' : 'codex exec -' }),
         }
       : {}),
-    ...(target === 'antigravity' ? { handoffOnly: agHandoffOnly } : {}),
+    ...(forTarget === 'antigravity' ? { handoffOnly: agHandoffOnly } : {}),
   });
 
   const preview = useMutation({
-    mutationFn: () =>
-      api.previewMigration(source!.agent, sessionRefOf(source!), target!, migrationOptions()),
+    mutationFn: (ctx: { source: SessionRow; target: AgentId; sourceKey: string; version: number }) =>
+      api.previewMigration(ctx.source.agent, sessionRefOf(ctx.source), ctx.target, migrationOptions(ctx.target)),
   });
+
   const undo = useMutation({
     mutationFn: (opId: string) => api.undoBackup(opId),
     onSuccess: () => {
-      if (source && target) preview.mutate();
+      if (previewActiveRef.current && source && target) {
+        preview.mutate({
+          source,
+          target,
+          sourceKey: rowKey(source),
+          version: selectionVersionRef.current,
+        });
+      }
       void backupsQuery.refetch();
     },
   });
+
   const mergeBack = useMutation({
-    mutationFn: (appendDiverged?: boolean) =>
+    mutationFn: (ctx: { source: SessionRow; target: AgentId; sourceKey: string; version: number; appendDiverged?: boolean }) =>
       api.runMergeBack({
-        agent: source!.agent,
-        ref: sessionRefOf(source!),
-        target: target!,
+        agent: ctx.source.agent,
+        ref: sessionRefOf(ctx.source),
+        target: ctx.target,
         normalizeTools,
-        appendDiverged,
+        appendDiverged: ctx.appendDiverged,
       }),
     onMutate: () => {
       undo.reset();
     },
-    onSuccess: (result) => {
+    onSuccess: (result, ctx) => {
+      if (ctx.version !== selectionVersionRef.current) return;
       if (!result.refused) {
-        preview.mutate();
+        preview.mutate({
+          source: ctx.source,
+          target: ctx.target,
+          sourceKey: ctx.sourceKey,
+          version: ctx.version,
+        });
         void backupsQuery.refetch();
       }
     },
   });
+
   const run = useMutation({
-    mutationFn: () =>
+    mutationFn: (ctx: { source: SessionRow; target: AgentId; sourceKey: string; version: number }) =>
       api.runMigration({
-        agent: source!.agent,
-        ref: sessionRefOf(source!),
-        target: target!,
+        agent: ctx.source.agent,
+        ref: sessionRefOf(ctx.source),
+        target: ctx.target,
         onDiverged: mode,
-        ...migrationOptions(),
+        ...migrationOptions(ctx.target),
       }),
     onMutate: () => {
       undo.reset();
       mergeBack.reset();
     },
-    onSuccess: (result) => {
+    onSuccess: (result, ctx) => {
+      if (ctx.version !== selectionVersionRef.current) return;
       if (!result.refused) {
-        preview.mutate();
+        preview.mutate({
+          source: ctx.source,
+          target: ctx.target,
+          sourceKey: ctx.sourceKey,
+          version: ctx.version,
+        });
         void backupsQuery.refetch();
       }
     },
   });
 
-  const renderUndoAction = (backupId: string | undefined) => {
-    if (!backupId) return null;
-    const undoneThis = undo.data?.opId === backupId ? undo.data : undefined;
-    return (
-      <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
-        {!undoneThis ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={undo.isPending}
-            onClick={() => undo.mutate(backupId)}
-          >
-            {undo.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-            {undo.isPending ? t('migrate.undoing') : t('migrate.undo')}
-          </Button>
-        ) : (
-          <span className="text-2xs text-muted-foreground">
-            {t('migrate.undone', {
-              id: undoneThis.opId,
-              restored: undoneThis.restoredFiles.length,
-              deleted: undoneThis.deletedFiles.length,
-            })}
-          </span>
-        )}
-        {undo.error ? <span className="text-2xs text-destructive">{tError(undo.error)}</span> : null}
-      </div>
-    );
+  const resetForSelectionChangeRef = useRef<() => void>(() => {});
+  resetForSelectionChangeRef.current = () => {
+    selectionVersionRef.current += 1;
+    preview.reset();
+    run.reset();
+    mergeBack.reset();
+    undo.reset();
+    setCopiedPrompt(false);
+    setMode('auto');
   };
 
-  const losses = preview.data?.losses ?? [];
-  const warned = losses.filter((loss) => loss.severity === 'warning').length;
-  const refused = run.data?.refused;
+  useEffect(() => {
+    const prev = prevSelectionRef.current;
+    if (prev.sourceKey !== sourceKey || prev.target !== target) {
+      prevSelectionRef.current = { sourceKey, target };
+      resetForSelectionChangeRef.current();
+    }
+  }, [sourceKey, target]);
+
+  const matchesCurrentSelection = (ctx?: SelectionCtx): boolean =>
+    ctx !== undefined &&
+    ctx.sourceKey === sourceKey &&
+    ctx.target === target &&
+    ctx.version === selectionVersionRef.current;
+
+  const activePreview = matchesCurrentSelection(preview.variables) ? preview.data : undefined;
+  previewActiveRef.current = Boolean(activePreview);
+  const activePreviewError = matchesCurrentSelection(preview.variables) ? preview.error : null;
+  const activeRun = matchesCurrentSelection(run.variables) ? run.data : undefined;
+  const activeRunError = matchesCurrentSelection(run.variables) ? run.error : null;
+  const activeMergeBack = matchesCurrentSelection(mergeBack.variables) ? mergeBack.data : undefined;
+  const activeMergeBackError = matchesCurrentSelection(mergeBack.variables) ? mergeBack.error : null;
+
+  const formattedCaps = useMemo(
+    () => (activePreview ? formatCapabilities(activePreview.caps, t) : []),
+    [activePreview, t],
+  );
+
+  const refused = activeRun?.refused;
   const refusedText = refused
     ? locale === 'zh-CN' || refused.code !== 'migrate.diverged'
       ? refused.reason
       : t('migrate.refused.diverged')
     : '';
 
+  const triggerPreview = (): void => {
+    if (!source || !target) return;
+    preview.mutate({
+      source,
+      target,
+      sourceKey: rowKey(source),
+      version: selectionVersionRef.current,
+    });
+  };
+
+  const copyHandoffPrompt = (promptText: string): void => {
+    void navigator.clipboard
+      .writeText(promptText)
+      .then(() => {
+        setCopiedPrompt(true);
+        if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = window.setTimeout(() => {
+          setCopiedPrompt(false);
+          copyTimerRef.current = null;
+        }, 1800);
+      })
+      .catch(() => undefined);
+  };
+
   return (
     <div className="flex h-full flex-col">
-      <Topbar title={t('migrate.title')} subtitle={t('migrate.subtitle')} />
+      <Topbar
+        icon={<ArrowLeftRight className="h-4 w-4" />}
+        title={t('migrate.title')}
+        subtitle={t('migrate.subtitle')}
+      />
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto w-full max-w-3xl px-5 py-6">
-          <Card className="mb-4 p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">{t('migrate.official.title')}</span>
-              <span className="text-2xs text-fg-3">{t('migrate.official.subtitle')}</span>
-            </div>
-            <div className="mt-3 grid gap-3 lg:grid-cols-3">
-              {(officialQuery.data ?? []).map((row) => {
-                const sourceOk = source !== null && row.sources.includes(source.agent);
-                const verify = officialResults[row.target];
-                const copy = OFFICIAL_TEXT[row.target];
-                // 以 core 的步骤/说明数量为准：core 增删步骤时回退到原文，避免漏展示
-                const steps = row.steps.length === copy.steps.length ? copy.steps.map((key) => t(key)) : row.steps;
-                const notes = row.notes.length === copy.notes.length ? copy.notes.map((key) => t(key)) : row.notes;
-                return (
-                  <div key={row.target} className="flex flex-col gap-2 rounded-panel border border-border p-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-body font-medium">{row.appName}</span>
-                      {row.supported ? <Badge variant="success">{t('migrate.official.supported')}</Badge> : <Badge variant="outline">{t('migrate.official.unsupported')}</Badge>}
-                      <span className="ml-auto text-3xs text-fg-3">{tMechanism(row.mechanism)}</span>
-                    </div>
-                    <div className="truncate font-mono text-3xs text-fg-3" title={row.store}>{row.store}</div>
-                    {row.supported ? (
-                      <ol className="list-inside list-decimal space-y-0.5 text-2xs text-fg-2">
-                        {steps.slice(0, 3).map((step) => (<li key={step}>{step}</li>))}
-                        {steps.length > 3 ? (
-                          <li className="list-none text-3xs text-fg-3">{t('migrate.official.moreSteps')}</li>
-                        ) : null}
-                      </ol>
-                    ) : (
-                      <div className="text-2xs text-fg-2">{notes.join(t('common.listSeparator'))}</div>
-                    )}
-                    <div className="mt-auto flex flex-wrap items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={!row.supported}
-                        onClick={() => void api.officialOpen(row.target).catch(() => undefined)}
-                      >
-                        {t('migrate.official.open', { app: row.appName })}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={!row.supported || !sourceOk}
-                        title={sourceOk ? t('migrate.official.verifyHint') : t('migrate.official.sourceHint', { sources: row.sources.join(' / ') })}
-                        onClick={() => {
-                          void api.officialVerify(row.target, { cwd: source?.cwd, title: source?.title }).then((result) => {
-                            setOfficialResults((current) => ({ ...current, [row.target]: result }));
-                          }).catch(() => undefined);
-                        }}
-                      >
-                        {t('migrate.official.verify')}
-                      </Button>
-                    </div>
-                    {verify ? (
-                      <div className={cn('rounded-control border px-2 py-1.5 text-2xs', verify.ok ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400' : 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400')}>
-                        {verify.ok ? t('migrate.official.found') : t('migrate.official.notFound')} · {t('migrate.official.matches', { count: verify.matches.length })}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
+        <div className="mx-auto w-full max-w-3xl space-y-4 px-5 py-6">
           <Card className="p-4">
-            <div className="grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-end">
-              <label className="block space-y-1.5">
-                <div className="text-2xs font-medium text-muted-foreground">{t('migrate.source')}</div>
-                <Select value={sourceKey ?? ''} onChange={(event) => setSourceKey(event.target.value || null)}>
-                  <option value="">{t('common.select')}</option>
-                  {sessions.map((row) => (
-                    <option key={rowKey(row)} value={rowKey(row)}>
-                      {agentLabel(row.agent)} · {row.title ?? row.sessionId}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <div className="hidden pb-2 text-muted-foreground md:block">
-                <ArrowRight className="h-4 w-4" />
+            <div className="space-y-3">
+              <div>
+                <div className="mb-1.5 text-caption font-medium text-fg-2">{t('migrate.source')}</div>
+                <SourceSessionPicker
+                  sessions={sessions}
+                  value={sourceKey}
+                  onChange={setSourceKey}
+                  rowKey={rowKey}
+                  loading={sessionsQuery.isLoading}
+                />
               </div>
-              <label className="block space-y-1.5">
-                <div className="text-2xs font-medium text-muted-foreground">{t('migrate.target')}</div>
-                <Select value={target ?? ''} onChange={(event) => setTarget((event.target.value || null) as AgentId | null)}>
-                  <option value="">{t('common.select')}</option>
-                  {targets.map((agent) => (
-                    <option key={agent} value={agent}>
-                      {agentLabel(agent)}
-                    </option>
-                  ))}
-                </Select>
-              </label>
+
+              <div className="flex items-center gap-2 text-fg-3">
+                <div className="h-px flex-1 bg-border" />
+                <ArrowDown className="h-3.5 w-3.5 shrink-0" />
+                <div className="h-px flex-1 bg-border" />
+              </div>
+
+              <div>
+                <div className="mb-1.5 text-caption font-medium text-fg-2">{t('migrate.target')}</div>
+                <TargetAgentSelector targets={targets} value={target} onChange={setTarget} />
+              </div>
             </div>
 
             {target === 'dsh' ? (
-              <div className="mt-4 flex flex-wrap items-center gap-2 rounded-control border border-border bg-subtle px-3 py-2 text-caption text-fg-2">
-                <span className="text-fg-1">{t('migrate.importMode')}</span>
-                {([
-                  { value: 'compact' as const, label: t('migrate.importMode.compact'), hint: t('migrate.importMode.compactHint') },
-                  { value: 'full' as const, label: t('migrate.importMode.full'), hint: t('migrate.importMode.fullHint') },
-                  { value: 'slim' as const, label: t('migrate.importMode.slim'), hint: t('migrate.importMode.slimHint') },
-                ]).map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setDshMode(option.value)}
-                    title={option.hint}
-                    className={cn(
-                      'h-6 rounded px-2 text-caption transition-colors',
-                      dshMode === option.value ? 'bg-card text-fg-1 shadow-sm' : 'text-fg-2 hover:text-fg-1',
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-                <span className="ml-3 text-fg-1">{t('migrate.summary')}</span>
-                {([
-                  { value: 'off' as const, label: t('migrate.summary.off'), hint: t('migrate.summary.offHint') },
-                  { value: 'claude' as const, label: t('migrate.summary.claude'), hint: t('migrate.summary.claudeHint') },
-                  { value: 'codex' as const, label: t('migrate.summary.codex'), hint: t('migrate.summary.codexHint') },
-                ]).map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setSummaryEngine(option.value)}
-                    title={option.hint}
-                    className={cn(
-                      'h-6 rounded px-2 text-caption transition-colors',
-                      summaryEngine === option.value ? 'bg-card text-fg-1 shadow-sm' : 'text-fg-2 hover:text-fg-1',
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+              <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-control border border-border bg-subtle px-3 py-2 text-caption text-fg-2">
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 font-medium text-fg-1">{t('migrate.importMode')}</span>
+                  <div className="inline-flex items-center rounded-control border border-border bg-background/70 p-0.5">
+                    {([
+                      { value: 'compact' as const, label: t('migrate.importMode.compact'), hint: t('migrate.importMode.compactHint') },
+                      { value: 'full' as const, label: t('migrate.importMode.full'), hint: t('migrate.importMode.fullHint') },
+                      { value: 'slim' as const, label: t('migrate.importMode.slim'), hint: t('migrate.importMode.slimHint') },
+                    ]).map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setDshMode(option.value)}
+                        title={option.hint}
+                        className={cn(
+                          'h-6 whitespace-nowrap rounded-control px-2 text-caption transition-colors',
+                          dshMode === option.value ? 'bg-card font-medium text-fg-1 shadow-sm' : 'text-fg-2 hover:text-fg-1',
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 font-medium text-fg-1">{t('migrate.summary')}</span>
+                  <div className="inline-flex items-center rounded-control border border-border bg-background/70 p-0.5">
+                    {([
+                      { value: 'off' as const, label: t('migrate.summary.off'), hint: t('migrate.summary.offHint') },
+                      { value: 'claude' as const, label: t('migrate.summary.claude'), hint: t('migrate.summary.claudeHint') },
+                      { value: 'codex' as const, label: t('migrate.summary.codex'), hint: t('migrate.summary.codexHint') },
+                    ]).map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setSummaryEngine(option.value)}
+                        title={option.hint}
+                        className={cn(
+                          'h-6 whitespace-nowrap rounded-control px-2 text-caption transition-colors',
+                          summaryEngine === option.value ? 'bg-card font-medium text-fg-1 shadow-sm' : 'text-fg-2 hover:text-fg-1',
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             ) : null}
 
             {target === 'antigravity' ? (
-              <div className="mt-4 flex flex-wrap items-center gap-3 rounded-control border border-border bg-subtle px-3 py-2 text-caption text-fg-2">
-                <span className="text-fg-1">{t('migrate.antigravity.banner')}</span>
-                <Badge variant={capsQuery.data?.antigravityApiAvailable && !agHandoffOnly ? 'success' : 'outline'}>
-                  {capsQuery.data?.antigravityApiAvailable && !agHandoffOnly
-                    ? t('migrate.antigravity.apiReady')
-                    : t('migrate.antigravity.fileOnlyBadge')}
-                </Badge>
-                <div className="ml-auto">
+              <div className="mt-4 space-y-2 rounded-control border border-border bg-subtle px-3 py-2.5 text-caption text-fg-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-fg-1">{t('migrate.antigravity.banner')}</span>
+                  <Badge
+                    variant={capsQuery.data?.antigravityApiAvailable && !agHandoffOnly ? 'success' : 'outline'}
+                    className="shrink-0 whitespace-nowrap"
+                  >
+                    {capsQuery.data?.antigravityApiAvailable && !agHandoffOnly
+                      ? t('migrate.antigravity.apiReady')
+                      : t('migrate.antigravity.fileOnlyBadge')}
+                  </Badge>
+                </div>
+                <div className="border-t border-border/60 pt-2">
                   <CheckboxRow checked={agHandoffOnly} onChange={setAgHandoffOnly}>
                     {t('migrate.antigravity.handoffOnly')}
                   </CheckboxRow>
@@ -351,7 +916,7 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
               </div>
             ) : null}
 
-            <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
+            <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border pt-3.5">
               <CheckboxRow checked={register} onChange={setRegister}>
                 {t('migrate.register')}
               </CheckboxRow>
@@ -365,58 +930,79 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                 className="ml-auto"
                 size="sm"
                 disabled={!source || !target || preview.isPending}
-                onClick={() => preview.mutate()}
+                onClick={triggerPreview}
               >
                 {preview.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ListChecks className="h-3.5 w-3.5" />}
                 {t('migrate.preview')}
               </Button>
             </div>
-            {preview.error ? (
-              <div className="mt-3 flex items-center gap-1.5 text-xs text-destructive">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                {tError(preview.error)}
+
+            {activePreviewError ? (
+              <div className="mt-3 flex items-center gap-2 rounded-control border border-destructive/30 bg-destructive/10 px-3 py-2 text-caption text-destructive">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>{tError(activePreviewError)}</span>
               </div>
             ) : null}
           </Card>
 
-          {preview.data ? (
-            <div className="mt-4 space-y-4">
+          {activePreview ? (
+            <div className="space-y-4">
               <Card className="p-4">
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="font-medium">{agentLabel(preview.data.source.agent)}</span>
-                  <span className="truncate text-muted-foreground">{preview.data.source.title ?? preview.data.source.sessionId}</span>
-                  <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="font-medium">{agentLabel(preview.data.target)}</span>
-                  <Badge variant={DECISION_TONE[preview.data.sync.decision]} className="ml-auto">
-                    {tDecision(preview.data.sync.decision)}
+                <div className="flex flex-wrap items-center gap-2 text-body">
+                  <AgentGlyph agent={activePreview.source.agent} size="sm" />
+                  <span className="font-medium text-fg-1">{agentLabel(activePreview.source.agent)}</span>
+                  <span className="min-w-0 truncate text-fg-2">
+                    {activePreview.source.title ?? activePreview.source.sessionId}
+                  </span>
+                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-fg-3" />
+                  <AgentGlyph agent={activePreview.target} size="sm" />
+                  <span className="font-medium text-fg-1">{agentLabel(activePreview.target)}</span>
+                  <Badge variant={DECISION_TONE[activePreview.sync.decision]} className="ml-auto shrink-0 whitespace-nowrap">
+                    {tDecision(activePreview.sync.decision)}
                   </Badge>
                 </div>
-                <div className="mt-1 text-2xs text-muted-foreground" title={locale === 'en-US' ? preview.data.sync.description : undefined}>
+
+                <div
+                  className="mt-1.5 text-caption text-fg-2"
+                  title={locale === 'en-US' ? activePreview.sync.description : undefined}
+                >
                   {locale === 'zh-CN'
-                    ? preview.data.sync.description
-                    : tSyncDescription(preview.data.sync.decision, preview.data.sync.targetExtra)}
-                </div>
-                <div className="mt-2 grid gap-1 font-mono text-3xs text-muted-foreground">
-                  <div>{t('migrate.sync.sourceEvents', { count: preview.data.sync.sourceEvents })}</div>
-                  <div>{t('migrate.sync.targetUnits', { count: preview.data.sync.targetUnits })}</div>
-                  {preview.data.sync.targetPath ? <div className="truncate">{t('migrate.sync.targetPath', { path: preview.data.sync.targetPath })}</div> : null}
-                  <div className="truncate">{t('migrate.sync.registry', { path: preview.data.sync.stateFile })}</div>
+                    ? activePreview.sync.description
+                    : tSyncDescription(activePreview.sync.decision, activePreview.sync.targetExtra)}
                 </div>
 
-                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border pt-3">
-                  {Object.entries(preview.data.caps).map(([key, value]) => (
-                    <Badge key={key} variant={value === false ? 'warning' : 'outline'}>
-                      {key}: {String(value)}
-                    </Badge>
-                  ))}
+                <div className="mt-3 grid gap-1 rounded-control border border-border bg-subtle px-3 py-2 font-mono text-3xs text-fg-2">
+                  <div>{t('migrate.sync.sourceEvents', { count: activePreview.sync.sourceEvents })}</div>
+                  <div>{t('migrate.sync.targetUnits', { count: activePreview.sync.targetUnits })}</div>
+                  {activePreview.sync.targetPath ? (
+                    <div className="truncate" title={activePreview.sync.targetPath}>
+                      {t('migrate.sync.targetPath', { path: activePreview.sync.targetPath })}
+                    </div>
+                  ) : null}
+                  <div className="truncate" title={activePreview.sync.stateFile}>
+                    {t('migrate.sync.registry', { path: activePreview.sync.stateFile })}
+                  </div>
                 </div>
+
+                {formattedCaps.length > 0 ? (
+                  <div className="mt-3 border-t border-border pt-3">
+                    <div className="mb-1.5 text-caption font-medium text-fg-2">{t('migrate.caps.title')}</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {formattedCaps.map((cap) => (
+                        <Badge key={cap.key} variant={cap.variant} className="whitespace-nowrap">
+                          {cap.label}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </Card>
 
-              {preview.data.sync.decision === 'diverged' ? (
-                <Card className="border-amber-500/30 bg-amber-500/5 p-4">
-                  <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    {t('migrate.diverged.count', { count: preview.data.sync.targetExtra ?? 0 })}
+              {activePreview.sync.decision === 'diverged' ? (
+                <Card className="border-warning/30 bg-warning/10 p-4">
+                  <div className="flex items-center gap-1.5 text-caption font-medium text-warning">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    {t('migrate.diverged.count', { count: activePreview.sync.targetExtra ?? 0 })}
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-3">
                     {([
@@ -429,272 +1015,252 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                         type="button"
                         onClick={() => setMode(option.value)}
                         className={cn(
-                          'rounded-md border px-3 py-2 text-left text-xs transition-colors',
-                          mode === option.value ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent',
+                          'rounded-control border px-3 py-2 text-left transition-colors',
+                          mode === option.value ? 'border-ring bg-card shadow-sm' : 'border-border bg-card/60 hover:bg-card',
                         )}
                       >
-                        <div className="font-medium">{option.title}</div>
-                        <div className="mt-0.5 text-2xs text-muted-foreground">{option.hint}</div>
+                        <div className="text-body font-medium text-fg-1">{option.title}</div>
+                        <div className="mt-0.5 text-caption text-fg-2">{option.hint}</div>
                       </button>
                     ))}
                   </div>
-                  {source && writableAll.includes(source.agent) && source.agent !== 'antigravity' ? (
-                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-amber-500/20 pt-3">
+                  {source && target && writableAll.includes(source.agent) && source.agent !== 'antigravity' ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-warning/20 pt-3">
                       <Button
                         size="sm"
                         variant="outline"
                         disabled={mergeBack.isPending}
-                        onClick={() => mergeBack.mutate(false)}
+                        onClick={() =>
+                          mergeBack.mutate({
+                            source,
+                            target,
+                            sourceKey: rowKey(source),
+                            version: selectionVersionRef.current,
+                            appendDiverged: false,
+                          })
+                        }
                       >
                         {mergeBack.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitMerge className="h-3.5 w-3.5" />}
                         {mergeBack.isPending ? t('migrate.mergeBackAppending') : t('migrate.mergeBack')}
                       </Button>
-                      {mergeBack.data?.refused ? (
+                      {activeMergeBack?.refused ? (
                         <>
-                          <span className="text-2xs text-amber-600 dark:text-amber-400">{t('migrate.mergeBackDiverged')}</span>
+                          <span className="text-caption text-warning">{t('migrate.mergeBackDiverged')}</span>
                           <Button
                             size="sm"
                             variant="outline"
                             disabled={mergeBack.isPending}
-                            onClick={() => mergeBack.mutate(true)}
+                            onClick={() =>
+                              mergeBack.mutate({
+                                source,
+                                target,
+                                sourceKey: rowKey(source),
+                                version: selectionVersionRef.current,
+                                appendDiverged: true,
+                              })
+                            }
                           >
                             {t('migrate.mergeBackConfirmDiverged')}
                           </Button>
                         </>
                       ) : null}
-                      {mergeBack.data && !mergeBack.data.refused && mergeBack.data.decision === 'up-to-date' ? (
-                        <span className="text-2xs text-muted-foreground">{t('migrate.mergeBackNothing')}</span>
+                      {activeMergeBack && !activeMergeBack.refused && activeMergeBack.decision === 'up-to-date' ? (
+                        <span className="text-caption text-fg-2">{t('migrate.mergeBackNothing')}</span>
                       ) : null}
-                      {mergeBack.error ? <span className="text-2xs text-destructive">{tError(mergeBack.error)}</span> : null}
+                      {activeMergeBackError ? (
+                        <span className="text-caption text-destructive">{tError(activeMergeBackError)}</span>
+                      ) : null}
                     </div>
                   ) : null}
                 </Card>
               ) : null}
 
-              <Card className="overflow-hidden">
-                <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-                  <span className="text-xs font-medium">{t('migrate.losses.title')}</span>
-                  <Badge variant="secondary">{t('migrate.losses.types', { count: losses.length })}</Badge>
-                  {warned > 0 ? <Badge variant="warning">{t('migrate.losses.warnings', { count: warned })}</Badge> : <Badge variant="success">{t('migrate.losses.noWarnings')}</Badge>}
-                </div>
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-muted text-2xs text-muted-foreground">
-                    <tr>
-                      <th className="px-4 py-2 font-medium">{t('migrate.losses.severity')}</th>
-                      <th className="px-4 py-2 font-medium">{t('migrate.losses.code')}</th>
-                      <th className="px-4 py-2 font-medium">{t('migrate.losses.count')}</th>
-                      <th className="px-4 py-2 font-medium">{t('migrate.losses.description')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {losses.length === 0 ? (
-                      <tr>
-                        <td className="px-4 py-4 text-muted-foreground" colSpan={4}>
-                          <div className="flex items-center gap-1.5">
-                            <Info className="h-3.5 w-3.5" />
-                            {t('migrate.losses.empty')}
-                          </div>
-                        </td>
-                      </tr>
-                    ) : (
-                      losses.map((loss) => {
-                        const message = tLoss(loss);
-                        return (
-                          <tr key={loss.code + loss.message} className="border-t border-border">
-                            <td className="px-4 py-2">
-                              <Badge variant={loss.severity === 'warning' ? 'warning' : 'outline'}>
-                                {loss.severity === 'warning' ? t('migrate.severity.warning') : t('migrate.severity.info')}
-                              </Badge>
-                            </td>
-                            <td className="px-4 py-2 font-mono text-[11px]">{loss.code}</td>
-                            <td className="px-4 py-2 text-muted-foreground">{loss.count}</td>
-                            <td className="px-4 py-2 text-muted-foreground" title={message === loss.message ? undefined : loss.message}>{message}</td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </Card>
+              <LossesCard losses={activePreview.losses} />
 
               <div className="flex flex-wrap items-center gap-3">
-                <Button disabled={run.isPending} onClick={() => run.mutate()}>
+                <Button
+                  disabled={!source || !target || run.isPending || preview.isPending}
+                  onClick={() => {
+                    if (!source || !target) return;
+                    run.mutate({
+                      source,
+                      target,
+                      sourceKey: rowKey(source),
+                      version: selectionVersionRef.current,
+                    });
+                  }}
+                >
                   {run.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  {t('migrate.confirmWrite', { target: agentLabel(preview.data.target) })}
+                  {t('migrate.confirmWrite', { target: agentLabel(activePreview.target) })}
                 </Button>
-                <span className="text-2xs text-muted-foreground">{t('migrate.writeHint')}</span>
+                <span className="text-caption text-fg-2">{t('migrate.writeHint')}</span>
               </div>
 
-              {run.error ? (
-                <Card className="border-destructive bg-destructive/10 p-3 text-xs text-destructive">{tError(run.error)}</Card>
+              {activeRunError ? (
+                <Card className="border-destructive/30 bg-destructive/10 p-3 text-caption text-destructive">
+                  {tError(activeRunError)}
+                </Card>
               ) : null}
+
               {refused ? (
-                <Card className="border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600 dark:text-amber-400">
+                <Card className="border-warning/30 bg-warning/10 p-3 text-caption text-warning">
                   <span title={refused.reason}>{refusedText}</span>
                 </Card>
               ) : null}
-              {run.data && !run.data.refused ? (
-                <Card className="p-4">
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    {t('migrate.written', { target: agentLabel(run.data.target) })} · <span className="font-mono">{run.data.sessionId}</span>
-                    {run.data.handoff ? (
-                      <Badge variant={run.data.handoff.delivery === 'api' ? 'success' : 'outline'} className="ml-auto">
-                        {run.data.handoff.delivery === 'api'
+
+              {activeRun && !activeRun.refused ? (
+                <Card className="border-success/30 p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
+                    <span className="text-body font-medium text-success">
+                      {t('migrate.written', { target: agentLabel(activeRun.target) })}
+                    </span>
+                    <span className="truncate font-mono text-caption text-fg-2">{activeRun.sessionId}</span>
+                    {activeRun.handoff ? (
+                      <Badge
+                        variant={activeRun.handoff.delivery === 'api' ? 'success' : 'outline'}
+                        className="ml-auto shrink-0 whitespace-nowrap"
+                      >
+                        {activeRun.handoff.delivery === 'api'
                           ? t('migrate.antigravity.deliveryApi')
                           : t('migrate.antigravity.deliveryFile')}
                       </Badge>
                     ) : null}
                   </div>
-                  <ul className="mt-2 space-y-0.5 font-mono text-3xs text-muted-foreground">
-                    {run.data.paths.map((path) => (
-                      <li key={path} className="truncate">
-                        {path}
-                      </li>
-                    ))}
-                  </ul>
-                  {run.data.handoff ? (
-                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          const promptText = run.data?.handoff?.promptText;
-                          if (!promptText) return;
-                          void navigator.clipboard
-                            .writeText(promptText)
-                            .then(() => {
-                              setCopiedPrompt(true);
-                              setTimeout(() => setCopiedPrompt(false), 1800);
-                            })
-                            .catch(() => undefined);
-                        }}
-                      >
-                        {copiedPrompt ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-                        {copiedPrompt ? t('migrate.antigravity.copied') : t('migrate.antigravity.copyPrompt')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void api.officialOpen('antigravity').catch(() => undefined)}
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        {t('migrate.antigravity.openApp')}
-                      </Button>
+
+                  {activeRun.handoff ? (
+                    <div className="mt-3 space-y-3">
+                      <div className="text-caption text-fg-2">
+                        {activeRun.handoff.delivery === 'api'
+                          ? t('migrate.antigravity.apiGuidance')
+                          : t('migrate.antigravity.fileGuidance')}
+                      </div>
+
+                      <div className="space-y-1.5 rounded-control border border-border bg-subtle px-3 py-2 text-3xs">
+                        {activeRun.handoff.conversationId ? (
+                          <div className="flex items-center gap-2">
+                            <span className="shrink-0 font-medium text-fg-2">{t('migrate.antigravity.conversationId')}</span>
+                            <span className="truncate font-mono text-fg-1">{activeRun.handoff.conversationId}</span>
+                          </div>
+                        ) : null}
+                        <div className="flex items-center gap-2">
+                          <span className="shrink-0 font-medium text-fg-2">{t('migrate.antigravity.mdPath')}</span>
+                          <span className="truncate font-mono text-fg-2" title={activeRun.handoff.mdPath}>
+                            {activeRun.handoff.mdPath}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="shrink-0 font-medium text-fg-2">{t('migrate.antigravity.irPath')}</span>
+                          <span className="truncate font-mono text-fg-2" title={activeRun.handoff.irPath}>
+                            {activeRun.handoff.irPath}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="mb-1 flex items-center gap-1.5 text-caption font-medium text-fg-2">
+                          <FileText className="h-3.5 w-3.5 text-fg-3" />
+                          <span>{t('migrate.antigravity.promptLabel')}</span>
+                        </div>
+                        <pre className="max-h-28 overflow-auto whitespace-pre-wrap rounded-control border border-border bg-subtle p-2.5 font-mono text-3xs text-fg-2">
+                          {activeRun.handoff.promptText}
+                        </pre>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant={activeRun.handoff.delivery === 'handoff-file' ? 'default' : 'outline'}
+                          onClick={() => copyHandoffPrompt(activeRun.handoff!.promptText)}
+                        >
+                          {copiedPrompt ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                          {copiedPrompt ? t('migrate.antigravity.copied') : t('migrate.antigravity.copyPrompt')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void api.officialOpen('antigravity').catch(() => undefined)}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          {t('migrate.antigravity.openApp')}
+                        </Button>
+                      </div>
                     </div>
-                  ) : null}
-                  {renderUndoAction(run.data.backupId)}
+                  ) : (
+                    <ul className="mt-2.5 space-y-1 rounded-control border border-border bg-subtle px-3 py-2 font-mono text-3xs text-fg-2">
+                      {activeRun.paths.map((path) => (
+                        <li key={path} className="truncate" title={path}>
+                          {path}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <UndoActionRow
+                    backupId={activeRun.backupId}
+                    undoData={undo.data}
+                    undoPending={undo.isPending}
+                    undoError={undo.error}
+                    onUndo={(id) => undo.mutate(id)}
+                  />
                 </Card>
               ) : null}
-              {mergeBack.data && !mergeBack.data.refused && mergeBack.data.mergedEvents > 0 && target ? (
-                <Card className="p-4">
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                    <GitMerge className="h-3.5 w-3.5" />
-                    {t('migrate.mergeBackDone', { target: agentLabel(target), count: mergeBack.data.mergedEvents })}
-                    {mergeBack.data.strategy ? (
-                      <Badge variant="outline" className="ml-auto font-mono text-3xs">{mergeBack.data.strategy}</Badge>
+
+              {activeMergeBack && !activeMergeBack.refused && activeMergeBack.mergedEvents > 0 && target ? (
+                <Card className="border-success/30 p-4">
+                  <div className="flex flex-wrap items-center gap-2 text-body font-medium text-success">
+                    <GitMerge className="h-4 w-4 shrink-0" />
+                    <span>{t('migrate.mergeBackDone', { target: agentLabel(target), count: activeMergeBack.mergedEvents })}</span>
+                    {activeMergeBack.strategy ? (
+                      <Badge variant="outline" className="ml-auto shrink-0 whitespace-nowrap font-mono text-3xs">
+                        {activeMergeBack.strategy}
+                      </Badge>
                     ) : null}
                   </div>
-                  {mergeBack.data.sourcePath ? (
-                    <div className="mt-1.5 truncate font-mono text-3xs text-muted-foreground">{mergeBack.data.sourcePath}</div>
+                  {activeMergeBack.sourcePath ? (
+                    <div className="mt-2 truncate rounded-control border border-border bg-subtle px-3 py-1.5 font-mono text-3xs text-fg-2">
+                      {activeMergeBack.sourcePath}
+                    </div>
                   ) : null}
-                  {renderUndoAction(mergeBack.data.backupId)}
+                  <UndoActionRow
+                    backupId={activeMergeBack.backupId}
+                    undoData={undo.data}
+                    undoPending={undo.isPending}
+                    undoError={undo.error}
+                    onUndo={(id) => undo.mutate(id)}
+                  />
                 </Card>
               ) : null}
             </div>
           ) : sessionsQuery.isLoading ? (
-            <div className="mt-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center justify-center gap-2 py-4 text-body text-fg-2">
               <Spinner /> {t('migrate.loadingSessions')}
             </div>
           ) : null}
 
-          <Card className="mt-4 overflow-hidden">
-            <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
-              <History className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-xs font-medium">{t('migrate.history.title')}</span>
-              <span className="text-2xs text-fg-3">{t('migrate.history.subtitle')}</span>
-              <Button
-                className="ml-auto"
-                size="sm"
-                variant="outline"
-                disabled={backupsQuery.isFetching}
-                onClick={() => void backupsQuery.refetch()}
-              >
-                <RefreshCw className={cn('h-3.5 w-3.5', backupsQuery.isFetching && 'animate-spin')} />
-                {t('migrate.history.refresh')}
-              </Button>
-            </div>
+          <OfficialGuidesCard
+            rows={officialQuery.data ?? []}
+            source={source}
+            open={guidesOpen}
+            onToggle={() => setGuidesOpen((open) => !open)}
+            results={officialResults}
+            onVerifyResult={(officialTarget, result) =>
+              setOfficialResults((current) => ({ ...current, [officialTarget]: result }))
+            }
+          />
 
-            {backupsQuery.error || undo.error ? (
-              <div className="border-b border-border bg-destructive/5 px-4 py-2 text-2xs text-destructive">
-                {tError(backupsQuery.error ?? undo.error)}
-              </div>
-            ) : null}
-            {undo.data ? (
-              <div className="border-b border-border bg-emerald-500/5 px-4 py-2 text-2xs text-emerald-600 dark:text-emerald-400">
-                {t('migrate.undone', {
-                  id: undo.data.opId,
-                  restored: undo.data.restoredFiles.length,
-                  deleted: undo.data.deletedFiles.length,
-                })}
-              </div>
-            ) : null}
-
-            {backupsQuery.isLoading ? (
-              <div className="flex items-center gap-2 px-4 py-4 text-xs text-muted-foreground">
-                <Spinner /> {t('migrate.loadingSessions')}
-              </div>
-            ) : (backupsQuery.data?.length ?? 0) === 0 ? (
-              <div className="px-4 py-4 text-xs text-muted-foreground">{t('migrate.history.empty')}</div>
-            ) : (
-              <div className="divide-y divide-border">
-                {(backupsQuery.data ?? []).map((record) => {
-                  const isUndoing = undo.isPending && undo.variables === record.id;
-                  return (
-                    <div key={record.id} className="flex flex-wrap items-center gap-2 px-4 py-2.5 text-xs">
-                      <div className="min-w-0 flex-1 space-y-0.5">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <Badge variant="outline">{t(HISTORY_ACTION_KEY[record.action])}</Badge>
-                          <span className="font-medium">{agentLabel(record.target)}</span>
-                          <span className="truncate font-mono text-3xs text-muted-foreground">{record.id}</span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
-                          <span className="truncate font-mono">{record.sourceKey}</span>
-                          <ArrowRight className="h-3 w-3 shrink-0" />
-                          <span className="truncate font-mono">{record.targetId}</span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 text-3xs text-fg-3">
-                          <span>{formatTime(record.createdAt)}</span>
-                          <span>
-                            {record.cursor
-                              ? t('migrate.history.cursorDb')
-                              : t('migrate.history.files', { count: record.files.length })}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="shrink-0">
-                        {record.undoneAt ? (
-                          <span title={formatTime(record.undoneAt)}>
-                            <Badge variant="outline">{t('migrate.history.undoneBadge')}</Badge>
-                          </span>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={undo.isPending}
-                            onClick={() => undo.mutate(record.id)}
-                          >
-                            {isUndoing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                            {isUndoing ? t('migrate.undoing') : t('migrate.history.undo')}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Card>
+          <BackupHistoryCard
+            records={backupsQuery.data ?? []}
+            loading={backupsQuery.isLoading}
+            fetching={backupsQuery.isFetching}
+            error={backupsQuery.error}
+            undoData={undo.data}
+            undoPending={undo.isPending}
+            undoVariable={undo.variables}
+            undoError={undo.error}
+            onRefresh={() => void backupsQuery.refetch()}
+            onUndo={(id) => undo.mutate(id)}
+          />
         </div>
       </div>
     </div>
