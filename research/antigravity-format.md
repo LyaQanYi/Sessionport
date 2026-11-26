@@ -12,9 +12,14 @@
   - `conversations/<conversationId>.db`：**会话真实加载态存储**，内部 `steps` 表的 `step_payload` 列为私有二进制 Protobuf blob（非 JSON）。
 - **CLI 目录**：`~/.gemini/antigravity-cli/`，目录结构与摘要库 schema 同构。
 
-## 2. 为什么定位为只读源端（同 Kimi Code / WorkBuddy）
+## 2. 为何采用「原生无损读出 + 官方降级上下文交接导入」
 
-Antigravity App/IDE 运行时真正用于恢复会话的是 `conversations/<conversationId>.db` 内的私有二进制 Protobuf（并伴随桌面端 daemon / WAL 写锁与 `agyhub_summaries_proto.pb`），而语言服务器暴露的 `ConversationService`（`CreateConversation` / `ForkConversation`）仅支持新建纯文本初始对话，没有导入任意多轮 `tool_call` / `tool_result` 的公共接口。因此 `@sessionport/adapter-antigravity` 聚焦高保真只读转出（读取明文 `transcript_full.jsonl` + SQLite 元数据 + `annotations`）。
+Antigravity App/IDE 运行时真正用于恢复多轮气泡的存储位于 `conversations/<conversationId>.db` 内的私有二进制 Protobuf（并伴随桌面端 daemon / WAL 写锁与 `agyhub_summaries_proto.pb`），而语言服务器暴露的公开 RPC `product.v1.ConversationService/CreateConversation` 仅支持以初始提示词新建对话，没有导入任意多轮 `tool_call` / `tool_result` 气泡的公共接口。
+
+因此 `@sessionport/adapter-antigravity` 采用官方安全策略：
+- **转出（读 + 校验）**：无损解析明文 `transcript_full.jsonl` + SQLite 元数据 + `.pbtxt` 标题。
+- **转入（`--to antigravity` 写）**：生成结构化交接文档 `<home>/scratch/sessionport-handoffs/<id>.md` 与无损归档 `<id>.ir.json`；若配置了 `ANTIGRAVITY_LS_ADDRESS` 与 `ANTIGRAVITY_CSRF_TOKEN`（且未开启 `--handoff-only`），则从 `conversation_summaries.db` 匹配 `project_id` 并调用 `ConversationService/CreateConversation` 直接新建会话；否则仅产出本地交接文档供复制提示词续聊。
+- 适配器声明 `supportsInPlaceRewrite: false`，明确所有降级 `losses` 并阻止 `merge-back` 原位改写。
 
 ## 3. JSONL 步骤格式与 IR 映射
 

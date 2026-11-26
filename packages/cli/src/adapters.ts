@@ -21,6 +21,7 @@ export const WRITE_TARGETS = [
   'opencode',
   'cursor',
   'qoder',
+  'antigravity',
 ] as const;
 
 const PREFIXES: ReadonlyArray<[string, AgentId]> = [

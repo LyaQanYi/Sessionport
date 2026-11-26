@@ -52,6 +52,11 @@ const migrateInputSchema = z.object({
   compactBudgetChars: z.number().int().positive().optional(),
   compactKeepRecentSteps: z.number().int().positive().optional(),
   summaryCommand: z.string().optional(),
+  handoffOnly: z.boolean().optional(),
+  lsAddress: z.string().optional(),
+  csrfToken: z.string().optional(),
+  projectId: z.string().optional(),
+  maxChars: z.number().int().positive().optional(),
 });
 
 function extractMigrationOptions(input: z.infer<typeof migrateInputSchema>): MigrationOptions {
@@ -68,6 +73,11 @@ function extractMigrationOptions(input: z.infer<typeof migrateInputSchema>): Mig
     compactBudgetChars: input.compactBudgetChars,
     compactKeepRecentSteps: input.compactKeepRecentSteps,
     summaryCommand: input.summaryCommand,
+    handoffOnly: input.handoffOnly,
+    lsAddress: input.lsAddress,
+    csrfToken: input.csrfToken,
+    projectId: input.projectId,
+    maxChars: input.maxChars,
   };
 }
 
@@ -121,7 +131,7 @@ const channelSchemas = {
   'app:openPath': z.object({ key: z.enum(['kimi', 'claude', 'commandCode', 'dsh', 'codex', 'opencode', 'cursor', 'qoder', 'workbuddy', 'antigravity', 'registry']) }),
   'official:list': z.object({}).default({}),
   'official:verify': z.object({ target: z.enum(['zcode', 'qoder', 'cursor']), cwd: z.string().optional(), title: z.string().optional() }),
-  'official:open': z.object({ target: z.enum(['zcode', 'qoder', 'cursor']) }),
+  'official:open': z.object({ target: z.enum(['zcode', 'qoder', 'cursor', 'antigravity']) }),
 } as const;
 
 type Channel = keyof typeof channelSchemas;
@@ -181,6 +191,7 @@ export function registerIpc(): void {
     readable: readableAgents(),
     writable: writableAgents(),
     homes: detectHomes(),
+    antigravityApiAvailable: Boolean(process.env.ANTIGRAVITY_LS_ADDRESS && process.env.ANTIGRAVITY_CSRF_TOKEN),
   })));
   ipcMain.handle('official:list', async () => wrap(() => officialImports()));
   ipcMain.handle('official:verify', async (_event, payload: unknown) => wrap(() => {
@@ -189,7 +200,14 @@ export function registerIpc(): void {
   }));
   ipcMain.handle('official:open', async (_event, payload: unknown) => wrap(() => {
     const input = channelSchemas['official:open'].parse(payload);
-    const appName = input.target === 'zcode' ? 'ZCode' : input.target === 'qoder' ? 'Qoder CN' : 'Cursor';
+    const appName =
+      input.target === 'zcode'
+        ? 'ZCode'
+        : input.target === 'qoder'
+          ? 'Qoder CN'
+          : input.target === 'antigravity'
+            ? 'Antigravity'
+            : 'Cursor';
     return new Promise<{ opened: boolean }>((resolve) => {
       const child = spawn('open', ['-a', appName], { stdio: 'ignore' });
       child.on('exit', (code) => resolve({ opened: code === 0 }));

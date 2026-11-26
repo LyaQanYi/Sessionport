@@ -63,6 +63,7 @@ export interface AntigravitySummaryRow {
   parentConversationId?: string;
   agentName?: string;
   nestingDepth?: number;
+  projectId?: string;
   archived: boolean;
   stepCount?: number;
 }
@@ -330,7 +331,7 @@ export function readAntigravitySummaries(home: string): Map<string, AntigravityS
     const rows = db
       .prepare(
         'SELECT conversation_id, title, preview, step_count, last_modified_time, workspace_uris, ' +
-          'parent_conversation_id, agent_name, nesting_depth, last_user_input_time ' +
+          'parent_conversation_id, agent_name, nesting_depth, project_id, last_user_input_time ' +
           'FROM conversation_summaries',
       )
       .all() as Array<Record<string, unknown>>;
@@ -354,6 +355,7 @@ export function readAntigravitySummaries(home: string): Map<string, AntigravityS
         ...(textOf(row.parent_conversation_id) !== undefined ? { parentConversationId: textOf(row.parent_conversation_id) } : {}),
         ...(textOf(row.agent_name) !== undefined ? { agentName: textOf(row.agent_name) } : {}),
         ...(depth !== undefined ? { nestingDepth: depth } : {}),
+        ...(textOf(row.project_id) !== undefined ? { projectId: textOf(row.project_id) } : {}),
         ...(stepCount !== undefined ? { stepCount } : {}),
         archived: archivedIds.has(conversationId),
       });
@@ -368,6 +370,17 @@ export function readAntigravitySummaries(home: string): Map<string, AntigravityS
     }
   }
   return out;
+}
+
+/** 按 cwd 匹配 conversation_summaries.db 中最近一次记录的 project_id */
+export function lookupAntigravityProjectId(home: string, cwd: string | undefined): string | undefined {
+  const targetCwd = textOf(cwd);
+  if (targetCwd === undefined) return undefined;
+  const normalizedTarget = resolve(targetCwd);
+  const candidates = [...readAntigravitySummaries(home).values()]
+    .filter((row) => row.cwd !== undefined && row.projectId !== undefined && resolve(row.cwd) === normalizedTarget)
+    .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+  return candidates[0]?.projectId;
 }
 
 function unescapePbtxtString(raw: string): string {

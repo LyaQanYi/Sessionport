@@ -67,10 +67,10 @@ const USAGE = [
   '  <无前缀目录/文件>      按结构自动识别',
   '',
   '目标 agent（--to）:',
-  '  claude-code  |  command-code  |  dsh  |  codex  |  opencode  |  cursor  |  qoder',
+  '  claude-code  |  command-code  |  dsh  |  codex  |  opencode  |  cursor  |  qoder  |  antigravity (上下文交接)',
   '',
   '通用选项:',
-  '  --home <dir>           目标数据根目录（claude: 配置目录；command-code: ~/.commandcode；dsh: DSH_HOME）',
+  '  --home <dir>           目标数据根目录（claude: 配置目录；command-code: ~/.commandcode；dsh: DSH_HOME；antigravity: ~/.gemini/antigravity）',
   '  --cwd <dir>            目标会话的工作目录（默认取源会话 cwd）',
   '  --id <id>              指定目标会话 id',
   '  --model <name>         目标模型名',
@@ -92,6 +92,11 @@ const USAGE = [
   '  --compact-keep-steps <n>    强制保留最近 n 个 step（默认按预算自适应）',
   '  --summary-llm <claude|codex>  压缩导入时用已登录的 CLI 生成 LLM 多轮摘要',
   '  --summary-cmd <命令>        自定义摘要命令（prompt 走 stdin，stdout 读摘要）',
+  '  --handoff-only         antigravity 目标：只写本地交接文件（.md + .ir.json），不调 CreateConversation API',
+  '  --ls-address <h:p>     antigravity 目标：覆盖 ANTIGRAVITY_LS_ADDRESS',
+  '  --csrf-token <token>   antigravity 目标：覆盖 ANTIGRAVITY_CSRF_TOKEN',
+  '  --project-id <id>      antigravity 目标：覆盖 ANTIGRAVITY_PROJECT_ID',
+  '  --max-chars <n>        antigravity 目标：交接上下文字符预算（默认 24000）',
   '  --into <app>           import 的目标 app：zcode | qoder | cursor（cursor 无官方导入）',
   '  --open                 import 时自动打开目标 app',
   '  --fork                 sync: 目标端有新增时另建一个目标会话，保留旧会话',
@@ -254,6 +259,14 @@ function commonTargetOptions(values: Record<string, string | boolean | undefined
     compactKeepRecentSteps:
       typeof values['compact-keep-steps'] === 'string' ? Number(values['compact-keep-steps']) : undefined,
     summaryCommand: resolveSummaryCommand(values),
+    handoffOnly: values['handoff-only'] === true,
+    lsAddress: typeof values['ls-address'] === 'string' ? values['ls-address'] : undefined,
+    csrfToken: typeof values['csrf-token'] === 'string' ? values['csrf-token'] : undefined,
+    projectId: typeof values['project-id'] === 'string' ? values['project-id'] : undefined,
+    maxChars:
+      typeof values['max-chars'] === 'string' && Number.isFinite(Number(values['max-chars'])) && Number(values['max-chars']) > 0
+        ? Number(values['max-chars'])
+        : undefined,
   };
 }
 
@@ -330,6 +343,9 @@ function buildBackupCaveats(target: AgentId, opts: Record<string, unknown>): str
   const caveats: string[] = [];
   if (target === 'opencode') {
     caveats.push('opencode 会话写入共享数据库/外部进程，sessionport undo 仅还原 registry 而不回滚 opencode 库内消息');
+  }
+  if (target === 'antigravity') {
+    caveats.push('Antigravity 通过 CreateConversation API 创建的新对话位于外部应用进程内，sessionport undo 仅清理本地交接 .md/.ir.json 文件');
   }
   if (opts.register === true || opts.registerWorkspace === true) {
     caveats.push('--register 写入了目标应用索引（如 threads/session_index.jsonl/app-state.json/workspace.json），undo 不自动删除索引条目');
@@ -456,11 +472,35 @@ async function cmdPush(source: string, values: Record<string, string | boolean |
     paths: outcome.paths,
   };
   printReport(report);
+  if (to === 'antigravity') {
+    const handoff = outcome.report.handoff as
+      | { delivery: 'api' | 'handoff-file'; mdPath: string; irPath: string; conversationId?: string }
+      | undefined;
+    if (handoff) {
+      process.stdout.write(
+        'delivery    ' +
+          (handoff.delivery === 'api'
+            ? 'ConversationService/CreateConversation (id=' + (handoff.conversationId ?? outcome.targetId) + ')'
+            : 'handoff-file (本地交接文档 + IR 归档)') +
+          '\n',
+      );
+    }
+    if (values.open === true) {
+      const opened = openTargetApp('antigravity');
+      process.stdout.write((opened ? 'open        ✅ 已打开 ' : 'open        ⚠️ 无法打开 ') + 'Antigravity\n');
+    }
+  }
   if (backupRecord) {
     process.stdout.write('backup      ' + backupRecord.id + '  (可用 sessionport undo 回滚)\n');
   }
   printNotices(bundle.root.notices);
-  process.stdout.write('\n下一步: 用目标 agent 打开/继续这个会话（' + report.paths[0] + '）\n');
+  process.stdout.write(
+    '\n下一步: ' +
+      (to === 'antigravity' && outcome.report.delivery !== 'api'
+        ? '打开 Antigravity 新对话并参考交接文档续聊（' + report.paths[0] + '）'
+        : '用目标 agent 打开/继续这个会话（' + report.paths[0] + '）') +
+      '\n',
+  );
 }
 
 async function writeTarget(
@@ -487,7 +527,7 @@ async function countTarget(
 
 async function cmdSync(source: string, values: Record<string, string | boolean | undefined>): Promise<void> {
   const to = typeof values.to === 'string' ? values.to : '';
-  if (!to) fail('sync 需要 --to <agent>（claude-code / command-code / dsh）');
+  if (!to) fail('sync 需要 --to <agent>（' + WRITE_TARGETS.join(' / ') + '）');
   if (values['merge-back'] === true) {
     await cmdMergeBack(source, {
       ...values,
@@ -501,6 +541,8 @@ async function cmdSync(source: string, values: Record<string, string | boolean |
   if (!adapter?.write) fail('不支持的目标 agent: ' + to);
   const detected = detectSource(source);
   const bundle = await loadBundle(source);
+  const sourceAdapter = await getAdapter(bundle.root.source.agent);
+  const canMergeBack = Boolean(sourceAdapter?.write) && sourceAdapter?.supportsInPlaceRewrite !== false;
   const opts = commonTargetOptions(values);
   const stateHome = typeof values.state === 'string' ? values.state : undefined;
   opts.stateHome = stateHome;
@@ -531,7 +573,7 @@ async function cmdSync(source: string, values: Record<string, string | boolean |
     process.stderr.write(
       '\n拒绝写入：目标端在上次同步后新增了 ' + decision.targetExtra + ' 单位。\n' +
       '  --fork        另建目标会话，保留旧会话（推荐）\n' +
-      '  --merge-back  把目标端新增对话增量合并回源会话\n' +
+      (canMergeBack ? '  --merge-back  把目标端新增对话增量合并回源会话\n' : '') +
       '  --force       直接覆盖（目标端新增内容会丢）\n',
     );
     process.exit(2);
@@ -575,13 +617,15 @@ async function cmdSync(source: string, values: Record<string, string | boolean |
       let targetIrHead: string | null | undefined;
       let targetIrHeadHash: string | null | undefined;
       const writtenPath = written.paths[0] ? resolve(written.paths[0]) : '';
-      try {
-        const readBack = await readTargetBundle(to as AgentId, written.targetId, writtenPath, targetHome);
-        targetIrEvents = readBack.root.events.length;
-        targetIrHead = readBack.root.head;
-        targetIrHeadHash = eventFingerprint(readBack.root.events.at(-1));
-      } catch {
-        // 无法回读目标（如 opencode 未安装）时留空，merge-back 自动回退内容指纹定位
+      if (to !== 'antigravity' || written.report.delivery === 'api') {
+        try {
+          const readBack = await readTargetBundle(to as AgentId, written.targetId, writtenPath, targetHome);
+          targetIrEvents = readBack.root.events.length;
+          targetIrHead = readBack.root.head;
+          targetIrHeadHash = eventFingerprint(readBack.root.events.at(-1));
+        } catch {
+          // 无法回读目标（如 opencode 未安装）时留空，merge-back 自动回退内容指纹定位
+        }
       }
       const nextRef: ExternalRef = {
         sourceKey,
@@ -687,7 +731,7 @@ async function cmdMergeBack(source: string, values: Record<string, string | bool
   const sourceBundle = await loadBundle(source);
   const sourceAgent = sourceBundle.root.source.agent;
   const sourceAdapter = await getAdapter(sourceAgent);
-  const sourceWritable = Boolean(sourceAdapter?.write);
+  const sourceWritable = Boolean(sourceAdapter?.write) && sourceAdapter?.supportsInPlaceRewrite !== false;
 
   const stateHome = typeof values.state === 'string' ? values.state : undefined;
   const registry = loadRegistry(stateHome);
@@ -1014,9 +1058,10 @@ async function cmdStatus(values: Record<string, string | boolean | undefined>): 
     if (decision.kind === 'refresh' || decision.kind === 'fresh') {
       hint = 'sessionport sync "' + sourceSpec + '" --to ' + ref.target;
     } else if (decision.kind === 'diverged') {
-      hint = srcAdapter?.write
-        ? 'sessionport merge-back "' + sourceSpec + '" --from ' + ref.target + '  或  sessionport sync "' + sourceSpec + '" --to ' + ref.target + ' --fork'
-        : 'sessionport sync "' + sourceSpec + '" --to ' + ref.target + ' --fork';
+      hint =
+        srcAdapter?.write && srcAdapter.supportsInPlaceRewrite !== false
+          ? 'sessionport merge-back "' + sourceSpec + '" --from ' + ref.target + '  或  sessionport sync "' + sourceSpec + '" --to ' + ref.target + ' --fork'
+          : 'sessionport sync "' + sourceSpec + '" --to ' + ref.target + ' --fork';
     }
 
     items.push({
@@ -1389,6 +1434,11 @@ async function main(): Promise<void> {
       'summary-llm': { type: 'string' },
       'summary-cmd': { type: 'string' },
       into: { type: 'string' },
+      'handoff-only': { type: 'boolean' },
+      'ls-address': { type: 'string' },
+      'csrf-token': { type: 'string' },
+      'project-id': { type: 'string' },
+      'max-chars': { type: 'string' },
       source: { type: 'string' },
       open: { type: 'boolean' },
       verify: { type: 'boolean' },

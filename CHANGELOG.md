@@ -7,14 +7,20 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
-- **Antigravity read-only source adapter (CLI + Desktop).** Added
-  `packages/adapters/antigravity` (`antigravity:` / `agy:` prefixes), merging
-  `~/.gemini/antigravity` (App/IDE) and `~/.gemini/antigravity-cli` (`agy` CLI) transcripts
-  (`transcript_full.jsonl` with `transcript.jsonl` fallback), SQLite summaries/archive/parent
-  links, `.pbtxt` annotation titles, `invoke_subagent` + swarm children, structural
-  verification (`verify --agent antigravity`), and tool normalization (`run_command`,
-  `read_file`/`view_file`, `write_file`/`write_to_file`, `edit_file`/`replace_file_content`,
-  `grep_search`, `find_by_name`, `list_dir`, `update_steps`).
+- **Antigravity two-way adapter: native read + official degraded context handoff write (CLI + Desktop).**
+  Added `packages/adapters/antigravity` (`antigravity:` / `agy:` prefixes):
+  - **Native read & verification**: merges `~/.gemini/antigravity` (App/IDE) and
+    `~/.gemini/antigravity-cli` (`agy` CLI) transcripts (`transcript_full.jsonl` with
+    `transcript.jsonl` fallback), SQLite summaries/archive/parent links, `.pbtxt` annotation
+    titles, `invoke_subagent` + swarm children, structural verification (`verify --agent antigravity`),
+    and tool normalization (`run_command`, `read_file`/`view_file`, `write_file`/`write_to_file`,
+    `edit_file`/`replace_file_content`, `grep_search`, `find_by_name`, `list_dir`, `update_steps`).
+  - **Official degraded context handoff write (`--to antigravity`)**: generates a local markdown
+    handoff document plus lossless `.ir.json` archive under `<home>/scratch/sessionport-handoffs/`
+    and optionally invokes `ConversationService/CreateConversation` when `ANTIGRAVITY_LS_ADDRESS`
+    and `ANTIGRAVITY_CSRF_TOKEN` are present (with automatic workspace `project_id` lookup,
+    `--handoff-only` / Desktop checkbox fallback, copy-prompt & Open Antigravity actions, explicit
+    degradation losses, and `supportsInPlaceRewrite: false` to prevent `merge-back`).
 
 ## [0.1.13] — 2026-11-26
 

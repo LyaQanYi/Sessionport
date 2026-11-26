@@ -231,6 +231,15 @@ export const zhCN = {
   'migrate.history.action.sync': 'sync',
   'migrate.history.action.merge-back': 'merge-back',
   'migrate.history.action.desktop-migrate': '桌面迁移',
+  'migrate.antigravity.banner': '官方安全上下文交接（写为新对话，非原生多轮气泡）：',
+  'migrate.antigravity.apiReady': 'ConversationService API 已连接',
+  'migrate.antigravity.fileOnlyBadge': '将生成本地交接文件',
+  'migrate.antigravity.handoffOnly': '仅写本地交接文件（不调用 CreateConversation API）',
+  'migrate.antigravity.deliveryApi': '已通过官方 API 创建新对话',
+  'migrate.antigravity.deliveryFile': '已生成本地交接文档',
+  'migrate.antigravity.copyPrompt': '复制续聊提示词',
+  'migrate.antigravity.copied': '已复制',
+  'migrate.antigravity.openApp': '打开 Antigravity',
   'migrate.loadingSessions': '加载会话列表中…',
 
   // 官方导入步骤（core 里的步骤/说明在 renderer 侧按目标重写，保证可翻译）
@@ -530,6 +539,15 @@ export const enUS: Record<MessageKey, string> = {
   'migrate.history.action.sync': 'sync',
   'migrate.history.action.merge-back': 'merge-back',
   'migrate.history.action.desktop-migrate': 'Desktop migrate',
+  'migrate.antigravity.banner': 'Official context handoff (creates a new starter session, not native multi-turn bubbles):',
+  'migrate.antigravity.apiReady': 'ConversationService API connected',
+  'migrate.antigravity.fileOnlyBadge': 'Local handoff files only',
+  'migrate.antigravity.handoffOnly': 'Write local handoff files only (skip CreateConversation API)',
+  'migrate.antigravity.deliveryApi': 'Created new conversation via official API',
+  'migrate.antigravity.deliveryFile': 'Generated local handoff files',
+  'migrate.antigravity.copyPrompt': 'Copy resume prompt',
+  'migrate.antigravity.copied': 'Copied',
+  'migrate.antigravity.openApp': 'Open Antigravity',
   'migrate.loadingSessions': 'Loading sessions…',
 
   // Official import steps

@@ -19,7 +19,7 @@ import {
 
 test('capabilities：可读/可写 agent 列表', () => {
   assert.deepEqual(readableAgents().sort(), ['antigravity', 'claude-code', 'codex', 'command-code', 'cursor', 'dsh', 'kimi-code', 'opencode', 'qoder', 'workbuddy'].sort());
-  assert.deepEqual(writableAgents().sort(), ['claude-code', 'command-code', 'codex', 'cursor', 'dsh', 'opencode', 'qoder'].sort());
+  assert.deepEqual(writableAgents().sort(), ['antigravity', 'claude-code', 'command-code', 'codex', 'cursor', 'dsh', 'opencode', 'qoder'].sort());
 });
 
 test('listSessions 返回结构合法的行（无会话时也应是空数组）', async () => {
@@ -379,6 +379,95 @@ test('antigravity：桌面端 readSession 与 previewMigration 触发跨源工�
     });
     assert.equal(preview.target, 'claude-code');
     assert.ok(preview.losses.some((loss) => loss.code === 'claude.tool-normalized'));
+
+    const pushed = await runMigration('antigravity', { nativePath: transcriptPath, sessionId: convId }, 'claude-code', {
+      stateHome: join(dir, 'state'),
+      home: join(dir, 'claude-dst'),
+    });
+    assert.equal(pushed.target, 'claude-code');
+
+    const mergePreview = await previewMergeBack('antigravity', { nativePath: transcriptPath, sessionId: convId }, 'claude-code', {
+      stateHome: join(dir, 'state'),
+      targetHome: join(dir, 'claude-dst'),
+    });
+    assert.equal(mergePreview.decision, 'source-read-only');
+    await assert.rejects(
+      () =>
+        runMergeBack('antigravity', { nativePath: transcriptPath, sessionId: convId }, 'claude-code', {
+          stateHome: join(dir, 'state'),
+          targetHome: join(dir, 'claude-dst'),
+        }),
+      /source-read-only|不允许原位改写|不支持|只读/u,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('antigravity：桌面端 claude-code -> antigravity handoffOnly 迁移与 undo', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sessionport-desktop-agy-write-'));
+  try {
+    const claudeId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const repoDir = join(dir, 'repo');
+    mkdirSync(repoDir, { recursive: true });
+    const claudePath = join(dir, 'claude-src', 'projects', '-tmp-repo', claudeId + '.jsonl');
+    mkdirSync(dirname(claudePath), { recursive: true });
+    writeFileSync(
+      claudePath,
+      [
+        {
+          type: 'user',
+          uuid: 'u1',
+          parentUuid: null,
+          timestamp: '2026-11-26T05:00:00Z',
+          cwd: repoDir,
+          sessionId: claudeId,
+          message: { role: 'user', content: '请汇总当前架构要点' },
+        },
+        {
+          type: 'assistant',
+          uuid: 'a1',
+          parentUuid: 'u1',
+          timestamp: '2026-11-26T05:00:02Z',
+          cwd: repoDir,
+          sessionId: claudeId,
+          message: { role: 'assistant', content: [{ type: 'text', text: '这是一个模块化适配器仓库。' }] },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join('\n') + '\n',
+      'utf8',
+    );
+
+    const stateHome = join(dir, 'state');
+    const agyHome = join(dir, 'agy-home');
+    const preview = await previewMigration('claude-code', { nativePath: claudePath, sessionId: claudeId }, 'antigravity', {
+      stateHome,
+      home: agyHome,
+      handoffOnly: true,
+    });
+    assert.equal(preview.target, 'antigravity');
+    assert.ok(preview.losses.some((loss) => loss.code === 'antigravity.degraded-context-handoff'));
+    assert.ok(preview.losses.some((loss) => loss.code === 'antigravity.handoff-file-only'));
+
+    const written = await runMigration('claude-code', { nativePath: claudePath, sessionId: claudeId }, 'antigravity', {
+      stateHome,
+      home: agyHome,
+      handoffOnly: true,
+    });
+    assert.equal(written.target, 'antigravity');
+    assert.equal(written.paths.length, 2);
+    assert.ok(existsSync(written.paths[0]!));
+    assert.ok(existsSync(written.paths[1]!));
+    assert.equal(written.handoff?.delivery, 'handoff-file');
+    assert.ok(written.handoff?.promptText.includes(written.paths[0]!));
+    assert.ok(readFileSync(written.paths[0]!, 'utf8').includes('请汇总当前架构要点'));
+
+    assert.ok(written.backupId);
+    const undone = await undoBackup(written.backupId, { stateHome });
+    assert.equal(undone.opId, written.backupId);
+    assert.equal(existsSync(written.paths[0]!), false);
+    assert.equal(existsSync(written.paths[1]!), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

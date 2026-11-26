@@ -16,8 +16,15 @@ export type {
 } from '@sessionport/core';
 
 /** 打开目标 app（仅 CLI 使用；桌面端走自己的 shell.openPath） */
-export function openTargetApp(target: 'zcode' | 'qoder' | 'cursor'): boolean {
-  const appName = target === 'zcode' ? 'ZCode' : target === 'qoder' ? 'Qoder CN' : 'Cursor';
+export function openTargetApp(target: 'zcode' | 'qoder' | 'cursor' | 'antigravity'): boolean {
+  const appName =
+    target === 'zcode'
+      ? 'ZCode'
+      : target === 'qoder'
+        ? 'Qoder CN'
+        : target === 'antigravity'
+          ? 'Antigravity'
+          : 'Cursor';
   const result = spawnSync('open', ['-a', appName], { stdio: 'ignore' });
   return result.status === 0;
 }

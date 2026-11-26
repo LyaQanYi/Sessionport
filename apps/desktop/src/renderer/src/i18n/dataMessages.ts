@@ -168,6 +168,19 @@ export const enLossMessages: Record<string, string> = {
   'qoder.backup': 'Backed up the previous file before overwriting',
   'qoder.tool-normalized': "Tool calls were rewritten to the target's native tools (disable with --raw-tools)",
   'qoder.tool-unmapped': 'Tool calls with no native equivalent on the target kept their source tool names',
+
+  'antigravity.degraded-context-handoff':
+    'Antigravity uses a private binary Protobuf database; migrated via official context handoff instead of native history bubbles and tool cards (full lossless IR archived in .ir.json)',
+  'antigravity.triggers-initial-turn':
+    'ConversationService/CreateConversation immediately submits the initial handoff prompt and triggers a model turn',
+  'antigravity.handoff-file-only':
+    'ANTIGRAVITY_LS_ADDRESS / ANTIGRAVITY_CSRF_TOKEN not set (or handoffOnly enabled); wrote local handoff files only',
+  'antigravity.handoff-truncated':
+    'Handoff exceeded the character budget; earlier events were omitted inline (complete history saved in .ir.json)',
+  'antigravity.subagents-summarized':
+    'Subagent / swarm child sessions were summarized in the handoff document instead of creating standalone child threads',
+  'antigravity.subagents-dropped':
+    'Subagent / swarm child sessions were not included (enable --include-children to summarize them in the handoff)',
 };
 
 export const enNoticeMessages: Record<string, string> = {

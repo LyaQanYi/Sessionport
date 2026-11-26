@@ -34,6 +34,7 @@ export const WRITABLE_AGENTS: readonly AgentId[] = [
   'opencode',
   'cursor',
   'qoder',
+  'antigravity',
 ];
 
 /** 按 agent id 懒加载对应的 AgentAdapter；未知 id 返回 undefined */

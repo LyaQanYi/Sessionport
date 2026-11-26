@@ -5,6 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./read": "./src/read.ts",
+    "./write": "./src/write.ts",
     "./verify": "./src/verify.ts",
     "./wire": "./src/wire.ts",
     "./adapter": "./src/adapter.ts"
@@ -16,7 +17,7 @@
   "engines": {
     "node": ">=24"
   },
-  "description": "Antigravity adapter (read/verify)",
+  "description": "Antigravity adapter (read/write-handoff/verify)",
   "repository": {
     "type": "git",
     "url": "https://github.com/LyaQanYi/Sessionport.git",

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, CheckCircle2, GitMerge, History, Info, ListChecks, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Check, CheckCircle2, Copy, ExternalLink, GitMerge, History, Info, ListChecks, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
 
 import { api, sessionRefOf } from '../api.ts';
 import type { AgentId, DivergedMode, HistoryRecordSummary, SessionRow } from '../api.ts';
@@ -31,6 +31,10 @@ const OFFICIAL_TEXT: Record<OfficialTarget, { steps: MessageKey[]; notes: Messag
     steps: [],
     notes: ['official.cursor.note1', 'official.cursor.note2', 'official.cursor.note3'],
   },
+  antigravity: {
+    steps: [],
+    notes: [],
+  },
 };
 
 const HISTORY_ACTION_KEY: Record<HistoryRecordSummary['action'], MessageKey> = {
@@ -54,6 +58,8 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
   const [normalizeTools, setNormalizeTools] = useState(true);
   const [dshMode, setDshMode] = useState<'full' | 'slim' | 'compact'>('compact');
   const [summaryEngine, setSummaryEngine] = useState<'off' | 'claude' | 'codex'>('off');
+  const [agHandoffOnly, setAgHandoffOnly] = useState(false);
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [mode, setMode] = useState<DivergedMode>('auto');
   const [officialResults, setOfficialResults] = useState<Partial<Record<OfficialTarget, OfficialVerifyRow>>>({});
   const officialQuery = useQuery({ queryKey: ['official'], queryFn: api.officialList });
@@ -95,6 +101,7 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
             : { summaryCommand: summaryEngine === 'claude' ? 'claude -p' : 'codex exec -' }),
         }
       : {}),
+    ...(target === 'antigravity' ? { handoffOnly: agHandoffOnly } : {}),
   });
 
   const preview = useMutation({
@@ -328,6 +335,22 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
               </div>
             ) : null}
 
+            {target === 'antigravity' ? (
+              <div className="mt-4 flex flex-wrap items-center gap-3 rounded-control border border-border bg-subtle px-3 py-2 text-caption text-fg-2">
+                <span className="text-fg-1">{t('migrate.antigravity.banner')}</span>
+                <Badge variant={capsQuery.data?.antigravityApiAvailable && !agHandoffOnly ? 'success' : 'outline'}>
+                  {capsQuery.data?.antigravityApiAvailable && !agHandoffOnly
+                    ? t('migrate.antigravity.apiReady')
+                    : t('migrate.antigravity.fileOnlyBadge')}
+                </Badge>
+                <div className="ml-auto">
+                  <CheckboxRow checked={agHandoffOnly} onChange={setAgHandoffOnly}>
+                    {t('migrate.antigravity.handoffOnly')}
+                  </CheckboxRow>
+                </div>
+              </div>
+            ) : null}
+
             <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
               <CheckboxRow checked={register} onChange={setRegister}>
                 {t('migrate.register')}
@@ -415,7 +438,7 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                       </button>
                     ))}
                   </div>
-                  {source && writableAll.includes(source.agent) ? (
+                  {source && writableAll.includes(source.agent) && source.agent !== 'antigravity' ? (
                     <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-amber-500/20 pt-3">
                       <Button
                         size="sm"
@@ -512,9 +535,16 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
               ) : null}
               {run.data && !run.data.refused ? (
                 <Card className="p-4">
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     {t('migrate.written', { target: agentLabel(run.data.target) })} · <span className="font-mono">{run.data.sessionId}</span>
+                    {run.data.handoff ? (
+                      <Badge variant={run.data.handoff.delivery === 'api' ? 'success' : 'outline'} className="ml-auto">
+                        {run.data.handoff.delivery === 'api'
+                          ? t('migrate.antigravity.deliveryApi')
+                          : t('migrate.antigravity.deliveryFile')}
+                      </Badge>
+                    ) : null}
                   </div>
                   <ul className="mt-2 space-y-0.5 font-mono text-3xs text-muted-foreground">
                     {run.data.paths.map((path) => (
@@ -523,6 +553,36 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
                       </li>
                     ))}
                   </ul>
+                  {run.data.handoff ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const promptText = run.data?.handoff?.promptText;
+                          if (!promptText) return;
+                          void navigator.clipboard
+                            .writeText(promptText)
+                            .then(() => {
+                              setCopiedPrompt(true);
+                              setTimeout(() => setCopiedPrompt(false), 1800);
+                            })
+                            .catch(() => undefined);
+                        }}
+                      >
+                        {copiedPrompt ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                        {copiedPrompt ? t('migrate.antigravity.copied') : t('migrate.antigravity.copyPrompt')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void api.officialOpen('antigravity').catch(() => undefined)}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        {t('migrate.antigravity.openApp')}
+                      </Button>
+                    </div>
+                  ) : null}
                   {renderUndoAction(run.data.backupId)}
                 </Card>
               ) : null}

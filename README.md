@@ -11,7 +11,8 @@ A conversation started in Kimi Code becomes a Claude Code session you can `/resu
 Not a pasted transcript, not a summarized context blob: a native session the target CLI loads by itself.
 
 > **Status: alpha.** Ten adapters: `claude-code`, `command-code`, `dsh`, `codex`, `opencode`,
-> `cursor`, `qoder` (read/write) and `kimi-code`, `workbuddy`, `antigravity` (source). Every export prints exactly what it lost.
+> `cursor`, `qoder` (read/write), `antigravity` (native read + official degraded context handoff write),
+> and `kimi-code`, `workbuddy` (source). Every export prints exactly what it lost.
 > Design notes: [DESIGN.md](./DESIGN.md). Format research: [research/](./research/).
 
 ## Why
@@ -85,7 +86,7 @@ State lives in `~/.sessionport/registry.json` (`--state <dir>` to override).
 | Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ new composer + headers | ✅ app-visible; native tool cards incl. read + edit diff (CDP-verified 2026-10-30) | 3.27.22 |
 | Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ new transcript file | ✅ Qoder SDK `listSessions/listSubagents` (matrix; desktop task list is server-backed) | 1.1.75-hotfix.1 |
 | WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | source only | 5.9.3 |
-| Antigravity | ✅ `brain/*/logs/transcript_full.jsonl` + `conversation_summaries.db` | — | source only (App/IDE + `agy` CLI) | App 2.35.2 / CLI |
+| Antigravity | ✅ `brain/*/logs/transcript_full.jsonl` + `conversation_summaries.db` | ⚠️ degraded context handoff (`.md` + `.ir.json` + optional `CreateConversation` API) | ⚠️ official starter handoff (`App/IDE` + `agy` CLI; no `merge-back`) | App 2.35.2 / CLI |
 | Claude Code | ✅ `~/.claude/projects/**/*.jsonl` | ✅ JSONL session files | ✅ `claude --resume` TUI (matrix) | CLI 2.1.312 |
 | Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + desktop registration | ✅ `cmd -p --session` (matrix, opt-in smoke) | 1.86.1 |
 | DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load (matrix) | 0.2.2-rc.1 (format v4) |
@@ -259,7 +260,7 @@ packages/
 │   ├── cursor/           # read/write/verify (state.vscdb composerData/bubbleId)
 │   ├── qoder/            # read/write/verify (projects/<slug>/<uuid>.jsonl)
 │   ├── workbuddy/        # read/verify (projects/<slug>/<sessionId>.jsonl)
-│   └── antigravity/      # read/verify (brain/*/logs/transcript_full.jsonl)
+│   └── antigravity/      # read/write-handoff/verify (transcript_full.jsonl + handoff/API)
 ├── cli/                  # inspect / pull / push / sync / merge-back / undo / status / verify
 └── e2e fixtures live in each adapter’s test/ folder
 

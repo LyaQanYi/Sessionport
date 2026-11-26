@@ -360,7 +360,8 @@ test('readAntigravitySession / listAntigravitySessions：支持子代理、swarm
 
     // adapter metadata
     assert.equal(antigravityAdapter.id, 'antigravity');
-    assert.equal(antigravityAdapter.write, undefined);
+    assert.equal(typeof antigravityAdapter.write, 'function');
+    assert.equal(antigravityAdapter.supportsInPlaceRewrite, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

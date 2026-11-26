@@ -158,6 +158,25 @@ export interface MigrationOptions {
   summaryCommand?: string;
   /** 是否把跨源工具调用归一化为目标 harness 原生工具（默认 true） */
   normalizeTools?: boolean;
+  /** antigravity 目标：只生成本地交接文件，不调 CreateConversation API */
+  handoffOnly?: boolean;
+  /** antigravity 目标：覆盖语言服务器地址 */
+  lsAddress?: string;
+  /** antigravity 目标：覆盖 CSRF token */
+  csrfToken?: string;
+  /** antigravity 目标：覆盖 projectId */
+  projectId?: string;
+  /** antigravity 目标：交接正文字符预算 */
+  maxChars?: number;
+}
+
+export interface AntigravityHandoffInfo {
+  delivery: 'api' | 'handoff-file';
+  mdPath: string;
+  irPath: string;
+  promptText: string;
+  conversationId?: string;
+  projectId?: string;
 }
 
 export interface MigrationResult {
@@ -168,6 +187,7 @@ export interface MigrationResult {
   imported: boolean;
   sync: SyncInfo;
   backupId?: string;
+  handoff?: AntigravityHandoffInfo;
   refused?: { reason: string; code?: string; params?: Record<string, unknown> };
 }
 
@@ -419,6 +439,11 @@ function buildAdapterWriteOpts(
     compactBudgetChars: options.compactBudgetChars,
     compactKeepRecentSteps: options.compactKeepRecentSteps,
     summaryCommand: options.summaryCommand,
+    ...(options.handoffOnly === true ? { handoffOnly: true } : {}),
+    ...(options.lsAddress !== undefined ? { lsAddress: options.lsAddress } : {}),
+    ...(options.csrfToken !== undefined ? { csrfToken: options.csrfToken } : {}),
+    ...(options.projectId !== undefined ? { projectId: options.projectId } : {}),
+    ...(options.maxChars !== undefined ? { maxChars: options.maxChars } : {}),
     ...(target === 'cursor' && !options.dryRun
       ? { confirmReal: true, ...(options.allowOverwrite ? { allowOverwrite: true } : {}) }
       : {}),
@@ -484,6 +509,9 @@ function backupCaveatsFor(target: AgentId, register?: boolean): string[] {
   const caveats: string[] = [];
   if (target === 'opencode') {
     caveats.push('opencode 会话写入共享数据库/外部进程，undo 仅还原 registry 而不回滚 opencode 库内消息');
+  }
+  if (target === 'antigravity') {
+    caveats.push('若通过 ConversationService API 创建了新 Antigravity 对话，undo 仅删除本地交接文件并还原 registry，不删除 Antigravity 侧已建对话');
   }
   if (register === true) {
     caveats.push('已写入目标应用索引（如 threads/session_index.jsonl/app-state.json/workspace.json），undo 不自动删除索引条目');
@@ -643,13 +671,15 @@ export async function runMigration(
     let targetIrEvents: number | undefined;
     let targetIrHead: string | null | undefined;
     let targetIrHeadHash: string | null | undefined;
-    try {
-      const readBack = await readTargetSessionBundle(target, outcome.targetId, writtenPath, options.home);
-      targetIrEvents = readBack.root.events.length;
-      targetIrHead = readBack.root.head;
-      targetIrHeadHash = eventFingerprint(readBack.root.events.at(-1));
-    } catch {
-      // 个别场景无法回读目标时保留空锚点，后续 merge-back 回退内容指纹匹配
+    if (target !== 'antigravity' || outcome.report.delivery === 'api') {
+      try {
+        const readBack = await readTargetSessionBundle(target, outcome.targetId, writtenPath, options.home);
+        targetIrEvents = readBack.root.events.length;
+        targetIrHead = readBack.root.head;
+        targetIrHeadHash = eventFingerprint(readBack.root.events.at(-1));
+      } catch {
+        // 个别场景无法回读目标时保留空锚点，后续 merge-back 回退内容指纹匹配
+      }
     }
 
     const nextRef: ExternalRef = {
@@ -686,6 +716,7 @@ export async function runMigration(
       ...(cursor !== undefined ? { cursor } : {}),
     });
 
+    const handoff = outcome.report.handoff as AntigravityHandoffInfo | undefined;
     return {
       target,
       sessionId: outcome.targetId,
@@ -694,6 +725,7 @@ export async function runMigration(
       imported: outcome.report.imported === true,
       sync: { ...prepared.sync, targetId: outcome.targetId, targetPath: nextRef.targetPath, targetUnits: outcome.units },
       backupId: backupRecord.id,
+      ...(handoff !== undefined ? { handoff } : {}),
     };
   } catch (error) {
     handle.abort();
@@ -760,7 +792,7 @@ async function prepareMergeBack(
   const sourceBundle = await loadSource(agent, ref);
   const sourceAgent = sourceBundle.root.source.agent;
   const sourceAdapter = (await getAdapter(sourceAgent))!;
-  const sourceWritable = Boolean(sourceAdapter?.write);
+  const sourceWritable = Boolean(sourceAdapter?.write) && sourceAdapter?.supportsInPlaceRewrite !== false;
   const sourceKey = sourceKeyOf(sourceBundle.root.source, sourceBundle.root.id);
   const sourceId = sourceBundle.root.source.nativeSessionId ?? sourceBundle.root.id;
   const registry = loadRegistry(options.stateHome);

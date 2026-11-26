@@ -50,12 +50,13 @@ test('adapter 注册表：10 家全部可加载，WRITE_TARGETS 具备 write，�
   const agy = await getAdapter('antigravity');
   assert.equal(kimi?.write, undefined);
   assert.equal(wb?.write, undefined);
-  assert.equal(agy?.write, undefined);
+  assert.equal(typeof agy?.write, 'function');
+  assert.equal(agy?.supportsInPlaceRewrite, false);
   assert.equal(await getAdapter('unknown-agent'), undefined);
   assert.ok(prefixTable().length >= SESSION_AGENTS.length);
 });
 
-test('adapter dryRun：claude-code / codex / command-code / qoder / dsh 产出有效 targetId 与 paths', async () => {
+test('adapter dryRun：claude-code / codex / command-code / qoder / dsh / antigravity 产出有效 targetId 与 paths', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'sessionport-adapters-dry-'));
   try {
     const events = chain([
@@ -63,7 +64,7 @@ test('adapter dryRun：claude-code / codex / command-code / qoder / dsh 产出�
       { kind: 'message', id: 'e2', at: '2026-01-01T00:00:01.000Z', role: 'assistant', parts: [{ type: 'text', text: 'hi' }] },
     ]);
     const bundle = makeBundle(events, 'claude-code');
-    for (const target of ['claude-code', 'codex', 'command-code', 'qoder', 'dsh'] as const) {
+    for (const target of ['claude-code', 'codex', 'command-code', 'qoder', 'dsh', 'antigravity'] as const) {
       const adapter = await getAdapter(target);
       assert.ok(adapter?.write !== undefined);
       const outcome = await adapter.write(bundle, { home: join(dir, target), dryRun: true, cwd: dir });

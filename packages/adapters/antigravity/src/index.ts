@@ -25,6 +25,16 @@ export {
   antigravityLinesToSession,
   printAntigravitySummary,
 } from './read.ts';
+export {
+  writeAntigravitySession,
+  buildAntigravityHandoff,
+  countAntigravityTarget,
+} from './write.ts';
+export type {
+  WriteAntigravityOptions,
+  AntigravityHandoffInfo,
+  BuiltAntigravityHandoff,
+} from './write.ts';
 export type {
   ReadAntigravityOptions,
   ConvertAntigravityOptions,
@@ -44,6 +54,7 @@ export {
   findAntigravityTranscriptFile,
   inferAntigravityHomeFromPath,
   listAntigravityTranscripts,
+  lookupAntigravityProjectId,
   parseAntigravityDbTime,
   parseAntigravityLines,
   readAntigravityAnnotation,

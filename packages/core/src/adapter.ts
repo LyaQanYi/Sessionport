@@ -26,6 +26,8 @@ export interface AgentAdapter {
   readonly id: AgentId;
   readonly displayName: string;
   readonly sourcePrefixes: readonly string[];
+  /** 是否支持就地重写/合回已有会话（默认 true；降级建新会话类目标如 antigravity 设为 false） */
+  readonly supportsInPlaceRewrite?: boolean;
   read?(input: string): Promise<IrBundle>;
   write?(bundle: IrBundle, opts: AdapterWriteOptions): Promise<AdapterWriteOutcome>;
   /** 对已有原生会话文件执行无损尾部追加（仅追加新增 delta 行，保留既有字节与特定元数据） */

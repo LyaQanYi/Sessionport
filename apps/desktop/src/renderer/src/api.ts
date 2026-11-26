@@ -83,6 +83,15 @@ export interface MigrationPreview {
   sync: SyncInfo;
 }
 
+export interface AntigravityHandoffInfo {
+  delivery: 'api' | 'handoff-file';
+  mdPath: string;
+  irPath: string;
+  promptText: string;
+  conversationId?: string;
+  projectId?: string;
+}
+
 export interface MigrationResult {
   target: AgentId;
   sessionId: string;
@@ -91,6 +100,7 @@ export interface MigrationResult {
   imported: boolean;
   sync: SyncInfo;
   backupId?: string;
+  handoff?: AntigravityHandoffInfo;
   /** code/params 是后加的结构化信息；reason 保留给旧调用方 / 未知 code 回退 */
   refused?: { reason: string; code?: string; params?: Record<string, unknown> };
 }
@@ -171,12 +181,18 @@ export interface MigrationOptions {
   summaryCommand?: string;
   /** 是否把跨源工具调用归一化为目标端原生工具（默认 true） */
   normalizeTools?: boolean;
+  handoffOnly?: boolean;
+  lsAddress?: string;
+  csrfToken?: string;
+  projectId?: string;
+  maxChars?: number;
 }
 
 export interface Capabilities {
   readable: AgentId[];
   writable: AgentId[];
   homes: Record<string, boolean>;
+  antigravityApiAvailable?: boolean;
 }
 
 export interface HomeInfo {
@@ -185,7 +201,7 @@ export interface HomeInfo {
   exists: boolean;
 }
 
-export type OfficialTarget = 'zcode' | 'qoder' | 'cursor';
+export type OfficialTarget = 'zcode' | 'qoder' | 'cursor' | 'antigravity';
 
 export interface OfficialSupportRow {
   target: OfficialTarget;

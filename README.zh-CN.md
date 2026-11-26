@@ -11,7 +11,8 @@
 不是粘贴转录，也不是注入一段摘要：目标 CLI 会像对待自己的会话一样把它加载起来。
 
 > **状态：alpha。** 十个适配器：`claude-code`、`command-code`、`dsh`、`codex`、`opencode`、
-> `cursor`、`qoder`（读写），以及 `kimi-code`、`workbuddy`、`antigravity`（只读源）。每次导出都会明确列出丢了什么。
+> `cursor`、`qoder`（读写），`antigravity`（原生读取 + 官方安全上下文交接写入），以及
+> `kimi-code`、`workbuddy`（只读源）。每次导出都会明确列出丢了什么。
 > 设计说明：[DESIGN.md](./DESIGN.md)。格式研究：[research/](./research/)。
 
 ## 为什么
@@ -84,7 +85,7 @@ node packages/cli/src/index.ts sync "dsh:<session-dir>" --to command-code --regi
 | Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ 新建 composer + headers | ✅ app 内可见；原生工具卡片（含 read）+ 编辑 diff（人工确认） | 3.25.9 |
 | Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ 新建 transcript 文件 | ✅ Qoder SDK `listSessions/listSubagents`（桌面任务列表由服务端驱动） | 1.1.69 |
 | WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | 仅作源 | 5.8.3 |
-| Antigravity | ✅ `brain/*/logs/transcript_full.jsonl` + `conversation_summaries.db` | — | 仅作源（App/IDE + `agy` CLI） | App 2.35.2 / CLI |
+| Antigravity | ✅ `brain/*/logs/transcript_full.jsonl` + `conversation_summaries.db` | ⚠️ 降级上下文交接（`.md` + `.ir.json` + 可选 `CreateConversation` API） | ⚠️ 官方安全交接入口（App/IDE + `agy` CLI；不支持 `merge-back`） | App 2.35.2 / CLI |
 | Claude Code | ✅ `~/.claude/projects/**/*.jsonl` | ✅ JSONL 会话文件 | ✅ `claude --resume` TUI（矩阵） | CLI 2.1.312 |
 | Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + 桌面端注册 | ✅ `cmd -p --session` | 1.82.3 |
 | DeepSeek Harness | ✅ 多帧 zstd 事件日志 | ✅ 原生 workspace 布局 | ✅ 无头加载（矩阵） | 5.8.3（format v4） |
@@ -229,7 +230,7 @@ packages/
 │   ├── cursor/           # 读/写/verify（state.vscdb composerData/bubbleId）
 │   ├── qoder/            # 读/写/verify（projects/<slug>/<uuid>.jsonl）
 │   ├── workbuddy/        # 读/写/verify（projects/<slug>/<sessionId>.jsonl）
-│   └── antigravity/      # 读/verify（brain/*/logs/transcript_full.jsonl）
+│   └── antigravity/      # 读/交接写/verify（transcript_full.jsonl + handoff/API）
 ├── cli/                  # inspect / pull / push / sync / merge-back / undo / status / verify
 └── e2e fixtures 放在各 adapter 的 test/ 下
 
