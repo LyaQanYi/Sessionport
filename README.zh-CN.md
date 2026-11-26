@@ -84,7 +84,7 @@ node packages/cli/src/index.ts sync "dsh:<session-dir>" --to command-code --regi
 | Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ 新建 composer + headers | ✅ app 内可见；原生工具卡片（含 read）+ 编辑 diff（人工确认） | 3.25.9 |
 | Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ 新建 transcript 文件 | ✅ Qoder SDK `listSessions/listSubagents`（桌面任务列表由服务端驱动） | 1.1.69 |
 | WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | 仅作源 | 5.8.3 |
-| Claude Code | ✅ JSONL 会话文件 | ✅ JSONL 会话文件 | ✅ `claude --resume` TUI（矩阵） | CLI 2.1.312 |
+| Claude Code | ✅ `~/.claude/projects/**/*.jsonl` | ✅ JSONL 会话文件 | ✅ `claude --resume` TUI（矩阵） | CLI 2.1.312 |
 | Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + 桌面端注册 | ✅ `cmd -p --session` | 1.82.3 |
 | DeepSeek Harness | ✅ 多帧 zstd 事件日志 | ✅ 原生 workspace 布局 | ✅ 无头加载（矩阵） | 5.8.3（format v4） |
 | Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index 注册 | ✅ `codex exec resume` | 0.163.0 |
@@ -110,6 +110,9 @@ node packages/cli/src/index.ts sync "dsh:<session-dir>" --to command-code --regi
 system prompt）和**可修的能力缺口**（无 sidechain 的目标端的子代理关系、图片附件、分支边界）。
 详见 [DESIGN.md §6.1](./DESIGN.md)。
 
+跨端导出时，常见工具调用（shell/read/write/edit/grep/glob/list/todo）默认会改写为目标端原生工具
+（`claude-code`、`codex`、`opencode`、`cursor`），改写与未命中条目均会写入损失清单；传 `--raw-tools` 可保留源端原始工具名。
+
 ## 命令
 
 ```
@@ -125,7 +128,7 @@ sessionport verify --agent <agent> [options]
 目标：`claude-code`、`command-code`、`dsh`、`codex`、`opencode`、`cursor`（写真实库需 `--confirm-real`）、`qoder`。
 
 不只写文件，还注册进目标 app：`--register`（Command Code 桌面列表 / DSH workspace /
-Codex `threads` + `session_index.jsonl`）。
+Codex `threads` + `session_index.jsonl`）。在 `push`/`sync` 时传 `--raw-tools` 可关闭工具语义归一。
 
 大会话：`dsh` 目标支持 `--slim`——截断工具结果/参数、较早的 step 只保留消息、丢弃 reasoning，
 让导入的会话装进目标模型的上下文窗口（每一处裁剪都会进损失清单）。

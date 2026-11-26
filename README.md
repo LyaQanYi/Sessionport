@@ -85,7 +85,7 @@ State lives in `~/.sessionport/registry.json` (`--state <dir>` to override).
 | Cursor | ✅ `state.vscdb` composerData/bubbleId | ✅ new composer + headers | ✅ app-visible; native tool cards incl. read + edit diff (CDP-verified 2026-10-30) | 3.27.22 |
 | Qoder | ✅ `~/.qoder-cn/projects/*.jsonl` | ✅ new transcript file | ✅ Qoder SDK `listSessions/listSubagents` (matrix; desktop task list is server-backed) | 1.1.75-hotfix.1 |
 | WorkBuddy | ✅ `~/.workbuddy/projects/*.jsonl` | — | source only | 5.9.3 |
-| Claude Code | — | ✅ JSONL session files | ✅ `claude --resume` TUI (matrix) | CLI 2.1.312 |
+| Claude Code | ✅ `~/.claude/projects/**/*.jsonl` | ✅ JSONL session files | ✅ `claude --resume` TUI (matrix) | CLI 2.1.312 |
 | Command Code | ✅ `projects/<slug>/<uuid>.jsonl` | ✅ + desktop registration | ✅ `cmd -p --session` (matrix, opt-in smoke) | 1.86.1 |
 | DeepSeek Harness | ✅ multi-frame zstd event log | ✅ native workspace layout | ✅ headless load (matrix) | 0.2.2-rc.1 (format v4) |
 | Codex | ✅ `sessions/**/rollout-*.jsonl` | ✅ + `threads` / index registration | ✅ `codex exec resume` | 0.167.0 |
@@ -131,6 +131,10 @@ bindings are never migrated; the target keeps its own default model and system p
 (sub-agent relationships on targets without sidechains, image attachments, branch boundaries). See
 [DESIGN.md §6.1](./DESIGN.md).
 
+Tool calls (shell/read/write/edit/grep/glob/list/todo) are rewritten by default to the target's native
+tools (`claude-code`, `codex`, `opencode`, `cursor`), with every rewrite or fallback recorded in the
+loss list; pass `--raw-tools` to keep source tool names unchanged.
+
 ## Commands
 
 ```
@@ -146,7 +150,7 @@ Sources: `kimi:<dir>`, `claude:<path|id>`, `commandcode:<path|id>`, `dsh:<dir>`,
 Targets: `claude-code`, `command-code`, `dsh`, `codex`, `opencode`, `cursor` (needs `--confirm-real`), `qoder`.
 
 Registers into the target app instead of just writing files: `--register` (Command Code desktop list / DSH workspace /
-Codex `threads` + `session_index.jsonl`).
+Codex `threads` + `session_index.jsonl`). Pass `--raw-tools` on `push`/`sync` to disable cross-agent tool normalization.
 
 Large sessions: the `dsh` target supports `--slim` — tool results/call arguments are truncated, older steps keep
 only messages, and reasoning is dropped, so the imported session fits the target model's context window

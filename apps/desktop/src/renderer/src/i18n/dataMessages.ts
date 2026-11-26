@@ -27,6 +27,8 @@ export const enLossMessages: Record<string, string> = {
     'Content undone at the source was already removed in the IR; the target sees the post-undo context',
   'claude.subagent-separate-session':
     "Subagent sessions were exported as standalone sessions; Claude's inline sidechain structure is not implemented, so parent/child links are lost",
+  'claude.tool-normalized': "Tool calls were rewritten to the target's native tools (disable with --raw-tools)",
+  'claude.tool-unmapped': 'Tool calls with no native equivalent on the target kept their source tool names',
 
   'codex.injected-message-dropped':
     'Target-injected messages (runtime context, skill listings, etc.) were dropped; Codex injects its own',
@@ -40,6 +42,8 @@ export const enLossMessages: Record<string, string> = {
   'codex.model-not-mapped': 'The source model was not written to session metadata; Codex uses its configured model',
   'codex.session-index-failed': 'Failed to write session_index.jsonl',
   'codex.threads-row-failed': 'Failed to write the state_5.sqlite threads row (does not affect the rollout)',
+  'codex.tool-normalized': "Tool calls were rewritten to the target's native tools (disable with --raw-tools)",
+  'codex.tool-unmapped': 'Tool calls with no native equivalent on the target kept their source tool names',
 
   'command-code.image-dropped': 'An IR image reference could not be resolved and was dropped',
   'command-code.invalid-timestamp':
@@ -87,6 +91,8 @@ export const enLossMessages: Record<string, string> = {
   'cursor.cross-agent-import': "The session came from another agent; messages are approximated to Cursor's composer format",
   'cursor.workspace-id-fallback':
     'The target directory does not exist; workspaceId falls back to md5(cwd) (this may differ from Cursor’s derivation)',
+  'cursor.tool-normalized': "Tool calls were rewritten to the target's native tools (disable with --raw-tools)",
+  'cursor.tool-unmapped': 'Tool calls with no native equivalent on the target kept their source tool names',
 
   'dsh.reasoning-opaque-dropped': 'Opaque/encrypted reasoning cannot become a DSH reasoning block and was dropped',
   'dsh.boundary-dropped':
@@ -138,6 +144,8 @@ export const enLossMessages: Record<string, string> = {
   'opencode.subagent-dropped': 'Subagent sessions were not exported into opencode',
   'opencode.subagent-events-dropped': 'Subagent session events were not exported',
   'opencode.import-failed': 'opencode import failed',
+  'opencode.tool-normalized': "Tool calls were rewritten to the target's native tools (disable with --raw-tools)",
+  'opencode.tool-unmapped': 'Tool calls with no native equivalent on the target kept their source tool names',
 
   'qoder.image-part-flattened': 'Image parts keep only an [image: ref] text reference; no inline image data',
   'qoder.synthetic-message-dropped':

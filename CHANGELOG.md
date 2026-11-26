@@ -5,6 +5,18 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-agent tool semantic normalization (enabled by default; `--raw-tools` to opt out).**
+  `packages/core/src/tools.ts` classifies common coding tools (`shell`, `read`, `write`, `edit`,
+  `patch`, `grep`, `glob`, `list`, `todo`) and renders target-native tool calls for `claude-code`,
+  `codex` (including `custom_tool_call` `apply_patch`), `opencode`, and `cursor` fallback, while
+  preserving native-named tools and recording `<prefix>.tool-normalized` / `<prefix>.tool-unmapped`
+  info entries in the loss list.
+- **`AgentAdapter` contract and CLI adapter registry.** Added `AgentAdapter` in
+  `packages/core/src/adapter.ts` with adapter implementations across all 9 harnesses and lazy
+  registry dispatch in `packages/cli/src/adapters.ts`.
+
 ### Changed
 
 - **Cursor 3.31.15 desktop rendering re-verified (2026-11-21).** Re-checked a freshly pushed
@@ -14,6 +26,20 @@ All notable changes to this project are documented here. Format loosely follows
   all render cleanly; `_v=18` and chunked header migration remain unchanged, and post-open
   `verify --agent cursor` (35/35 PASS) plus `readCursorSession` (333 events) continue to pass.
   Notes: `research/cursor-ui-2026-11-21.md`.
+
+### Fixed
+
+- **Codex `custom_tool_call` / `custom_tool_call_output` read, write, and verify support.** Codex
+  0.169+ emits `custom_tool_call` (such as `exec` and `apply_patch`) in rollouts; the Codex
+  reader now parses them with raw string inputs instead of skipping them as unknown lines, the
+  writer emits `custom_tool_call` / `custom_tool_call_output`, and `verifyCodexSession` checks
+  their pairing and string input shape.
+- **Cursor `--keep-injected` CLI forwarding.** Fixed a flag typo (`keep-inject` → `keepInjected`)
+  when passing `--keep-injected` to the Cursor adapter.
+- **Claude writer tool-result pairing and empty `tool_use_id` orphan handling.** `repairToolPairs`
+  now merges synthesized missing `tool_result` blocks into the immediately following `user`
+  tool-result row instead of splicing a separate `user` row ahead of it, and downgrades orphan
+  `tool_result` blocks whose `callId` is an empty string (`""`) to text.
 
 ## [0.1.11] — 2026-11-21
 
