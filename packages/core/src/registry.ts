@@ -27,6 +27,14 @@ export interface ExternalRef {
   /** 上次同步时的 IR 链尾事件 id */
   sourceHead: string | null;
   updatedAt: string;
+  /** 双向合并回写所需的源/目标上下文与目标端 IR 锚点（旧 registry 记录缺省时可回落指纹匹配） */
+  sourceAgent?: AgentId;
+  sourcePath?: string;
+  sourceHome?: string;
+  targetHome?: string;
+  targetIrEvents?: number;
+  targetIrHead?: string | null;
+  targetIrHeadHash?: string | null;
 }
 
 export interface RegistryFile {
@@ -73,6 +81,10 @@ export function sourceKeyOf(source: { agent: AgentId; nativeSessionId?: string }
 
 export function findRef(registry: RegistryFile, sourceKey: string, target: AgentId): ExternalRef | undefined {
   return registry.refs.find((ref) => ref.sourceKey === sourceKey && ref.target === target);
+}
+
+export function findRefByTarget(registry: RegistryFile, target: AgentId, targetId: string): ExternalRef | undefined {
+  return registry.refs.find((ref) => ref.target === target && ref.targetId === targetId);
 }
 
 export function upsertRef(registry: RegistryFile, ref: ExternalRef): void {

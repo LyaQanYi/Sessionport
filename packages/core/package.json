@@ -9,7 +9,9 @@
     "./ids": "./src/ids.ts",
     "./paths": "./src/paths.ts",
     "./tools": "./src/tools.ts",
-    "./adapter": "./src/adapter.ts"
+    "./adapter": "./src/adapter.ts",
+    "./history": "./src/history.ts",
+    "./merge": "./src/merge.ts"
   },
   "license": "Apache-2.0",
   "engines": {

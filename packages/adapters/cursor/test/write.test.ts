@@ -7,6 +7,7 @@ import {
   CURSOR_CAPS,
   countCursorTarget,
   readCursorSession,
+  restoreCursorBackup,
   verifyCursorSession,
   writeCursorSession,
 } from '../src/index.ts';
@@ -329,6 +330,78 @@ test('默认 recency=写入时刻（列表顶部），preserveUpdatedAt 保留�
     } finally {
       closeCursorDb(db2);
     }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('restoreCursorBackup: 新写后回滚只删除目标 composer，既有会话完好；覆盖写后精确恢复旧表行', async () => {
+  const fixture = createCursorFixture({
+    composers: [
+      {
+        composerId: ROOT_ID,
+        name: '保留会话',
+        createdAtMs: BASE_MS - 100000,
+        lastUpdatedAtMs: BASE_MS - 90000,
+        bubbles: [
+          { type: 1, text: '不要动我' },
+          { type: 2, text: '原封不动' },
+        ],
+      },
+    ],
+  });
+  try {
+    const initial = snapshot(fixture.dbPath);
+    const backupDir = join(fixture.home, 'backup');
+
+    // 1. 新写入一个 composer，然后用 restoreCursorBackup 回滚 -> 必须与初始状态完全一致
+    const freshWrite = await writeCursorSession(sampleBundle(fixture.cwd), {
+      home: fixture.home,
+      composerId: NEW_ID,
+      backupDir,
+    });
+    assert.ok(freshWrite.backupPath);
+    const afterFresh = await countCursorTarget({ home: fixture.home, sessionId: NEW_ID });
+    assert.equal(afterFresh.exists, true);
+
+    const undoFresh = restoreCursorBackup(freshWrite.backupPath!);
+    assert.ok(undoFresh.deletedKeys >= 2);
+    const afterUndoFresh = snapshot(fixture.dbPath);
+    assert.deepEqual(afterUndoFresh.headers, initial.headers);
+    assert.deepEqual(afterUndoFresh.kv, initial.kv);
+
+    // 2. 先写入 v1，再用 allowOverwrite=true 覆盖为 v2，然后回滚 -> 精确恢复 v1 的 header 与全部气泡
+    await writeCursorSession(sampleBundle(fixture.cwd), {
+      home: fixture.home,
+      composerId: NEW_ID,
+      backupDir,
+      title: '版本一',
+    });
+    const v1Snap = snapshot(fixture.dbPath);
+
+    const v2Bundle = makeIrBundle(
+      [
+        userMessage('第二版问题', new Date(BASE_MS + 10000).toISOString()),
+        assistantMessage('第二版回答', new Date(BASE_MS + 11000).toISOString()),
+      ],
+      { cwd: fixture.cwd, title: '版本二' },
+    );
+    const overwriteWrite = await writeCursorSession(v2Bundle, {
+      home: fixture.home,
+      composerId: NEW_ID,
+      backupDir,
+      title: '版本二',
+      allowOverwrite: true,
+    });
+    assert.ok(overwriteWrite.backupPath);
+    const v2Read = await readCursorSession(NEW_ID, { home: fixture.home });
+    assert.equal(v2Read.root.meta.title, '版本二');
+
+    const undoOverwrite = restoreCursorBackup(overwriteWrite.backupPath!);
+    assert.ok(undoOverwrite.restoredKeys >= 2);
+    const afterUndoOverwrite = snapshot(fixture.dbPath);
+    assert.deepEqual(afterUndoOverwrite.headers, v1Snap.headers);
+    assert.deepEqual(afterUndoOverwrite.kv, v1Snap.kv);
   } finally {
     fixture.cleanup();
   }

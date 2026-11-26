@@ -17,7 +17,7 @@
  * createComposerMessageHeaderGroupingData(Lts)；当前 composerData._v=18 / bubble._v=3。
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import { LossCollector } from '@sessionport/core';
@@ -70,6 +70,7 @@ import type {
   CursorBubble,
   CursorComposerData,
   CursorConversationHeaderEntry,
+  CursorHeaderRow,
   CursorHeaderValue,
   CursorModelConfig,
   CursorToolFormerData,
@@ -985,6 +986,7 @@ export async function writeCursorSession(
       composerId,
       rows,
       existing: backupInfo.existing,
+      ...(backupInfo.existingHeaderRow !== undefined ? { existingHeaderRow: backupInfo.existingHeaderRow } : {}),
     });
   }
   if (!options.allowOverwrite && backupInfo.existingKeys.length > 0) {
@@ -1017,8 +1019,11 @@ export async function writeCursorSession(
             }
           }
         }
+        const replace = options.allowOverwrite === true;
         const insertHeader = db.prepare(
-          'INSERT INTO ' +
+          'INSERT' +
+            (replace ? ' OR REPLACE' : '') +
+            ' INTO ' +
             HEADER_TABLE +
             ' (composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, isSubagent, recency, checkpointAt, subagentTypeName, value) ' +
             'VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?)',
@@ -1033,9 +1038,10 @@ export async function writeCursorSession(
           '',
           headerValueJson,
         );
-        // cursorDiskKV.key 声明了 ON CONFLICT REPLACE；显式 OR ABORT 覆盖列的默认策略，
-        // 即使有并发写入也不会静默替换旧值。
-        const insertKv = db.prepare('INSERT OR ABORT INTO cursorDiskKV (key, value) VALUES (?, ?)');
+        // cursorDiskKV.key 声明了 ON CONFLICT REPLACE；非覆盖写时显式 OR ABORT 防止静默替换旧值。
+        const insertKv = db.prepare(
+          'INSERT' + (replace ? ' OR REPLACE' : ' OR ABORT') + ' INTO cursorDiskKV (key, value) VALUES (?, ?)',
+        );
         insertKv.run(composerDataKey(composerId), composerDataJson);
         for (const bubbleRow of bubbleRows) insertKv.run(bubbleRow.key, bubbleRow.json);
         db.exec('COMMIT;');
@@ -1086,19 +1092,20 @@ function byteLength(text: string): number {
 interface ExistingKeys {
   existingKeys: string[];
   existing: Record<string, { bytes: number; value?: string; truncated?: boolean }>;
+  existingHeaderRow?: CursorHeaderRow;
 }
 
 function inspectPlannedKeys(dbPath: string, composerId: string, kvKeys: string[]): ExistingKeys {
   const existingKeys: string[] = [];
   const existing: ExistingKeys['existing'] = {};
+  let existingHeaderRow: CursorHeaderRow | undefined;
   const db = openCursorDb(dbPath, { readOnly: true });
   try {
-    if (tableExists(db, HEADER_TABLE) && readHeaderRow(db, composerId) !== undefined) {
+    const headerRow = tableExists(db, HEADER_TABLE) ? readHeaderRow(db, composerId) : undefined;
+    if (headerRow !== undefined) {
       existingKeys.push(HEADER_TABLE + ':' + composerId);
-      const row = readHeaderRow(db, composerId);
-      if (row !== undefined) {
-        existing[HEADER_TABLE + ':' + composerId] = { bytes: byteLength(row.value), value: row.value };
-      }
+      existing[HEADER_TABLE + ':' + composerId] = { bytes: byteLength(headerRow.value), value: headerRow.value };
+      existingHeaderRow = headerRow;
     }
     for (const key of kvKeys) {
       const value = readDiskKvValue(db, key);
@@ -1109,7 +1116,7 @@ function inspectPlannedKeys(dbPath: string, composerId: string, kvKeys: string[]
   } finally {
     closeCursorDb(db);
   }
-  return { existingKeys, existing };
+  return { existingKeys, existing, existingHeaderRow };
 }
 
 function truncateValue(value: string): { bytes: number; value?: string; truncated?: boolean } {
@@ -1127,6 +1134,7 @@ function writeBackup(
     composerId: string;
     rows: WriteCursorRow[];
     existing: Record<string, { bytes: number; value?: string; truncated?: boolean }>;
+    existingHeaderRow?: CursorHeaderRow;
   },
 ): string {
   const dir = backupDir !== undefined && backupDir.length > 0 ? resolve(backupDir) : join(process.cwd(), '.tmp');
@@ -1138,8 +1146,9 @@ function writeBackup(
     createdAt: new Date().toISOString(),
     dbPath: input.dbPath,
     composerId: input.composerId,
-    note: '写入前备份：cursor 写入只新增 key；这里记录计划 key 的旧值（有则备份）',
+    note: '写入前备份：按计划 key 记录旧值（有则备份，空则撤销时删除）',
     planned: input.rows,
+    ...(input.existingHeaderRow !== undefined ? { existingHeaderRow: input.existingHeaderRow } : {}),
     existing: Object.fromEntries(
       Object.entries(input.existing).map(([key, value]) => {
         if (value.value !== undefined && value.bytes > MAX_BACKUP_VALUE) {
@@ -1151,6 +1160,112 @@ function writeBackup(
   };
   writeFileSync(file, JSON.stringify(payload, null, 2) + '\n');
   return file;
+}
+
+export interface RestoreCursorBackupResult {
+  dbPath: string;
+  composerId: string;
+  restoredKeys: number;
+  deletedKeys: number;
+}
+
+/** 按 cursor-write-backup-*.json 对 SQLite 执行单事务键级回滚，不影响其他 composer */
+export function restoreCursorBackup(backupPath: string): RestoreCursorBackupResult {
+  const absPath = resolve(backupPath);
+  const raw = JSON.parse(readFileSync(absPath, 'utf8')) as {
+    version?: unknown;
+    dbPath?: unknown;
+    composerId?: unknown;
+    planned?: unknown;
+    existing?: unknown;
+    existingHeaderRow?: unknown;
+  };
+  if (
+    raw.version !== 1 ||
+    typeof raw.dbPath !== 'string' ||
+    raw.dbPath.length === 0 ||
+    typeof raw.composerId !== 'string' ||
+    raw.composerId.length === 0 ||
+    !Array.isArray(raw.planned) ||
+    !isRecord(raw.existing)
+  ) {
+    throw new Error('无效的 Cursor 备份文件: ' + absPath);
+  }
+
+  const existing = raw.existing as Record<string, { bytes?: number; value?: string; truncated?: boolean }>;
+  for (const [key, entry] of Object.entries(existing)) {
+    if (entry?.truncated === true) {
+      throw new Error('Cursor 备份里的旧值超过 1MB 被截断，拒绝部分还原: ' + key);
+    }
+  }
+
+  const dbPath = raw.dbPath;
+  const composerId = raw.composerId;
+  const planned = raw.planned as Array<{ kind?: unknown; key?: unknown }>;
+  const existingHeaderRow = isRecord(raw.existingHeaderRow) ? (raw.existingHeaderRow as unknown as CursorHeaderRow) : undefined;
+
+  let restoredKeys = 0;
+  let deletedKeys = 0;
+  const db = openCursorDb(dbPath);
+  try {
+    ensureCursorSchema(db);
+    db.exec('PRAGMA journal_mode = WAL;');
+    db.exec('PRAGMA synchronous = NORMAL;');
+    db.exec('BEGIN IMMEDIATE;');
+    try {
+      if (existingHeaderRow !== undefined) {
+        db.prepare(
+          'INSERT OR REPLACE INTO ' +
+            HEADER_TABLE +
+            ' (composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, isSubagent, recency, checkpointAt, subagentTypeName, value) ' +
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        ).run(
+          existingHeaderRow.composerId,
+          existingHeaderRow.workspaceId,
+          existingHeaderRow.createdAt,
+          existingHeaderRow.lastUpdatedAt,
+          existingHeaderRow.isArchived,
+          existingHeaderRow.isSubagent,
+          existingHeaderRow.recency,
+          existingHeaderRow.checkpointAt,
+          existingHeaderRow.subagentTypeName,
+          existingHeaderRow.value,
+        );
+        restoredKeys += 1;
+      } else {
+        const info = db.prepare('DELETE FROM ' + HEADER_TABLE + ' WHERE composerId = ?').run(composerId);
+        deletedKeys += Number((info as { changes?: number | bigint }).changes ?? 0);
+      }
+
+      const upsertKv = db.prepare('INSERT OR REPLACE INTO cursorDiskKV (key, value) VALUES (?, ?)');
+      const deleteKv = db.prepare('DELETE FROM cursorDiskKV WHERE key = ?');
+      const handledKeys = new Set<string>();
+      for (const row of planned) {
+        if (row.kind === 'header' || typeof row.key !== 'string' || row.key.length === 0) continue;
+        if (handledKeys.has(row.key)) continue;
+        handledKeys.add(row.key);
+        const prev = existing[row.key];
+        if (prev && typeof prev.value === 'string') {
+          upsertKv.run(row.key, prev.value);
+          restoredKeys += 1;
+        } else {
+          const info = deleteKv.run(row.key);
+          deletedKeys += Number((info as { changes?: number | bigint }).changes ?? 0);
+        }
+      }
+      db.exec('COMMIT;');
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK;');
+      } catch {
+        // 已回滚时忽略
+      }
+      throw error;
+    }
+  } finally {
+    closeCursorDb(db);
+  }
+  return { dbPath, composerId, restoredKeys, deletedKeys };
 }
 
 export function printWriteReport(report: WriteCursorResult): string {

@@ -28,5 +28,11 @@ export interface AgentAdapter {
   readonly sourcePrefixes: readonly string[];
   read?(input: string): Promise<IrBundle>;
   write?(bundle: IrBundle, opts: AdapterWriteOptions): Promise<AdapterWriteOutcome>;
+  /** 对已有原生会话文件执行无损尾部追加（仅追加新增 delta 行，保留既有字节与特定元数据） */
+  appendDelta?(
+    targetPath: string,
+    deltaBundle: IrBundle,
+    opts: AdapterWriteOptions,
+  ): Promise<AdapterWriteOutcome>;
   countTarget?(outcome: AdapterWriteOutcome, opts: AdapterWriteOptions): Promise<{ exists: boolean; units: number }>;
 }

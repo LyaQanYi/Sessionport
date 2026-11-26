@@ -21,12 +21,13 @@ export {
   buildCursorHeaderValue,
   assistantGrouping,
   printWriteReport,
+  restoreCursorBackup,
   thinkingGrouping,
   toolGrouping,
   userGrouping,
   writeCursorSession,
 } from './write.ts';
-export type { BuildComposerInput, WriteCursorOptions, WriteCursorResult, WriteCursorRow } from './write.ts';
+export type { BuildComposerInput, RestoreCursorBackupResult, WriteCursorOptions, WriteCursorResult, WriteCursorRow } from './write.ts';
 
 export {
   appSmokeCursor,
