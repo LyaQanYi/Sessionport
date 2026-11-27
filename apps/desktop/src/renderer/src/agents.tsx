@@ -1,26 +1,41 @@
-import { Braces, Briefcase, Hexagon, Moon, MousePointer2, Orbit, Sparkles, SquareTerminal, Wand2, Waves, type LucideIcon } from 'lucide-react';
+import { Hexagon } from 'lucide-react';
 
+import {
+  AntigravityIcon,
+  ClaudeCodeIcon,
+  CodexIcon,
+  CommandCodeIcon,
+  CursorIcon,
+  DeepSeekIcon,
+  KimiCodeIcon,
+  OpenCodeIcon,
+  QoderIcon,
+  WorkBuddyIcon,
+  type HarnessIconComponent,
+} from './icons/HarnessIcons.tsx';
 import { cn } from './ui.tsx';
 
 export interface AgentMeta {
   label: string;
   short: string;
-  icon: LucideIcon;
+  icon: HarnessIconComponent;
   tile: string;
   dot: string;
 }
 
+const OFFICIAL_TILE = 'border border-border/70 bg-card text-fg-1 dark:border-border/80 dark:bg-subtle';
+
 export const AGENT_META: Record<string, AgentMeta> = {
-  'kimi-code': { label: 'Kimi Code', short: 'Kimi', icon: Moon, tile: 'bg-violet-500/15 text-violet-600 dark:text-violet-400', dot: 'bg-violet-500' },
-  'claude-code': { label: 'Claude Code', short: 'Claude', icon: Sparkles, tile: 'bg-amber-500/15 text-amber-600 dark:text-amber-400', dot: 'bg-amber-500' },
-  'command-code': { label: 'Command Code', short: 'Command', icon: SquareTerminal, tile: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400', dot: 'bg-emerald-500' },
-  dsh: { label: 'DeepSeek Harness', short: 'DSH', icon: Waves, tile: 'bg-sky-500/15 text-sky-600 dark:text-sky-400', dot: 'bg-sky-500' },
-  codex: { label: 'Codex', short: 'Codex', icon: Hexagon, tile: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400', dot: 'bg-zinc-400' },
-  opencode: { label: 'opencode', short: 'opencode', icon: Braces, tile: 'bg-rose-500/15 text-rose-600 dark:text-rose-400', dot: 'bg-rose-500' },
-  cursor: { label: 'Cursor', short: 'Cursor', icon: MousePointer2, tile: 'bg-teal-500/15 text-teal-600 dark:text-teal-400', dot: 'bg-teal-500' },
-  qoder: { label: 'Qoder', short: 'Qoder', icon: Wand2, tile: 'bg-blue-500/15 text-blue-600 dark:text-blue-400', dot: 'bg-blue-500' },
-  workbuddy: { label: 'WorkBuddy', short: 'WorkBuddy', icon: Briefcase, tile: 'bg-orange-500/15 text-orange-600 dark:text-orange-400', dot: 'bg-orange-500' },
-  antigravity: { label: 'Antigravity', short: 'Antigravity', icon: Orbit, tile: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400', dot: 'bg-indigo-500' },
+  'kimi-code': { label: 'Kimi Code', short: 'Kimi', icon: KimiCodeIcon, tile: OFFICIAL_TILE, dot: 'bg-[#1783FF]' },
+  'claude-code': { label: 'Claude Code', short: 'Claude', icon: ClaudeCodeIcon, tile: OFFICIAL_TILE, dot: 'bg-[#D97757]' },
+  'command-code': { label: 'Command Code', short: 'Command', icon: CommandCodeIcon, tile: OFFICIAL_TILE, dot: 'bg-fg-2' },
+  dsh: { label: 'DeepSeek Harness', short: 'DSH', icon: DeepSeekIcon, tile: OFFICIAL_TILE, dot: 'bg-[#4D6BFE]' },
+  codex: { label: 'Codex', short: 'Codex', icon: CodexIcon, tile: OFFICIAL_TILE, dot: 'bg-[#7A9DFF]' },
+  opencode: { label: 'opencode', short: 'opencode', icon: OpenCodeIcon, tile: OFFICIAL_TILE, dot: 'bg-fg-2' },
+  cursor: { label: 'Cursor', short: 'Cursor', icon: CursorIcon, tile: OFFICIAL_TILE, dot: 'bg-fg-2' },
+  qoder: { label: 'Qoder', short: 'Qoder', icon: QoderIcon, tile: OFFICIAL_TILE, dot: 'bg-[#2ADB5C]' },
+  workbuddy: { label: 'WorkBuddy', short: 'WorkBuddy', icon: WorkBuddyIcon, tile: OFFICIAL_TILE, dot: 'bg-[#01C886]' },
+  antigravity: { label: 'Antigravity', short: 'Antigravity', icon: AntigravityIcon, tile: OFFICIAL_TILE, dot: 'bg-[#3186FF]' },
 };
 
 export function agentLabel(agent: string): string {

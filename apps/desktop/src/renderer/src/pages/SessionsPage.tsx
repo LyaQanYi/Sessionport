@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Folder, Hash, MessagesSquare, RefreshCw } from 'lucide-react';
+import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Folder, Hash, MessagesSquare, RefreshCw, X } from 'lucide-react';
 
 import { api } from '../api.ts';
 import type { SessionRow } from '../api.ts';
@@ -229,32 +229,19 @@ export function SessionsPage(props: {
             { value: 'time', label: t('sessions.group.time') },
           ]}
         />
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        {props.agentFilter ? (
           <button
             type="button"
             onClick={() => props.onAgentFilterChange(null)}
-            className={cn(
-              'h-6 shrink-0 rounded-full px-2 text-caption transition-colors',
-              props.agentFilter === null ? 'bg-selected text-fg-1' : 'text-fg-2 hover:bg-accent',
-            )}
+            title={t('common.clear')}
+            aria-label={t('common.clear')}
+            className="flex h-6 shrink-0 items-center gap-1.5 rounded-full border border-border bg-selected px-2 text-caption text-fg-1 transition-colors hover:bg-accent"
           >
-            {t('sessions.all', { count: enabledSessions.length })}
+            <span className={cn('h-1.5 w-1.5 rounded-full', AGENT_META[props.agentFilter]?.dot ?? 'bg-fg-3')} />
+            <span>{agentLabel(props.agentFilter)}</span>
+            <X className="h-3 w-3 text-fg-3" />
           </button>
-          {[...agentCounts.entries()].map(([agent, count]) => (
-            <button
-              key={agent}
-              type="button"
-              onClick={() => props.onAgentFilterChange(props.agentFilter === agent ? null : agent)}
-              className={cn(
-                'flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2 text-caption transition-colors',
-                props.agentFilter === agent ? 'bg-selected text-fg-1' : 'text-fg-2 hover:bg-accent',
-              )}
-            >
-              <span className={cn('h-1.5 w-1.5 rounded-full', AGENT_META[agent]?.dot ?? 'bg-fg-3')} />
-              {agentLabel(agent)} {count}
-            </button>
-          ))}
-        </div>
+        ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="text-caption tabular-nums text-fg-3">{t('sessions.count', { count: filtered.length })}</span>
           {groupKeys.length > 0 ? (
