@@ -99,16 +99,21 @@ export async function listAntigravitySessions(options: ListSessionsOptions = {})
   const summaries: SessionSummary[] = [];
   for (const file of transcripts) {
     const db = summaryByHome.get(file.home)?.get(file.conversationId);
+    const parentConversationId = textOf(db?.parentConversationId);
+    if (options.includeChildren !== true && parentConversationId !== undefined) continue;
     const ann = readAntigravityAnnotation(file.home, file.conversationId);
+    const roleTitle = parentConversationId !== undefined ? textOf(db?.agentName) : undefined;
     const needsHead =
       textOf(ann?.title) === undefined &&
       textOf(db?.title) === undefined &&
+      roleTitle === undefined &&
       textOf(db?.preview) === undefined;
     const head = needsHead ? headMetadata(file.path, file.mtimeMs) : undefined;
 
     const title =
       textOf(ann?.title) ??
       textOf(db?.title) ??
+      roleTitle ??
       textOf(db?.preview) ??
       head?.firstUserText;
     const cwd = db?.cwd;
@@ -126,7 +131,7 @@ export async function listAntigravitySessions(options: ListSessionsOptions = {})
     if (createdAt !== undefined) summary.createdAt = createdAt;
     if (updatedAt !== undefined) summary.updatedAt = updatedAt;
     if (archived === true) summary.archived = true;
-    if (db?.parentConversationId !== undefined) summary.parentSessionId = db.parentConversationId;
+    if (parentConversationId !== undefined) summary.parentSessionId = parentConversationId;
     summaries.push(summary);
   }
 

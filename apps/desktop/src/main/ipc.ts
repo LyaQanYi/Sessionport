@@ -24,6 +24,7 @@ import type { MergeBackOptions, MigrationOptions } from './services.ts';
 
 const agentSchema = z.enum([
   'claude-code',
+  'claude-desktop',
   'command-code',
   'dsh',
   'codex',
@@ -128,7 +129,7 @@ const channelSchemas = {
   }).default({}),
   'app:capabilities': z.object({}).default({}),
   'app:paths': z.object({}).default({}),
-  'app:openPath': z.object({ key: z.enum(['kimi', 'claude', 'commandCode', 'dsh', 'codex', 'opencode', 'cursor', 'qoder', 'workbuddy', 'antigravity', 'registry']) }),
+  'app:openPath': z.object({ key: z.enum(['kimi', 'claude', 'claudeDesktop', 'commandCode', 'dsh', 'codex', 'opencode', 'cursor', 'qoder', 'workbuddy', 'antigravity', 'registry']) }),
   'official:list': z.object({}).default({}),
   'official:verify': z.object({ target: z.enum(['zcode', 'qoder', 'cursor']), cwd: z.string().optional(), title: z.string().optional() }),
   'official:open': z.object({ target: z.enum(['zcode', 'qoder', 'cursor', 'antigravity']) }),

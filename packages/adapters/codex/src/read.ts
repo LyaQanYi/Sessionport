@@ -1,16 +1,31 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 import { IR_VERSION } from '@sessionport/core';
-import type { IrBundle, IrEvent, IrEventInput, IrMessageEvent, IrNotice, IrPart, IrSession } from '@sessionport/core';
+import type { IrBundle, IrChildSession, IrEvent, IrEventInput, IrNotice, IrSession } from '@sessionport/core';
 
-import type { CodexContentBlock, CodexIndexEntry, CodexLine, CodexSessionMeta } from './wire.ts';
-import { codexHome, isCodexInjectedUserText, listRolloutFiles, readRollout, readSessionIndex, sessionIdFromRolloutPath } from './wire.ts';
+import type { CodexContentBlock, CodexIndexEntry, CodexLine, CodexSessionMeta, CodexStateThreadRow } from './wire.ts';
+import {
+  classifyCodexThread,
+  codexHome,
+  isCodexInjectedUserText,
+  listRolloutFiles,
+  parseRollout,
+  readRollout,
+  readRolloutHead,
+  readSessionIndex,
+  readStateThreads,
+  rolloutTimestampFromPath,
+  sessionIdFromRolloutPath,
+} from './wire.ts';
 
 export interface ReadCodexOptions {
   /** Codex 数据根目录，默认 $CODEX_HOME 或 ~/.codex */
   home?: string;
   /** 不传时按会话索引/首个用户消息推断 */
   title?: string;
+  /** 是否把 spawned subagents 作为 children 读取（默认 true） */
+  includeChildren?: boolean;
 }
 
 interface Counters {
@@ -88,15 +103,34 @@ function customOutputText(output: unknown): string {
   return JSON.stringify(output ?? '');
 }
 
-/** 解析 rollout 路径：支持直接路径、会话 uuid、或 'last' */
+function inferCodexHomeFromPath(filePath: string): string | undefined {
+  const parts = filePath.split('/');
+  for (const marker of ['sessions', 'archived_sessions'] as const) {
+    const idx = parts.lastIndexOf(marker);
+    if (idx > 0) return parts.slice(0, idx).join('/');
+  }
+  return undefined;
+}
+
+function isRolloutFilePath(input: string): boolean {
+  return (input.endsWith('.jsonl') || input.endsWith('.jsonl.zst')) && existsSync(input);
+}
+
+/** 解析 rollout 路径：支持直接路径（.jsonl / .jsonl.zst）、会话 uuid、或 'last' */
 export function resolveCodexSessionPath(input: string, options: ReadCodexOptions = {}): { path: string; home: string } {
-  const home = codexHome(options.home);
+  const home = options.home !== undefined ? codexHome(options.home) : (inferCodexHomeFromPath(input) ?? codexHome());
   if (input === 'last') {
     const files = listRolloutFiles(home);
     if (files.length === 0) throw new Error('找不到任何 Codex rollout 文件: ' + home);
-    return { path: files[0]!, home };
+    const stateThreads = readStateThreads(home);
+    const primary = files.find((file) => {
+      const tid = sessionIdFromRolloutPath(file);
+      const cls = classifyCodexThread(undefined, tid !== undefined ? stateThreads.get(tid) : undefined);
+      return !cls.isSubagent && !cls.isGuardian;
+    });
+    return { path: primary ?? files[0]!, home };
   }
-  if (input.endsWith('.jsonl') && existsSync(input)) return { path: input, home };
+  if (isRolloutFilePath(input)) return { path: input, home };
   const files = listRolloutFiles(home);
   const byId = files.find((file) => sessionIdFromRolloutPath(file) === input);
   if (byId) return { path: byId, home };
@@ -106,16 +140,78 @@ export function resolveCodexSessionPath(input: string, options: ReadCodexOptions
   throw new Error('找不到 Codex 会话: ' + input + '（数据目录 ' + home + '）');
 }
 
+function sortSegmentsChronological(files: string[]): string[] {
+  return [...files].sort((a, b) => {
+    const aTime = rolloutTimestampFromPath(a);
+    const bTime = rolloutTimestampFromPath(b);
+    if (aTime !== undefined && bTime !== undefined && aTime !== bTime) return aTime - bTime;
+    try {
+      return statSync(a).mtimeMs - statSync(b).mtimeMs;
+    } catch {
+      return a.localeCompare(b);
+    }
+  });
+}
+
+function collectThreadSegments(filePath: string, home: string): string[] {
+  const threadId = sessionIdFromRolloutPath(filePath);
+  if (threadId === undefined) return [filePath];
+  const sameThread = listRolloutFiles(home).filter((candidate) => sessionIdFromRolloutPath(candidate) === threadId);
+  if (sameThread.length === 0) return [filePath];
+  const mergedSet = new Set(sameThread);
+  // 若传入的路径本身属于同一个 home（已在 sameThread 里）或目录外单独指定，只在它在 sameThread 中时才合并分段
+  if (!mergedSet.has(filePath) && dirname(filePath) === home) return [filePath];
+  if (!mergedSet.has(filePath)) return [filePath];
+  return sortSegmentsChronological([...mergedSet]);
+}
+
+function readMergedRollout(files: string[]): { lines: CodexLine[]; badLines: number } {
+  if (files.length <= 1) return readRollout(files[0]!);
+  const seenOrdinals = new Set<number>();
+  const collected: Array<{ line: CodexLine; seq: number }> = [];
+  let badLines = 0;
+  let seq = 0;
+  for (const file of files) {
+    const parsed = readRollout(file);
+    badLines += parsed.badLines;
+    for (const line of parsed.lines) {
+      if (typeof line.ordinal === 'number' && Number.isFinite(line.ordinal)) {
+        if (seenOrdinals.has(line.ordinal)) continue;
+        seenOrdinals.add(line.ordinal);
+      }
+      collected.push({ line, seq: seq++ });
+    }
+  }
+  collected.sort((a, b) => {
+    const ao = a.line.ordinal;
+    const bo = b.line.ordinal;
+    if (typeof ao === 'number' && Number.isFinite(ao) && typeof bo === 'number' && Number.isFinite(bo) && ao !== bo) {
+      return ao - bo;
+    }
+    return a.seq - b.seq;
+  });
+  return { lines: collected.map((item) => item.line), badLines };
+}
+
 export async function readCodexSession(input: string, options: ReadCodexOptions = {}): Promise<IrBundle> {
   const { path, home } = resolveCodexSessionPath(input, options);
-  const { lines, badLines } = readRollout(path);
+  const segmentFiles = collectThreadSegments(path, home);
+  const { lines, badLines } = readMergedRollout(segmentFiles);
   const counters = emptyCounters();
   const notices: IrNotice[] = [];
+  const stateThreads = readStateThreads(home);
 
   const firstMeta = lines.find((line) => line.type === 'session_meta')?.payload as CodexSessionMeta | undefined;
-  const sessionId = firstMeta?.session_id ?? firstMeta?.id ?? sessionIdFromRolloutPath(path) ?? 'unknown';
+  const pathId = sessionIdFromRolloutPath(path);
+  const selfClassification = classifyCodexThread(firstMeta, pathId !== undefined ? stateThreads.get(pathId) : undefined);
+  // Codex 会在 spawned subagent 的 session_meta.session_id 写入父会话 id；子代理自身 id 以文件名/state_5 为准
+  const sessionId =
+    selfClassification.isSubagent && pathId !== undefined
+      ? pathId
+      : (firstMeta?.session_id ?? firstMeta?.id ?? pathId ?? 'unknown');
+  const stateRow = stateThreads.get(sessionId);
 
-  let title = options.title;
+  let title = options.title ?? stateRow?.name;
   if (title === undefined) {
     try {
       const index: CodexIndexEntry[] = readSessionIndex(home);
@@ -124,7 +220,7 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
       // 索引缺失不影响读取
     }
   }
-  if (title === undefined) title = firstUserText(lines);
+  if (title === undefined) title = stateRow?.title ?? firstUserText(lines);
 
   const events: IrEvent[] = [];
   const pendingCalls = new Map<string, number>();
@@ -354,30 +450,93 @@ export async function readCodexSession(input: string, options: ReadCodexOptions 
     notices.push({ code: 'codex.bad-lines', message: 'rollout 中有无法解析的行', count: badLines, severity: 'warning' });
   }
 
+  const latestPath = segmentFiles[segmentFiles.length - 1] ?? path;
   const source = {
     agent: 'codex' as const,
     cliVersion: firstMeta?.cli_version,
     formatVersion: historyMode,
     nativeSessionId: sessionId,
-    nativePath: path,
+    nativePath: latestPath,
   };
 
   const session: IrSession = {
     id: 'codex:' + sessionId,
     source,
     meta: {
-      cwd: firstMeta?.cwd,
+      cwd: firstMeta?.cwd ?? stateRow?.cwd,
       title,
       createdAt,
       model,
-      profile: firstMeta?.originator,
+      profile: firstMeta?.originator ?? stateRow?.originator,
+      ...(stateRow?.archived === true ? { archived: true } : {}),
     },
     events,
     head: events.length > 0 ? events[events.length - 1]!.id : null,
     notices,
   };
 
-  return { irVersion: IR_VERSION, createdAt: new Date().toISOString(), root: session, children: [] };
+  const children: IrChildSession[] = [];
+  if (options.includeChildren !== false && !selfClassification.isSubagent && !selfClassification.isGuardian) {
+    const childEntries = await loadSpawnedChildSessions(home, sessionId, stateThreads);
+    children.push(...childEntries);
+    if (children.length > 0) {
+      notices.push({
+        code: 'codex.subagents',
+        message: '已将 Codex 派生的子代理线程作为子会话读取',
+        count: children.length,
+        severity: 'info',
+      });
+    }
+  }
+
+  return { irVersion: IR_VERSION, createdAt: new Date().toISOString(), root: session, children };
+}
+
+async function loadSpawnedChildSessions(
+  home: string,
+  parentSessionId: string,
+  stateThreads: Map<string, CodexStateThreadRow>,
+): Promise<IrChildSession[]> {
+  const allFiles = listRolloutFiles(home);
+  if (allFiles.length === 0) return [];
+  const grouped = new Map<string, string[]>();
+  for (const file of allFiles) {
+    const tid = sessionIdFromRolloutPath(file);
+    if (tid === undefined || tid === parentSessionId) continue;
+    const arr = grouped.get(tid) ?? [];
+    arr.push(file);
+    grouped.set(tid, arr);
+  }
+
+  const out: Array<{ createdAt: string; child: IrChildSession }> = [];
+  for (const [childId, files] of grouped) {
+    const stateRow = stateThreads.get(childId);
+    const stateCls = classifyCodexThread(undefined, stateRow);
+    // 快速剪枝：state_5.sqlite 已明确标注属于其它父线程或属于普通用户/guardian 线程时跳过解压
+    if (stateRow !== undefined && stateCls.parentThreadId !== undefined && stateCls.parentThreadId !== parentSessionId) continue;
+    if (stateRow !== undefined && stateCls.parentThreadId === undefined && (stateRow.threadSource === 'user' || stateCls.isGuardian)) continue;
+
+    const sorted = sortSegmentsChronological(files);
+    const firstFile = sorted[0]!;
+    const headText = await readRolloutHead(firstFile, 32 * 1024).catch(() => '');
+    const firstLine = parseRollout(headText).lines.find((line) => line.type === 'session_meta');
+    const meta = firstLine?.payload as CodexSessionMeta | undefined;
+    const cls = classifyCodexThread(meta, stateRow);
+    if (cls.parentThreadId !== parentSessionId) continue;
+
+    const childBundle = await readCodexSession(sorted[sorted.length - 1]!, { home, includeChildren: false });
+    const label = cls.agentLabel ?? childId.slice(0, 8);
+    out.push({
+      createdAt: childBundle.root.meta.createdAt ?? '',
+      child: {
+        session: childBundle.root,
+        parentSessionId,
+        label,
+      },
+    });
+  }
+  out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return out.map((item) => item.child);
 }
 
 function firstUserText(lines: CodexLine[]): string | undefined {

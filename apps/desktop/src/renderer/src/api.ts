@@ -1,5 +1,5 @@
 /** renderer 侧的类型化 API（与主进程 services.ts 的 DTO 对齐） */
-export type AgentId = 'claude-code' | 'command-code' | 'dsh' | 'codex' | 'opencode' | 'kimi-code' | 'cursor' | 'qoder' | 'workbuddy' | 'antigravity';
+export type AgentId = 'claude-code' | 'claude-desktop' | 'command-code' | 'dsh' | 'codex' | 'opencode' | 'kimi-code' | 'cursor' | 'qoder' | 'workbuddy' | 'antigravity';
 
 export interface SessionRow {
   agent: AgentId;
@@ -10,6 +10,7 @@ export interface SessionRow {
   nativePath: string;
   readable: boolean;
   resumeHint?: string;
+  parentSessionId?: string;
 }
 
 export interface ListResult {

@@ -55,15 +55,21 @@ test('listAllSessions: 单家抛错只记 warning，不阻断其它家', async (
   assert.match(result.warnings[0]!, /模拟读取失败/);
 });
 
-test('listAllSessions: 默认 limit 200，非法 limit 回退默认', async () => {
+test('listAllSessions: 默认 limit 200，非法负数回退默认，null/0 不截断', async () => {
   const many = Array.from({ length: DEFAULT_SESSION_LIMIT + 50 }, (_, index) =>
     row('codex', 's' + index, new Date(1800000000000 - index * 1000).toISOString()),
   );
   const result = await listAllSessions({ agents: ['codex'], loaders: { codex: async () => many } });
   assert.equal(result.sessions.length, DEFAULT_SESSION_LIMIT);
 
-  const zero = await listAllSessions({ agents: ['codex'], limit: 0, loaders: { codex: async () => many.slice(0, 3) } });
-  assert.equal(zero.sessions.length, 3);
+  const negative = await listAllSessions({ agents: ['codex'], limit: -5, loaders: { codex: async () => many } });
+  assert.equal(negative.sessions.length, DEFAULT_SESSION_LIMIT);
+
+  const unlimitedNull = await listAllSessions({ agents: ['codex'], limit: null, loaders: { codex: async () => many } });
+  assert.equal(unlimitedNull.sessions.length, DEFAULT_SESSION_LIMIT + 50);
+
+  const unlimitedZero = await listAllSessions({ agents: ['codex'], limit: 0, loaders: { codex: async () => many } });
+  assert.equal(unlimitedZero.sessions.length, DEFAULT_SESSION_LIMIT + 50);
 });
 
 test('listAllSessions: 丢掉缺 sessionId/nativePath 的坏行，未知 agent 记 warning', async () => {

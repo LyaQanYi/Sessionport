@@ -606,6 +606,24 @@ export function countBubbles(db: DatabaseSync, composerId: string): number {
   return entries.length;
 }
 
+/** 轻量判断 composer 在 state.vscdb 里是否有真实对话内容（用于过滤空草稿并触发 agent-transcripts 回落） */
+export function hasCursorDbContent(db: DatabaseSync, composerId: string): boolean {
+  const raw = readComposerDataRaw(db, composerId);
+  if (raw === undefined) return false;
+  const data = parseJsonRecord(raw);
+  if (data === undefined) return false;
+  const headerLog = isRecord(data.headerLog) ? data.headerLog : undefined;
+  if (typeof headerLog?.count === 'number' && headerLog.count > 0) return true;
+  if (Array.isArray(data.fullConversationHeadersOnly) && data.fullConversationHeadersOnly.length > 0) return true;
+  if (!tableExists(db, 'cursorDiskKV')) return false;
+  const prefix = bubbleKeyPrefix(composerId);
+  const upper = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+  const hit = db
+    .prepare('SELECT 1 FROM cursorDiskKV WHERE key >= ? AND key < ? LIMIT 1')
+    .get(prefix, upper);
+  return hit !== undefined;
+}
+
 // ---------------------------------------------------------------------------
 // key / JSON / 文本工具
 // ---------------------------------------------------------------------------

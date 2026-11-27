@@ -3,6 +3,7 @@ import { Hexagon } from 'lucide-react';
 import {
   AntigravityIcon,
   ClaudeCodeIcon,
+  ClaudeDesktopIcon,
   CodexIcon,
   CommandCodeIcon,
   CursorIcon,
@@ -28,6 +29,7 @@ const OFFICIAL_TILE = 'border border-border/70 bg-card text-fg-1 dark:border-bor
 export const AGENT_META: Record<string, AgentMeta> = {
   'kimi-code': { label: 'Kimi Code', short: 'Kimi', icon: KimiCodeIcon, tile: OFFICIAL_TILE, dot: 'bg-[#1783FF]' },
   'claude-code': { label: 'Claude Code', short: 'Claude', icon: ClaudeCodeIcon, tile: OFFICIAL_TILE, dot: 'bg-[#D97757]' },
+  'claude-desktop': { label: 'Claude Desktop', short: 'Desktop', icon: ClaudeDesktopIcon, tile: OFFICIAL_TILE, dot: 'bg-[#B85432]' },
   'command-code': { label: 'Command Code', short: 'Command', icon: CommandCodeIcon, tile: OFFICIAL_TILE, dot: 'bg-fg-2' },
   dsh: { label: 'DeepSeek Harness', short: 'DSH', icon: DeepSeekIcon, tile: OFFICIAL_TILE, dot: 'bg-[#4D6BFE]' },
   codex: { label: 'Codex', short: 'Codex', icon: CodexIcon, tile: OFFICIAL_TILE, dot: 'bg-[#7A9DFF]' },

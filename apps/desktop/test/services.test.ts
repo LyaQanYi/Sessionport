@@ -18,7 +18,7 @@ import {
 } from '../src/main/services.ts';
 
 test('capabilities：可读/可写 agent 列表', () => {
-  assert.deepEqual(readableAgents().sort(), ['antigravity', 'claude-code', 'codex', 'command-code', 'cursor', 'dsh', 'kimi-code', 'opencode', 'qoder', 'workbuddy'].sort());
+  assert.deepEqual(readableAgents().sort(), ['antigravity', 'claude-code', 'claude-desktop', 'codex', 'command-code', 'cursor', 'dsh', 'kimi-code', 'opencode', 'qoder', 'workbuddy'].sort());
   assert.deepEqual(writableAgents().sort(), ['antigravity', 'claude-code', 'command-code', 'codex', 'cursor', 'dsh', 'opencode', 'qoder'].sort());
 });
 
@@ -31,6 +31,9 @@ test('listSessions 返回结构合法的行（无会话时也应是空数组）'
     assert.ok(typeof row.sessionId === 'string');
     assert.ok(typeof row.nativePath === 'string' && row.nativePath.length > 0);
     assert.equal(typeof row.readable, 'boolean');
+    if (row.parentSessionId !== undefined) {
+      assert.ok(typeof row.parentSessionId === 'string' && row.parentSessionId.length > 0);
+    }
   }
 });
 

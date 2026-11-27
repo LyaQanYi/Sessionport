@@ -55,6 +55,7 @@ const USAGE = [
   '<source> 形式:',
   '  kimi:<目录>            Kimi Code 会话目录（kimi export 解包目录或原生会话目录）',
   '  claude:<路径|id>       Claude Code transcript（~/.claude/projects/.../<uuid>.jsonl）',
+  '  claude-desktop:<路径|id>  Claude Desktop 会话（Code / Cowork，只读）',
   '  commandcode:<路径>     Command Code transcript（.jsonl）或会话 id',
   '  dsh:<目录>             DSH 会话目录（含 session.v4.jsonl.zstd）',
   '  codex:<路径|id>        Codex rollout（sessions/**/rollout-*.jsonl）或会话 id',
@@ -106,7 +107,7 @@ const USAGE = [
   '  --append-diverged      merge-back: 双方同步后都推进时仍写入（加 fork 边界）',
   '  --list                 undo: 列出可撤销的操作历史',
   '  --state <dir>          registry 与 history 目录（默认 $SESSIONPORT_HOME 或 ~/.sessionport）',
-  '  --limit <n>            list: 最多显示多少条（默认 200）',
+  '  --limit <n>            list: 最多显示多少条（默认 200；0 表示不截断）',
   '',
   'claude-code 专属:',
   '  --config-dir <dir>     --home 的别名；--version <ver>；--keep-thinking（thinking 降级为 text）',
@@ -159,7 +160,12 @@ function detectSource(raw: string): SourceKind {
       ) {
         return { kind: 'antigravity', target: raw };
       }
-      if (first.includes('"parentUuid"') || (first.includes('"sessionId"') && first.includes('"cwd"'))) return { kind: 'claude-code', target: raw };
+      if (first.includes('"parentUuid"') || (first.includes('"sessionId"') && first.includes('"cwd"'))) {
+        if (raw.includes('local-agent-mode-sessions') || first.includes('"entrypoint":"claude-desktop')) {
+          return { kind: 'claude-desktop', target: raw };
+        }
+        return { kind: 'claude-code', target: raw };
+      }
     } catch {
       // 读不到就按后缀兜底
     }
@@ -952,6 +958,7 @@ async function cmdMergeBack(source: string, values: Record<string, string | bool
 
 const AGENT_SOURCE_PREFIX: Record<AgentId, string> = {
   'claude-code': 'claude',
+  'claude-desktop': 'claude-desktop',
   'command-code': 'commandcode',
   'kimi-code': 'kimi',
   dsh: 'dsh',
@@ -1116,6 +1123,9 @@ const AGENT_ALIASES: Record<string, AgentId> = {
   kimi: 'kimi-code',
   'claude-code': 'claude-code',
   claude: 'claude-code',
+  'claude-desktop': 'claude-desktop',
+  claudedesktop: 'claude-desktop',
+  'claude_desktop': 'claude-desktop',
   'command-code': 'command-code',
   commandcode: 'command-code',
   cc: 'command-code',
@@ -1198,7 +1208,7 @@ async function cmdList(values: Record<string, string | boolean | undefined>): Pr
   let limit: number | undefined;
   if (typeof values.limit === 'string') {
     const parsed = Number(values.limit);
-    if (!Number.isInteger(parsed) || parsed <= 0) fail('--limit 需要正整数');
+    if (!Number.isInteger(parsed) || parsed < 0) fail('--limit 需要非负整数（0 表示不截断）');
     limit = parsed;
   }
   const home = typeof values.home === 'string' ? values.home : undefined;

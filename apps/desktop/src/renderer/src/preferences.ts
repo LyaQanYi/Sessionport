@@ -6,6 +6,7 @@ const KEY = 'sessionport.enabledAgents';
 export const HOME_TO_AGENT: Record<string, string> = {
   kimi: 'kimi-code',
   claude: 'claude-code',
+  claudeDesktop: 'claude-desktop',
   commandCode: 'command-code',
   dsh: 'dsh',
   codex: 'codex',
@@ -16,7 +17,7 @@ export const HOME_TO_AGENT: Record<string, string> = {
   antigravity: 'antigravity',
 };
 
-export const ALL_AGENTS = ['claude-code', 'codex', 'command-code', 'dsh', 'opencode', 'kimi-code', 'cursor', 'qoder', 'workbuddy', 'antigravity'];
+export const ALL_AGENTS = ['claude-code', 'claude-desktop', 'codex', 'command-code', 'dsh', 'opencode', 'kimi-code', 'cursor', 'qoder', 'workbuddy', 'antigravity'];
 
 function readStored(): string[] | null {
   try {

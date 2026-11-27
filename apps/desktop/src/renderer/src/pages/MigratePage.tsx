@@ -35,6 +35,7 @@ import type {
 } from '../api.ts';
 import { AgentGlyph, agentLabel } from '../agents.tsx';
 import { SourceSessionPicker, TargetAgentSelector } from '../components/MigrateSelectors.tsx';
+import { filterRootSessions } from '../sessionTree.ts';
 import { useT } from '../i18n/I18nProvider.tsx';
 import type { MessageKey, MessageParams } from '../i18n/messages.ts';
 import { Badge, Button, Card, CheckboxRow, Spinner, Topbar, cn } from '../ui.tsx';
@@ -614,9 +615,10 @@ export function MigratePage(props: { initial: SessionRow | null; enabledAgents: 
   }, []);
 
   const sessions = useMemo(() => {
-    const base = (sessionsQuery.data?.sessions ?? []).filter(
+    const enabled = (sessionsQuery.data?.sessions ?? []).filter(
       (row) => props.enabledAgents.length === 0 || props.enabledAgents.includes(row.agent),
     );
+    const base = filterRootSessions(enabled);
     if (props.initial && !base.some((row) => rowKey(row) === rowKey(props.initial!))) {
       return [props.initial, ...base];
     }

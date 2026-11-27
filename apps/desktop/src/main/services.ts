@@ -62,6 +62,8 @@ export interface SessionRow {
   readable: boolean;
   /** resume 命令片段（供 UI 复制） */
   resumeHint?: string;
+  /** 父会话 id（用于渲染逐层可展开的树状子会话） */
+  parentSessionId?: string;
 }
 
 export interface ListResult {
@@ -231,7 +233,11 @@ export interface SessionRefInput {
 
 function resolveReadInput(agent: AgentId, input: SessionRefInput): string {
   if (agent === 'opencode') return requireId(input);
-  if (agent === 'codex' || agent === 'cursor') return input.sessionId ?? requirePath(input);
+  if (agent === 'cursor') {
+    if (input.nativePath?.endsWith('.jsonl') === true) return input.nativePath;
+    return input.sessionId ?? requirePath(input);
+  }
+  if (agent === 'codex') return input.sessionId ?? requirePath(input);
   return requirePath(input);
 }
 
@@ -291,7 +297,7 @@ export async function listSessions(): Promise<ListResult> {
   try {
     const core = (await import('@sessionport/core')) as unknown as { listAllSessions?: (options?: unknown) => Promise<unknown> };
     if (typeof core.listAllSessions === 'function') {
-      const result = (await core.listAllSessions({ limit: 500 })) as { sessions?: unknown[]; warnings?: string[] } | unknown[];
+      const result = (await core.listAllSessions({ limit: null, includeChildren: true })) as { sessions?: unknown[]; warnings?: string[] } | unknown[];
       const raw = Array.isArray(result) ? result : (result.sessions ?? []);
       const sessions: SessionRow[] = raw.map((item) => normalizeSummary(item));
       return { sessions, warnings: Array.isArray(result) ? [] : (result.warnings ?? []) };
@@ -335,6 +341,10 @@ function normalizeSummary(item: unknown): SessionRow {
     readable: readableAgents().includes(agent as ReadableAgent),
     // DSH 的 resume 需要 app 内部 cli.js，命令很长；展示层截断，完整值放 title 里由 UI 决定
     resumeHint: typeof record.resumeHint === 'string' ? record.resumeHint : undefined,
+    parentSessionId:
+      typeof record.parentSessionId === 'string' && record.parentSessionId.trim().length > 0
+        ? record.parentSessionId.trim()
+        : undefined,
   };
 }
 
@@ -1075,12 +1085,36 @@ export interface PathsInfo {
   registryFile: string;
 }
 
+function claudeDesktopDataPath(): string {
+  const home = homedir();
+  const candidates =
+    process.platform === 'darwin'
+      ? [join(home, 'Library', 'Application Support', 'Claude-3p'), join(home, 'Library', 'Application Support', 'Claude')]
+      : process.platform === 'win32'
+        ? [
+            join(process.env.APPDATA ?? join(home, 'AppData', 'Roaming'), 'Claude-3p'),
+            join(process.env.APPDATA ?? join(home, 'AppData', 'Roaming'), 'Claude'),
+          ]
+        : [
+            join(process.env.XDG_CONFIG_HOME ?? join(home, '.config'), 'Claude-3p'),
+            join(process.env.XDG_CONFIG_HOME ?? join(home, '.config'), 'Claude'),
+          ];
+  return (
+    candidates.find(
+      (dir) => existsSync(join(dir, 'claude-code-sessions')) || existsSync(join(dir, 'local-agent-mode-sessions')),
+    ) ??
+    candidates.find((dir) => existsSync(dir)) ??
+    candidates[candidates.length - 1]!
+  );
+}
+
 /** 各 agent 的数据目录（设置页展示 + 打开用） */
 export function pathsInfo(): PathsInfo {
   const home = homedir();
   const homes = {
     kimi: { label: 'Kimi Code', path: join(home, '.kimi-code') },
     claude: { label: 'Claude Code', path: join(home, '.claude') },
+    claudeDesktop: { label: 'Claude Desktop', path: claudeDesktopDataPath() },
     commandCode: { label: 'Command Code', path: join(home, '.commandcode') },
     dsh: { label: 'DeepSeek Harness', path: join(home, '.dsh') },
     codex: { label: 'Codex', path: join(home, '.codex') },
@@ -1112,6 +1146,7 @@ export function detectHomes(): Record<string, boolean> {
   return {
     kimi: existsSync(join(home, '.kimi-code')),
     claude: existsSync(join(home, '.claude')),
+    claudeDesktop: existsSync(claudeDesktopDataPath()),
     commandCode: existsSync(join(home, '.commandcode')),
     dsh: existsSync(join(home, '.dsh')),
     codex: existsSync(join(home, '.codex')),

@@ -4,7 +4,9 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { listClaudeSessions } from '../src/index.ts';
+import { validateIrBundle } from '@sessionport/core';
+
+import { claudeDesktopAdapter, listClaudeDesktopSessions, listClaudeSessions, readClaudeDesktopSession } from '../src/index.ts';
 
 function makeProject(): { root: string; dir: string; slug: string } {
   const root = mkdtempSync(join(tmpdir(), 'sessionport-claude-list-'));
@@ -143,6 +145,107 @@ test('claude list: 只有元数据、没有对话行的会话跳过', async () =
       ]),
     );
     assert.deepEqual(await listClaudeSessions({ home: root }), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('claude-code 与 claude-desktop 分离读取（Desktop Code + Cowork 归 desktop，CLI 归 claude-code）', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'sessionport-claude-split-'));
+  try {
+    const claudeDir = join(root, 'dot-claude');
+    const desktopDir = join(root, 'Claude-3p');
+    const projDir = join(claudeDir, 'projects', '-tmp-demo');
+    mkdirSync(projDir, { recursive: true });
+
+    const cliId = 'aaaaaaaa-1111-4111-8111-111111111111';
+    const deskCodeCliId = 'bbbbbbbb-2222-4222-8222-222222222222';
+    const coworkLocalId = 'local_152a7489-0503-447a-978b-d6e981833411';
+    const coworkCliId = 'cccccccc-3333-4333-8333-333333333333';
+
+    writeFileSync(
+      join(projDir, cliId + '.jsonl'),
+      jsonl([
+        { type: 'user', entrypoint: 'cli', cwd: '/tmp/demo', timestamp: '2026-11-20T00:00:00.000Z', message: { role: 'user', content: 'CLI 问题' } },
+        { type: 'assistant', timestamp: '2026-11-20T00:00:05.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'CLI 回答' }] } },
+      ]),
+    );
+    writeFileSync(
+      join(projDir, deskCodeCliId + '.jsonl'),
+      jsonl([
+        { type: 'user', entrypoint: 'claude-desktop-3p', cwd: '/tmp/demo', timestamp: '2026-11-20T01:00:00.000Z', message: { role: 'user', content: 'Desktop Code 原始问题' } },
+        { type: 'assistant', timestamp: '2026-11-20T01:00:05.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Desktop Code 回答' }] } },
+      ]),
+    );
+
+    const codeMetaDir = join(desktopDir, 'claude-code-sessions', 'org-1', 'prof-1');
+    mkdirSync(codeMetaDir, { recursive: true });
+    writeFileSync(
+      join(codeMetaDir, 'local_d1d1d1d1-0000-4000-8000-000000000001.json'),
+      JSON.stringify({
+        sessionId: 'local_d1d1d1d1-0000-4000-8000-000000000001',
+        cliSessionId: deskCodeCliId,
+        title: 'Desktop 重命名标题',
+        originCwd: '/tmp/demo-desktop',
+        isArchived: true,
+        createdAt: 1795000000000,
+        lastActivityAt: 1795000060000,
+      }),
+    );
+
+    // Cowork session（local-agent-mode-sessions/<org>/<profile>/<shortId>/.claude/projects/session/<cliId>.jsonl）
+    const coworkProfileDir = join(desktopDir, 'local-agent-mode-sessions', 'org-1', '00000000');
+    const coworkSessionProj = join(coworkProfileDir, '152a7489', '.claude', 'projects', 'session');
+    mkdirSync(coworkSessionProj, { recursive: true });
+    writeFileSync(
+      join(coworkProfileDir, coworkLocalId + '.json'),
+      JSON.stringify({
+        sessionId: coworkLocalId,
+        cliSessionId: coworkCliId,
+        title: 'Cowork 桌面任务',
+        userSelectedFolders: ['/tmp/cowork-folder'],
+        cwd: '/tmp/cowork-outputs',
+        isArchived: false,
+        createdAt: 1795001000000,
+        lastActivityAt: 1795001090000,
+      }),
+    );
+    const coworkJsonlPath = join(coworkSessionProj, coworkCliId + '.jsonl');
+    writeFileSync(
+      coworkJsonlPath,
+      jsonl([
+        { type: 'user', entrypoint: 'local-agent', cwd: '/private/var/empty', timestamp: '2026-11-20T02:00:00.000Z', message: { role: 'user', content: '执行计算任务' } },
+        { type: 'assistant', timestamp: '2026-11-20T02:00:05.000Z', message: { role: 'assistant', content: [{ type: 'text', text: '计算完成' }] } },
+      ]),
+    );
+
+    const codeOnly = await listClaudeSessions({ home: claudeDir });
+    assert.deepEqual(codeOnly.map((s) => s.sessionId), [cliId]);
+    assert.equal(codeOnly[0]!.agent, 'claude-code');
+
+    const desktopList = await listClaudeDesktopSessions({ home: desktopDir, claudeConfigDir: claudeDir });
+    assert.deepEqual(desktopList.map((s) => s.sessionId).sort(), [deskCodeCliId, coworkCliId].sort());
+    const deskCodeSummary = desktopList.find((s) => s.sessionId === deskCodeCliId)!;
+    assert.equal(deskCodeSummary.agent, 'claude-desktop');
+    assert.equal(deskCodeSummary.title, 'Desktop 重命名标题');
+    assert.equal(deskCodeSummary.archived, true);
+
+    const coworkSummary = desktopList.find((s) => s.sessionId === coworkCliId)!;
+    assert.equal(coworkSummary.agent, 'claude-desktop');
+    assert.equal(coworkSummary.title, 'Cowork 桌面任务');
+    assert.equal(coworkSummary.cwd, '/tmp/cowork-folder');
+
+    const bundleCode = await readClaudeDesktopSession(deskCodeCliId, { desktopHome: desktopDir, claudeConfigDir: claudeDir });
+    assert.deepEqual(validateIrBundle(bundleCode), []);
+    assert.equal(bundleCode.root.source.agent, 'claude-desktop');
+    assert.equal(bundleCode.root.id, 'claude-desktop:' + deskCodeCliId);
+
+    const bundleCowork = await readClaudeDesktopSession(coworkJsonlPath, { desktopHome: desktopDir, claudeConfigDir: claudeDir });
+    assert.deepEqual(validateIrBundle(bundleCowork), []);
+    assert.equal(bundleCowork.root.source.agent, 'claude-desktop');
+    assert.equal(bundleCowork.root.meta.title, 'Cowork 桌面任务');
+    assert.equal(claudeDesktopAdapter.id, 'claude-desktop');
+    assert.equal(claudeDesktopAdapter.write, undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

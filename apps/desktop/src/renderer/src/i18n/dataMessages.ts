@@ -212,6 +212,7 @@ export const enNoticeMessages: Record<string, string> = {
   'codex.event-msg-skipped': 'event_msg is a UI mirror duplicating response_item; skipped',
   'codex.opaque-reasoning': 'Reasoning only has encrypted content; kept as opaque reasoning',
   'codex.orphan-tool-result': 'Some function_call_output entries had no matching function_call; kept as-is',
+  'codex.subagents': 'Spawned Codex subagent threads were read as child sessions',
   'codex.system-lines-skipped':
     'Runtime snapshots such as token_usage_record / world_state are not conversation content; skipped',
   'codex.tool-arguments-not-json': 'Some function_call arguments were not valid JSON; kept as raw strings',
@@ -257,6 +258,9 @@ export const enNoticeMessages: Record<string, string> = {
   'cursor.tool-bubbles': 'toolFormerData was mapped to tool_call + tool_result',
   'cursor.tool-result-missing':
     'Tool calls have no recorded result (status not completed or result cleaned); only tool_call was kept',
+  'cursor.transcript-fallback':
+    'Loaded from Cursor agent-transcripts JSONL (state.vscdb composerData pruned or standalone CLI session; excludes tool outputs)',
+  'cursor.transcript-subagents': 'Subagent transcripts were read as child sessions from agent-transcripts/subagents',
   'cursor.unknown-bubble': 'Unknown bubble structure was skipped',
 
   'dsh.bad-jsonl-lines': 'The session log contains unparseable JSONL lines',

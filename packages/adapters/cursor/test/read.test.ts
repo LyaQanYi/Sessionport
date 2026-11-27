@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { validateIrBundle } from '@sessionport/core';
@@ -226,6 +226,13 @@ test('listCursorSessions 默认不含子代理、按更新时间倒序、带 arc
 
     const missing = await listCursorSessions({ home: join(fixture.home, 'nope') });
     assert.deepEqual(missing, []);
+
+    const withChildren = await listCursorSessions({ home: fixture.home, includeChildren: true });
+    assert.deepEqual(
+      withChildren.map((row) => row.sessionId).sort(),
+      [ARCHIVED_ID, CHILD_ID, OLD_ID, ROOT_ID].sort(),
+    );
+    assert.equal(withChildren.find((row) => row.sessionId === CHILD_ID)?.parentSessionId, ROOT_ID);
   } finally {
     fixture.cleanup();
   }
@@ -318,4 +325,118 @@ test('fixture 清理不残留临时目录', () => {
   const home = fixture.home;
   fixture.cleanup();
   assert.throws(() => rmSync(home, { recursive: false, force: false }));
+});
+
+test('空草稿过滤 + state.vscdb 缺失气泡时自动回落到 agent-transcripts 与独立 CLI 会话', async () => {
+  const GHOST_ID = '55555555-5555-4555-8555-555555555555';
+  const FALLBACK_ID = '66666666-6666-4666-8666-666666666666';
+  const SUB_ID = '77777777-7777-4777-8777-777777777777';
+  const CLI_ID = '88888888-8888-4888-8888-888888888888';
+
+  const fixture = createCursorFixture({
+    composers: [
+      ...allComposers(),
+      {
+        composerId: GHOST_ID,
+        name: '空草稿会话',
+        createdAtMs: BASE_MS + 40000,
+        lastUpdatedAtMs: BASE_MS + 40000,
+        bubbles: [],
+      },
+      {
+        composerId: FALLBACK_ID,
+        name: '被清理气泡的会话',
+        createdAtMs: BASE_MS + 50000,
+        lastUpdatedAtMs: BASE_MS + 50000,
+        bubbles: [{ type: 1, text: '先占坑，下面删掉 composerData' }],
+      },
+    ],
+  });
+
+  try {
+    // 删掉 FALLBACK_ID 的 composerData 与气泡，仅保留 composerHeaders 记录
+    const db = fixture.open();
+    try {
+      db.prepare('DELETE FROM cursorDiskKV WHERE key = ? OR key LIKE ?').run(
+        'composerData:' + FALLBACK_ID,
+        'bubbleId:' + FALLBACK_ID + ':%',
+      );
+    } finally {
+      db.close();
+    }
+
+    // 在隔离的 <fixture.home>/.cursor 下写入 FALLBACK_ID（含 subagent）和 CLI_ID
+    const dotCursor = join(fixture.home, '.cursor');
+    const fallbackDir = join(dotCursor, 'projects', 'demo-proj', 'agent-transcripts', FALLBACK_ID);
+    mkdirSync(join(fallbackDir, 'subagents'), { recursive: true });
+    writeFileSync(
+      join(fallbackDir, FALLBACK_ID + '.jsonl'),
+      [
+        JSON.stringify({
+          role: 'user',
+          message: {
+            content: [{ type: 'text', text: '<timestamp>Monday, Nov 2, 2026, 9:35 PM (UTC+8)</timestamp>\n<user_query>\n帮我迁移记忆\n</user_query>' }],
+          },
+        }),
+        JSON.stringify({
+          role: 'assistant',
+          message: {
+            content: [
+              { type: 'text', text: '好的，我先排查目录。' },
+              { type: 'tool_use', name: 'Glob', input: { glob_pattern: '*.ts' } },
+            ],
+          },
+        }),
+        JSON.stringify({ type: 'turn_ended', status: 'completed' }),
+      ].join('\n') + '\n',
+    );
+    writeFileSync(
+      join(fallbackDir, 'subagents', SUB_ID + '.jsonl'),
+      JSON.stringify({ role: 'user', message: { content: [{ type: 'text', text: '子任务检查' }] } }) + '\n',
+    );
+
+    const cliDir = join(dotCursor, 'projects', 'cli-proj', 'agent-transcripts', CLI_ID);
+    mkdirSync(cliDir, { recursive: true });
+    writeFileSync(
+      join(cliDir, CLI_ID + '.jsonl'),
+      JSON.stringify({ role: 'user', message: { content: [{ type: 'text', text: '<user_query>\nCursor CLI 独立对话\n</user_query>' }] } }) + '\n',
+    );
+    const metaDir = join(dotCursor, 'chats', 'hash123', CLI_ID);
+    mkdirSync(metaDir, { recursive: true });
+    writeFileSync(
+      join(metaDir, 'meta.json'),
+      JSON.stringify({ cwd: '/tmp/cursor-cli-cwd', createdAtMs: BASE_MS + 60000, updatedAtMs: BASE_MS + 65000 }),
+    );
+
+    const listed = await listCursorSessions({ home: fixture.home });
+    const ids = listed.map((item) => item.sessionId);
+    // 空草稿 GHOST_ID 应被过滤，CHILD_ID 是子代理也不在顶层列表
+    assert.equal(ids.includes(GHOST_ID), false);
+    assert.equal(ids.includes(CHILD_ID), false);
+    // 3 个正常 DB + FALLBACK_ID + CLI_ID 共 5 条
+    assert.deepEqual(ids.sort(), [ARCHIVED_ID, CLI_ID, FALLBACK_ID, OLD_ID, ROOT_ID].sort());
+
+    const fallbackSummary = listed.find((item) => item.sessionId === FALLBACK_ID)!;
+    assert.equal(fallbackSummary.title, '被清理气泡的会话');
+    assert.ok(fallbackSummary.nativePath.endsWith(FALLBACK_ID + '.jsonl'));
+
+    const cliSummary = listed.find((item) => item.sessionId === CLI_ID)!;
+    assert.equal(cliSummary.title, 'Cursor CLI 独立对话');
+    assert.equal(cliSummary.cwd, '/tmp/cursor-cli-cwd');
+
+    // 通过 composerId 与直接 .jsonl 路径均能读回合法 IR（含子代理）
+    const fallbackBundle = await readCursorSession(FALLBACK_ID, { home: fixture.home });
+    assert.deepEqual(validateIrBundle(fallbackBundle), []);
+    assert.equal(fallbackBundle.root.events.length, 3);
+    assert.equal(fallbackBundle.children.length, 1);
+    assert.ok(fallbackBundle.root.notices.some((n) => n.code === 'cursor.transcript-fallback'));
+    assert.ok(fallbackBundle.root.notices.some((n) => n.code === 'cursor.transcript-subagents'));
+
+    const cliBundle = await readCursorSession(CLI_ID, { home: fixture.home });
+    assert.deepEqual(validateIrBundle(cliBundle), []);
+    assert.equal(cliBundle.root.meta.title, 'Cursor CLI 独立对话');
+    assert.equal(cliBundle.root.meta.cwd, '/tmp/cursor-cli-cwd');
+  } finally {
+    fixture.cleanup();
+  }
 });

@@ -1,24 +1,30 @@
 /**
  * Codex 会话列表（只读元数据，不解析对话全文）。
  *
- * 数据源：<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-*.jsonl（默认 ~/.codex）
- * - 标题来自 <CODEX_HOME>/session_index.jsonl 的 thread_name
- * - cwd / createdAt 只读 rollout 文件头 128KB 里的 session_meta 行
- * - updatedAt 优先用索引的 updated_at，否则文件 mtime
- *
- * 兼容：返回值额外保留 id/path 两个旧字段（桌面端兜底代码在用），语义等同 sessionId/nativePath。
+ * 数据源：<CODEX_HOME>/{sessions,archived_sessions}/YYYY/MM/DD/rollout-*.jsonl(.zst)（默认 ~/.codex）
+ * - 自动将同一线程的分页段（rollout-<ts>-<threadId>_<segId>.jsonl.zst）聚合为 1 条会话
+ * - 标题优先取 state_5.sqlite 的 threads.name / session_index.jsonl 的 thread_name / 首条真实用户消息
+ * - 默认过滤 subagent 与 guardian_review 后台线程（传 includeChildren: true 时一并列出）
+ * - 兼容：返回值额外保留 id/path 两个旧字段（桌面端兜底代码在用），语义等同 sessionId/nativePath。
  */
-import { open, readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { stat } from 'node:fs/promises';
 
 import { finalizeSessionList } from '@sessionport/core';
 import type { ListSessionsOptions, SessionSummary } from '@sessionport/core';
 
 import type { CodexIndexEntry, CodexLine, CodexSessionMeta } from './wire.ts';
-import { codexHome, isCodexInjectedUserText, listRolloutFiles, readSessionIndex, sessionIdFromRolloutPath } from './wire.ts';
-
-/** 首页大小：session_meta 在第一行，首条 user 文本通常也在前面 */
-const HEAD_BYTES = 128 * 1024;
+import {
+  archivedSessionsRoot,
+  classifyCodexThread,
+  codexHome,
+  isCodexInjectedUserText,
+  listRolloutFiles,
+  readRolloutHead,
+  readSessionIndex,
+  readStateThreads,
+  rolloutTimestampFromPath,
+  sessionIdFromRolloutPath,
+} from './wire.ts';
 
 export interface CodexSessionSummary extends SessionSummary {
   /** @deprecated 用 sessionId（兼容桌面端旧兜底代码） */
@@ -27,37 +33,99 @@ export interface CodexSessionSummary extends SessionSummary {
   path: string;
 }
 
+interface RolloutSegment {
+  filePath: string;
+  mtimeMs: number;
+  nameTimestamp?: number;
+}
+
 export async function listCodexSessions(options: ListSessionsOptions | string = {}): Promise<CodexSessionSummary[]> {
   const home = codexHome(typeof options === 'string' ? options : options.home);
   const limit = typeof options === 'string' ? undefined : options.limit;
+  const includeChildren = typeof options === 'string' ? false : options.includeChildren === true;
   const index = safeIndex(home);
-  const summaries: CodexSessionSummary[] = [];
+  const stateThreads = readStateThreads(home);
+  const archivedDirPrefix = archivedSessionsRoot(home) + '/';
 
+  const grouped = new Map<string, RolloutSegment[]>();
   for (const filePath of listRolloutFiles(home)) {
     const info = await stat(filePath).catch(() => undefined);
     if (info === undefined || !info.isFile()) continue;
-    const sessionId = sessionIdFromRolloutPath(filePath) ?? filePath;
-    const head = await readRange(filePath, 0, Math.min(info.size, HEAD_BYTES)).catch(() => '');
+    const threadId = sessionIdFromRolloutPath(filePath) ?? filePath;
+    const list = grouped.get(threadId) ?? [];
+    list.push({
+      filePath,
+      mtimeMs: info.mtimeMs,
+      nameTimestamp: rolloutTimestampFromPath(filePath),
+    });
+    grouped.set(threadId, list);
+  }
+
+  const summaries: CodexSessionSummary[] = [];
+  for (const [threadId, segments] of grouped) {
+    segments.sort((a, b) => {
+      const aTime = a.nameTimestamp ?? a.mtimeMs;
+      const bTime = b.nameTimestamp ?? b.mtimeMs;
+      if (aTime !== bTime) return aTime - bTime;
+      return a.mtimeMs - b.mtimeMs;
+    });
+    const firstFile = segments[0]!;
+    const latestFile = segments[segments.length - 1]!;
+    const head = await readRolloutHead(firstFile.filePath).catch(() => '');
     const lines = parseJsonLines(head);
     const meta = lines.find((line) => line.type === 'session_meta')?.payload as CodexSessionMeta | undefined;
-    const indexEntry = index.get(sessionId);
+    const stateRow = stateThreads.get(threadId);
+    const classification = classifyCodexThread(meta, stateRow);
+    // Guardian 内部后台审查永远不展示；subagent 仅在 includeChildren=true 时作为子节点返回
+    if (classification.isGuardian) continue;
+    if (!includeChildren && classification.isSubagent) continue;
 
+    const indexEntry = index.get(threadId);
     const summary: CodexSessionSummary = {
       agent: 'codex',
-      sessionId,
-      id: sessionId,
-      nativePath: filePath,
-      path: filePath,
-      resumeHint: 'codex exec resume ' + sessionId,
+      sessionId: threadId,
+      id: threadId,
+      nativePath: latestFile.filePath,
+      path: latestFile.filePath,
+      resumeHint: 'codex exec resume ' + threadId,
     };
-    const title = textOf(indexEntry?.thread_name) ?? firstUserText(lines);
+
+    const rawUserTitle = firstUserText(lines);
+    let title =
+      textOf(stateRow?.name) ??
+      textOf(indexEntry?.thread_name) ??
+      textOf(stateRow?.title);
+    if (title === undefined) {
+      if (classification.isSubagent && classification.agentLabel !== undefined) {
+        title = rawUserTitle !== undefined ? classification.agentLabel + ' · ' + rawUserTitle : classification.agentLabel;
+      } else {
+        title = rawUserTitle;
+      }
+    }
     if (title !== undefined) summary.title = title;
-    const cwd = textOf(meta?.cwd);
+
+    const cwd = textOf(meta?.cwd) ?? textOf(stateRow?.cwd);
     if (cwd !== undefined) summary.cwd = cwd;
-    const createdAt = normalizeIso(meta?.timestamp) ?? createdAtFromRolloutName(filePath);
+
+    const createdAt =
+      normalizeIso(meta?.timestamp) ??
+      msToIso(stateRow?.createdAtMs ?? (stateRow?.createdAt !== undefined ? stateRow.createdAt * 1000 : undefined)) ??
+      createdAtFromRolloutName(firstFile.filePath);
     if (createdAt !== undefined) summary.createdAt = createdAt;
-    const updatedAt = normalizeIso(indexEntry?.updated_at) ?? info.mtime.toISOString();
+
+    const updatedAt =
+      msToIso(stateRow?.updatedAtMs) ??
+      normalizeIso(indexEntry?.updated_at) ??
+      msToIso(stateRow?.updatedAt !== undefined ? stateRow.updatedAt * 1000 : undefined) ??
+      new Date(latestFile.mtimeMs).toISOString();
     summary.updatedAt = updatedAt;
+
+    if (stateRow?.archived === true || latestFile.filePath.startsWith(archivedDirPrefix)) {
+      summary.archived = true;
+    }
+    if (includeChildren && classification.parentThreadId !== undefined) {
+      summary.parentSessionId = classification.parentThreadId;
+    }
     summaries.push(summary);
   }
   return finalizeSessionList(summaries, limit) as CodexSessionSummary[];
@@ -94,25 +162,15 @@ function firstUserText(lines: CodexLine[]): string | undefined {
   return undefined;
 }
 
-/** rollout-2026-10-16T14-40-28-<uuid>.jsonl 里的本地时间（无时区，按本地时区还原） */
+/** rollout-2026-10-16T14-40-28-<uuid>.jsonl(.zst) 里的本地时间（无时区，按本地时区还原） */
 function createdAtFromRolloutName(filePath: string): string | undefined {
-  const match = /rollout-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})/.exec(filePath);
-  if (match === null) return undefined;
-  const [, year, month, day, hour, minute, second] = match;
-  if (year === undefined || month === undefined || day === undefined || hour === undefined || minute === undefined || second === undefined) return undefined;
-  const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
-  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+  const ms = rolloutTimestampFromPath(filePath);
+  return ms !== undefined ? new Date(ms).toISOString() : undefined;
 }
 
-async function readRange(filePath: string, start: number, length: number): Promise<string> {
-  const handle = await open(filePath, 'r');
-  try {
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await handle.read(buffer, 0, length, start);
-    return buffer.subarray(0, bytesRead).toString('utf8');
-  } finally {
-    await handle.close();
-  }
+function msToIso(ms: number | undefined): string | undefined {
+  if (ms === undefined || !Number.isFinite(ms)) return undefined;
+  return new Date(ms).toISOString();
 }
 
 function parseJsonLines(text: string): CodexLine[] {

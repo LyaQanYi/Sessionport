@@ -80,20 +80,28 @@ export type {
 export {
   CURSOR_HOME_ENV,
   computeWorkspaceId,
+  cursorDotDir,
   cursorGlobalDbPath,
   cursorLogsDir,
   cursorUserDataDir,
   cursorWorkspaceStorageDir,
+  cwdFromCursorProjectSlug,
   defaultCursorUserDataDir,
   expandHomePath,
+  findCursorAgentTranscript,
   findWorkspaceIdByCwd,
   fsPathFromWorkspaceIdentifier,
+  listCursorAgentTranscripts,
+  listCursorTranscriptSubagents,
   listCursorWorkspaces,
   resolveCursorPaths,
   resolveWorkspaceId,
   workspaceIdentifierFor,
 } from './paths.ts';
-export type { CursorPaths, CursorWorkspaceIdentifier, CursorWorkspaceInfo, CursorWorkspaceJson } from './paths.ts';
+export type { CursorChatMeta, CursorPaths, CursorTranscriptFile, CursorWorkspaceIdentifier, CursorWorkspaceInfo, CursorWorkspaceJson } from './paths.ts';
+
+export { inspectCursorTranscript, readCursorTranscriptSession, extractCursorTranscriptQueryText } from './transcript.ts';
+export type { CursorTranscriptInspection, CursorTranscriptReadHints } from './transcript.ts';
 
 export {
   BUBBLE_KEY_PREFIX,
@@ -119,6 +127,7 @@ export {
   detectCursorVersion,
   emptyComposerContext,
   ensureCursorSchema,
+  hasCursorDbContent,
   headerRecordFromRow,
   isRecord,
   isUuid,

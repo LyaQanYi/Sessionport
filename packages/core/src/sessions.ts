@@ -39,8 +39,10 @@ export interface SessionSummary {
 export interface ListSessionsOptions {
   /** 覆盖该 agent 的数据根目录（默认按各家的 env / ~ 规则推断），主要给测试和多 profile 用 */
   home?: string;
-  /** 最多返回多少条；adapter 排序后截断 */
-  limit?: number;
+  /** 最多返回多少条；adapter 排序后截断（传 null / 0 表示不截断） */
+  limit?: number | null;
+  /** 是否在顶层列表包含子代理/swarm 子会话（默认仅列根会话，详情内下钻） */
+  includeChildren?: boolean;
 }
 
 /** adapter 列表函数签名（每家实现一致） */
@@ -48,7 +50,7 @@ export type SessionLister = (options?: ListSessionsOptions) => Promise<SessionSu
 
 /** 聚合选项 */
 export interface ListAllSessionsOptions extends ListSessionsOptions {
-  /** 只列这些 agent；默认 6 家全列 */
+  /** 只列这些 agent；默认全部 agent */
   agents?: readonly AgentId[];
   /** 按 agent 覆盖数据根目录（优先于 home） */
   homes?: Partial<Record<AgentId, string>>;
@@ -65,6 +67,7 @@ export interface ListAllSessionsResult {
 /** 固定顺序：CLI / UI 展示时保持稳定 */
 export const SESSION_AGENTS: readonly AgentId[] = [
   'claude-code',
+  'claude-desktop',
   'codex',
   'opencode',
   'kimi-code',
@@ -82,7 +85,7 @@ export const DEFAULT_SESSION_LIMIT = 200;
  * 按 updatedAt 倒序排序并截断。
  * 缺 updatedAt 的排最后（用 createdAt 兜底），保证列表稳定可复现。
  */
-export function finalizeSessionList(sessions: SessionSummary[], limit?: number): SessionSummary[] {
+export function finalizeSessionList(sessions: SessionSummary[], limit?: number | null): SessionSummary[] {
   const sorted = [...sessions].sort(compareSessions);
   const max = normalizeLimit(limit);
   return max === undefined ? sorted : sorted.slice(0, max);
@@ -103,9 +106,9 @@ function timeOf(iso: string | undefined): number {
   return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
 }
 
-/** limit 非法（undefined/0/负数/NaN）时返回 undefined 表示不截断 */
-function normalizeLimit(limit: number | undefined): number | undefined {
-  if (limit === undefined || !Number.isFinite(limit)) return undefined;
+/** limit 非法（undefined/null/0/负数/NaN）时返回 undefined 表示不截断 */
+function normalizeLimit(limit: number | null | undefined): number | undefined {
+  if (limit === undefined || limit === null || !Number.isFinite(limit)) return undefined;
   const floored = Math.floor(limit);
   return floored > 0 ? floored : undefined;
 }
@@ -116,6 +119,10 @@ async function loadBuiltinLister(agent: AgentId): Promise<SessionLister> {
     case 'claude-code': {
       const mod = await import('../../adapters/claude-code/src/index.ts');
       return (options) => mod.listClaudeSessions(options);
+    }
+    case 'claude-desktop': {
+      const mod = await import('../../adapters/claude-code/src/index.ts');
+      return (options) => mod.listClaudeDesktopSessions(options);
     }
     case 'codex': {
       const mod = await import('../../adapters/codex/src/index.ts');
@@ -171,7 +178,8 @@ export async function listAllSessions(options: ListAllSessionsOptions = {}): Pro
     if (SESSION_AGENTS.includes(agent)) agents.push(agent);
     else warnings.push('未知 agent: ' + String(agent) + '（可选 ' + SESSION_AGENTS.join(' / ') + '）');
   }
-  const limit = normalizeLimit(options.limit) ?? DEFAULT_SESSION_LIMIT;
+  const unlimited = options.limit === null || options.limit === 0 || options.limit === Number.POSITIVE_INFINITY;
+  const limit = unlimited ? undefined : (normalizeLimit(options.limit) ?? DEFAULT_SESSION_LIMIT);
   const loaders = options.loaders ?? {};
 
   const perAgent = await Promise.all(
@@ -179,7 +187,11 @@ export async function listAllSessions(options: ListAllSessionsOptions = {}): Pro
       try {
         const lister = loaders[agent] ?? (await loadBuiltinLister(agent));
         const home = options.homes?.[agent] ?? options.home;
-        const rows = await lister({ home, limit });
+        const rows = await lister({
+          home,
+          limit,
+          ...(options.includeChildren !== undefined ? { includeChildren: options.includeChildren } : {}),
+        });
         const normalized: SessionSummary[] = [];
         for (const row of rows) {
           const summary = normalizeSummary(agent, row);

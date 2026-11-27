@@ -310,13 +310,17 @@ test('readAntigravitySession / listAntigravitySessions：支持子代理、swarm
     mkdirSync(join(mainHome, 'annotations'), { recursive: true });
     writeFileSync(join(mainHome, 'annotations', `${rootId}.pbtxt`), 'title:"Annotation Overrides DB"  plan_execute:true\n', 'utf8');
 
-    // listAntigravitySessions（单目录）
+    // listAntigravitySessions（单目录：默认排除有 parentConversationId 的子代理/swarm 会话）
     const listedMain = await listAntigravitySessions({ home: mainHome });
-    assert.equal(listedMain.length, 3);
+    assert.equal(listedMain.length, 2);
     const rootSummary = listedMain.find((r) => r.sessionId === rootId);
     assert.equal(rootSummary?.title, 'Annotation Overrides DB');
     assert.equal(rootSummary?.cwd, '/tmp/repo-main');
-    const swarmRow = listedMain.find((r) => r.sessionId === swarmChildId);
+    assert.equal(listedMain.find((r) => r.sessionId === swarmChildId), undefined);
+
+    const listedWithChildren = await listAntigravitySessions({ home: mainHome, includeChildren: true });
+    assert.equal(listedWithChildren.length, 3);
+    const swarmRow = listedWithChildren.find((r) => r.sessionId === swarmChildId);
     assert.equal(swarmRow?.parentSessionId, rootId);
     assert.equal(swarmRow?.archived, true);
 

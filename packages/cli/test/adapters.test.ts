@@ -32,7 +32,7 @@ function makeBundle(events: IrEvent[], sourceAgent: 'claude-code' | 'codex' = 'c
   };
 }
 
-test('adapter 注册表：10 家全部可加载，WRITE_TARGETS 具备 write，只读端无 write', async () => {
+test('adapter 注册表：11 家全部可加载，WRITE_TARGETS 具备 write，只读端无 write', async () => {
   for (const agentId of SESSION_AGENTS) {
     const adapter = await getAdapter(agentId);
     assert.ok(adapter !== undefined, 'missing adapter: ' + agentId);
@@ -47,9 +47,11 @@ test('adapter 注册表：10 家全部可加载，WRITE_TARGETS 具备 write，�
   }
   const kimi = await getAdapter('kimi-code');
   const wb = await getAdapter('workbuddy');
+  const cd = await getAdapter('claude-desktop');
   const agy = await getAdapter('antigravity');
   assert.equal(kimi?.write, undefined);
   assert.equal(wb?.write, undefined);
+  assert.equal(cd?.write, undefined);
   assert.equal(typeof agy?.write, 'function');
   assert.equal(agy?.supportsInPlaceRewrite, false);
   assert.equal(await getAdapter('unknown-agent'), undefined);

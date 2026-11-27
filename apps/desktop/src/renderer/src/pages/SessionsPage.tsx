@@ -1,11 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Folder, Hash, MessagesSquare, RefreshCw, X } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Copy,
+  Folder,
+  GitBranch,
+  Hash,
+  MessagesSquare,
+  RefreshCw,
+  X,
+} from 'lucide-react';
 
 import { api } from '../api.ts';
 import type { SessionRow } from '../api.ts';
 import { AgentGlyph, AGENT_META, agentLabel } from '../agents.tsx';
+import {
+  buildSessionForest,
+  filterSessionForest,
+  flattenVisibleTree,
+  type SessionTreeNode,
+} from '../sessionTree.ts';
 import { useT } from '../i18n/I18nProvider.tsx';
 import type { MessageKey, MessageParams } from '../i18n/messages.ts';
 import { Badge, Button, EmptyState, RowAction, SearchField, SegmentedControl, Spinner, Topbar, cn } from '../ui.tsx';
@@ -16,6 +35,7 @@ type GroupMode = 'project' | 'time';
 
 const GROUP_MODE_KEY = 'sessionport.sessions.groupMode';
 const COLLAPSED_KEY = 'sessionport.sessions.collapsedGroups';
+const EXPANDED_NODES_KEY = 'sessionport.sessions.expandedNodes';
 
 function readGroupMode(): GroupMode {
   return localStorage.getItem(GROUP_MODE_KEY) === 'time' ? 'time' : 'project';
@@ -27,6 +47,23 @@ function readCollapsed(): Set<string> {
     return new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : []);
   } catch {
     return new Set();
+  }
+}
+
+function readExpandedNodes(): Set<string> {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(EXPANDED_NODES_KEY) ?? '[]');
+    return new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeExpandedNodes(keys: Set<string>): void {
+  try {
+    sessionStorage.setItem(EXPANDED_NODES_KEY, JSON.stringify([...keys]));
+  } catch {
+    // ignore storage errors
   }
 }
 
@@ -90,7 +127,18 @@ function highlight(text: string, query: string) {
 
 type Row =
   | { kind: 'header'; key: string; label: string; count: number }
-  | { kind: 'session'; key: string; session: SessionRow };
+  | {
+      kind: 'session';
+      key: string;
+      nodeKey: string;
+      session: SessionRow;
+      depth: number;
+      directChildCount: number;
+      descendantCount: number;
+      expanded: boolean;
+      isLastSibling: boolean;
+      guideMask: boolean[];
+    };
 
 export function SessionsPage(props: {
   enabledAgents: string[];
@@ -103,6 +151,8 @@ export function SessionsPage(props: {
   const [query, setQuery] = useState('');
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(readExpandedNodes);
+  const [searchCollapsed, setSearchCollapsed] = useState<Set<string>>(() => new Set());
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const copyTimerRef = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -114,6 +164,10 @@ export function SessionsPage(props: {
     };
   }, []);
 
+  useEffect(() => {
+    setSearchCollapsed(new Set());
+  }, [query]);
+
   const all = data?.sessions ?? [];
   const warnings = (data?.warnings ?? []).map((warning) => (locale === 'zh-CN' ? warning : warningText(warning, t)));
   const enabledSessions = useMemo(() => {
@@ -121,28 +175,43 @@ export function SessionsPage(props: {
     return all.filter((row) => props.enabledAgents.includes(row.agent));
   }, [all, props.enabledAgents]);
 
-  const agentCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const row of enabledSessions) counts.set(row.agent, (counts.get(row.agent) ?? 0) + 1);
-    return counts;
-  }, [enabledSessions]);
+  const forest = useMemo(() => buildSessionForest(enabledSessions), [enabledSessions]);
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return enabledSessions.filter((row) => {
-      if (props.agentFilter && row.agent !== props.agentFilter) return false;
-      if (!needle) return true;
-      return [row.title, row.cwd, row.sessionId, row.agent].filter(Boolean).join(' ').toLowerCase().includes(needle);
-    });
-  }, [enabledSessions, query, props.agentFilter]);
+  const agentRoots = useMemo(
+    () => (props.agentFilter ? forest.roots.filter((node) => node.session.agent === props.agentFilter) : forest.roots),
+    [forest.roots, props.agentFilter],
+  );
+
+  const searchNeedle = query.trim().toLowerCase();
+  const isSearching = searchNeedle.length > 0;
+
+  const filteredForest = useMemo(() => {
+    if (!isSearching) {
+      let childCount = 0;
+      for (const root of agentRoots) childCount += root.descendantCount;
+      return { roots: agentRoots, autoExpandKeys: new Set<string>(), visibleChildCount: childCount };
+    }
+    return filterSessionForest(agentRoots, (row) =>
+      [row.title, row.cwd, row.sessionId, row.agent].filter(Boolean).join(' ').toLowerCase().includes(searchNeedle),
+    );
+  }, [agentRoots, isSearching, searchNeedle]);
+
+  const effectiveExpanded = useMemo(() => {
+    if (!isSearching) return expandedNodes;
+    const next = new Set(expandedNodes);
+    for (const key of filteredForest.autoExpandKeys) {
+      if (!searchCollapsed.has(key)) next.add(key);
+    }
+    return next;
+  }, [isSearching, expandedNodes, filteredForest.autoExpandKeys, searchCollapsed]);
 
   const { rows, groupKeys } = useMemo<{ rows: Row[]; groupKeys: string[] }>(() => {
-    const groups = new Map<string, { label: string; sessions: SessionRow[]; latest: string }>();
-    for (const session of filtered) {
-      const key = groupMode === 'project' ? projectName(session, t('sessions.noProject')) : timeBucket(session.updatedAt, t);
-      const entry = groups.get(key) ?? { label: key, sessions: [], latest: '' };
-      entry.sessions.push(session);
-      const stamp = session.updatedAt ?? '';
+    const groups = new Map<string, { label: string; nodes: SessionTreeNode<SessionRow>[]; latest: string }>();
+    for (const root of filteredForest.roots) {
+      const stamp = root.latestActivity || root.session.updatedAt || '';
+      const key = groupMode === 'project' ? projectName(root.session, t('sessions.noProject')) : timeBucket(stamp || undefined, t);
+      const entry = groups.get(key) ?? { label: key, nodes: [], latest: '' };
+      entry.nodes.push(root);
       if (stamp > entry.latest) entry.latest = stamp;
       groups.set(key, entry);
     }
@@ -154,20 +223,57 @@ export function SessionsPage(props: {
     const keys: string[] = [];
     for (const [key, entry] of ordered) {
       keys.push(groupMode + ':' + key);
-      rowGroup(result, key, entry.label, entry.sessions, groupMode, collapsed);
+      rowGroup(result, key, entry.label, entry.nodes, groupMode, collapsed, effectiveExpanded);
     }
     return { rows: result, groupKeys: keys };
-  }, [filtered, groupMode, collapsed, t]);
+  }, [filteredForest.roots, groupMode, collapsed, effectiveExpanded, t]);
 
   const allCollapsed = groupKeys.length > 0 && groupKeys.every((key) => collapsed.has(key));
+  const visibleRootCount = filteredForest.roots.length;
+  const visibleChildCount = filteredForest.visibleChildCount;
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     getItemKey: (index) => rows[index]?.key ?? index,
-    estimateSize: (index) => (rows[index]?.kind === 'header' ? 34 : 58),
+    estimateSize: (index) => {
+      const row = rows[index];
+      if (row === undefined || row.kind === 'header') return 34;
+      return row.depth > 0 ? 50 : 58;
+    },
     overscan: 14,
   });
+
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [rows, rowVirtualizer]);
+
+  const toggleNode = (nodeKey: string): void => {
+    if (isSearching && filteredForest.autoExpandKeys.has(nodeKey)) {
+      const currentlyExpanded = !searchCollapsed.has(nodeKey);
+      setSearchCollapsed((current) => {
+        const next = new Set(current);
+        if (currentlyExpanded) next.add(nodeKey);
+        else next.delete(nodeKey);
+        return next;
+      });
+      setExpandedNodes((current) => {
+        const next = new Set(current);
+        if (currentlyExpanded) next.delete(nodeKey);
+        else next.add(nodeKey);
+        writeExpandedNodes(next);
+        return next;
+      });
+      return;
+    }
+    setExpandedNodes((current) => {
+      const next = new Set(current);
+      if (next.has(nodeKey)) next.delete(nodeKey);
+      else next.add(nodeKey);
+      writeExpandedNodes(next);
+      return next;
+    });
+  };
 
   const toggleGroup = (key: string): void => {
     setCollapsed((current) => {
@@ -206,7 +312,7 @@ export function SessionsPage(props: {
       <Topbar
         icon={<MessagesSquare className="h-4 w-4" />}
         title={t('sessions.title')}
-        subtitle={data ? t('sessions.subtitle', { sessions: enabledSessions.length, agents: agentCounts.size }) : t('common.loading')}
+        subtitle={data ? t('sessions.subtitle', { sessions: forest.totalRootCount, agents: forest.rootCountByAgent.size }) : t('common.loading')}
         actions={
           <>
             <SearchField value={query} onChange={setQuery} placeholder={t('sessions.searchPlaceholder')} className="w-56" />
@@ -243,7 +349,11 @@ export function SessionsPage(props: {
           </button>
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <span className="text-caption tabular-nums text-fg-3">{t('sessions.count', { count: filtered.length })}</span>
+          <span className="text-caption tabular-nums text-fg-3">
+            {visibleChildCount > 0
+              ? t('sessions.countWithChildren', { count: visibleRootCount, children: visibleChildCount })
+              : t('sessions.count', { count: visibleRootCount })}
+          </span>
           {groupKeys.length > 0 ? (
             <Button
               variant="ghost"
@@ -299,39 +409,95 @@ export function SessionsPage(props: {
                 const resumeCopied = copiedKey === row.key + ':resume';
                 const idCopied = copiedKey === row.key + ':id';
                 const anyCopied = resumeCopied || idCopied;
+                const isNested = row.depth > 0;
+                const hasChildren = row.directChildCount > 0;
+                const childTooltip =
+                  row.descendantCount > row.directChildCount
+                    ? t('sessions.childrenTooltipNested', { direct: row.directChildCount, total: row.descendantCount })
+                    : t('sessions.childrenTooltipDirect', { direct: row.directChildCount });
+                const cappedGuides = row.guideMask.slice(0, 5);
                 return (
                   <div
                     key={row.key}
                     style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: 'translateY(' + virtualRow.start + 'px)' }}
                     className={cn(
-                      'group flex h-[58px] w-full items-center border-b border-border/60 transition-colors',
+                      'group flex w-full items-center border-b border-border/60 pl-3 pr-4 transition-colors',
+                      isNested ? 'h-[50px] bg-subtle/20' : 'h-[58px]',
                       session.readable ? 'hover:bg-accent/60' : 'opacity-60',
                     )}
                   >
+                    {isNested ? (
+                      <div className="flex h-full shrink-0 items-center" aria-hidden="true">
+                        {cappedGuides.map((hasMore, idx) => (
+                          <span key={idx} className="relative h-full w-4 shrink-0">
+                            {hasMore ? <span className="absolute inset-y-0 left-2 w-px bg-border/80" /> : null}
+                          </span>
+                        ))}
+                        <span className="relative h-full w-4 shrink-0">
+                          <span className={cn('absolute left-2 top-0 w-px bg-border/80', row.isLastSibling ? 'h-1/2' : 'bottom-0')} />
+                          <span className="absolute left-2 top-1/2 h-px w-2 bg-border/80" />
+                        </span>
+                      </div>
+                    ) : null}
+                    {hasChildren ? (
+                      <button
+                        type="button"
+                        data-tree-toggle={row.nodeKey}
+                        onClick={() => toggleNode(row.nodeKey)}
+                        aria-label={row.expanded ? t('sessions.collapseChildren') : t('sessions.expandChildren')}
+                        aria-expanded={row.expanded}
+                        title={childTooltip}
+                        className="mr-0.5 flex h-6 w-5 shrink-0 items-center justify-center rounded-control text-fg-3 transition-colors hover:bg-accent hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {row.expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      </button>
+                    ) : (
+                      <span className={cn('shrink-0', isNested ? 'mr-0.5 w-4' : 'mr-0.5 w-5')} aria-hidden="true" />
+                    )}
                     <button
                       type="button"
                       data-session-row="true"
+                      data-depth={row.depth}
                       disabled={!session.readable}
                       title={session.readable ? undefined : t('sessions.readableHint')}
                       onClick={() => props.onOpen(session)}
                       className={cn(
-                        'flex h-full min-w-0 flex-1 items-center gap-2.5 pl-4 pr-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                        'flex h-full min-w-0 flex-1 items-center gap-2.5 pr-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
                         session.readable ? 'cursor-pointer' : 'cursor-not-allowed',
                       )}
                     >
-                      <AgentGlyph agent={session.agent} />
+                      <AgentGlyph agent={session.agent} className={isNested ? 'h-5 w-5' : undefined} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="truncate text-body text-fg-1">{highlight(session.title ?? session.sessionId, query)}</span>
+                          <span className={cn('truncate text-fg-1', isNested ? 'text-caption font-medium' : 'text-body')}>
+                            {highlight(session.title ?? session.sessionId, query)}
+                          </span>
                           {session.readable ? null : <Badge variant="outline">{t('sessions.metadata')}</Badge>}
                         </div>
-                        <div className="mt-0.5 flex items-center gap-1.5 truncate text-caption text-fg-2">
+                        <div className={cn('flex items-center gap-1.5 truncate text-caption text-fg-2', isNested ? 'mt-0' : 'mt-0.5')}>
                           <Folder className="h-3 w-3 shrink-0 text-fg-3" />
                           <span className="truncate">{session.cwd ?? session.nativePath}</span>
                         </div>
                       </div>
                     </button>
-                    <div className="flex shrink-0 items-center gap-2 pr-4">
+                    <div className="flex shrink-0 items-center gap-2">
+                      {row.descendantCount > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleNode(row.nodeKey)}
+                          title={childTooltip}
+                          aria-label={childTooltip}
+                          className={cn(
+                            'inline-flex h-5 shrink-0 items-center gap-1 rounded-full border px-1.5 text-3xs tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                            row.expanded
+                              ? 'border-ring/40 bg-selected text-fg-1'
+                              : 'border-border bg-subtle/80 text-fg-2 hover:bg-accent hover:text-fg-1',
+                          )}
+                        >
+                          <GitBranch className="h-2.5 w-2.5 shrink-0 text-fg-3" />
+                          <span>{row.descendantCount}</span>
+                        </button>
+                      ) : null}
                       <div className={cn('items-center gap-0.5', anyCopied ? 'flex' : 'hidden group-hover:flex group-focus-within:flex')}>
                         {session.readable ? (
                           <RowAction label={t('sessions.migrate')} onClick={() => props.onMigrate(session)}>
@@ -367,10 +533,16 @@ export function SessionsPage(props: {
             </div>
           </div>
           <div className="flex h-7 shrink-0 items-center gap-1.5 border-t border-border px-4 text-3xs text-fg-3">
-            {t('sessions.footer', {
-              count: filtered.length,
-              grouping: groupMode === 'project' ? t('sessions.grouping.project') : t('sessions.grouping.time'),
-            })}
+            {visibleChildCount > 0
+              ? t('sessions.footerWithChildren', {
+                  count: visibleRootCount,
+                  children: visibleChildCount,
+                  grouping: groupMode === 'project' ? t('sessions.grouping.project') : t('sessions.grouping.time'),
+                })
+              : t('sessions.footer', {
+                  count: visibleRootCount,
+                  grouping: groupMode === 'project' ? t('sessions.grouping.project') : t('sessions.grouping.time'),
+                })}
           </div>
         </div>
       )}
@@ -382,14 +554,26 @@ function rowGroup(
   target: Row[],
   key: string,
   label: string,
-  sessions: SessionRow[],
+  nodes: SessionTreeNode<SessionRow>[],
   groupMode: GroupMode,
   collapsed: Set<string>,
+  expandedNodes: ReadonlySet<string>,
 ): void {
-  target.push({ kind: 'header', key: groupMode + ':' + key, label, count: sessions.length });
+  target.push({ kind: 'header', key: 'header|' + groupMode + ':' + key, label, count: nodes.length });
   if (collapsed.has(groupMode + ':' + key)) return;
-  const sorted = [...sessions].sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
-  for (const session of sorted) {
-    target.push({ kind: 'session', key: session.agent + '|' + session.sessionId + '|' + session.nativePath, session });
+  const flat = flattenVisibleTree(nodes, expandedNodes);
+  for (const item of flat) {
+    target.push({
+      kind: 'session',
+      key: 'session|' + item.key + '|' + item.session.nativePath,
+      nodeKey: item.key,
+      session: item.session,
+      depth: item.depth,
+      directChildCount: item.directChildCount,
+      descendantCount: item.descendantCount,
+      expanded: item.expanded,
+      isLastSibling: item.isLastSibling,
+      guideMask: item.guideMask,
+    });
   }
 }

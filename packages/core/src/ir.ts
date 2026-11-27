@@ -12,7 +12,7 @@
 
 export const IR_VERSION = '0.1' as const;
 
-export type AgentId = 'claude-code' | 'codex' | 'opencode' | 'kimi-code' | 'command-code' | 'dsh' | 'cursor' | 'qoder' | 'workbuddy' | 'antigravity';
+export type AgentId = 'claude-code' | 'claude-desktop' | 'codex' | 'opencode' | 'kimi-code' | 'command-code' | 'dsh' | 'cursor' | 'qoder' | 'workbuddy' | 'antigravity';
 
 /** 来源指纹：版本登记制与回归测试的依据 */
 export interface SourceFingerprint {

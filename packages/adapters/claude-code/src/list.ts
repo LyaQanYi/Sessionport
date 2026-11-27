@@ -19,15 +19,33 @@ import { finalizeSessionList } from '@sessionport/core';
 import type { ListSessionsOptions, SessionSummary } from '@sessionport/core';
 
 import { claudeConfigDir, projectsDir } from './paths.ts';
+import { defaultClaudeDesktopDirs, isClaudeDesktopEntrypoint, scanClaudeDesktopCodeMetadata } from './desktop.ts';
 
 /** 会话文件头的元数据通常出现在前几十行；256KB 足够覆盖 attachment 很多的长会话 */
 const HEAD_BYTES = 256 * 1024;
 /** 重命名标题可能追加在文件尾部，补扫一段 */
 const TAIL_BYTES = 64 * 1024;
 
+export interface ClaudeInspectedSummary {
+  summary: SessionSummary;
+  entrypoint?: string;
+  customTitle?: string;
+  summaryTitle?: string;
+}
+
+export interface ReadClaudeFileSummaryOptions {
+  agent?: 'claude-code' | 'claude-desktop';
+  resumeHint?: string;
+}
+
 export async function listClaudeSessions(options: ListSessionsOptions = {}): Promise<SessionSummary[]> {
   const configDir = claudeConfigDir(options.home);
   const root = projectsDir(configDir);
+  // 仅在扫描本机默认目录时联动默认 Claude Desktop 元数据目录做去重；传入显式 home 时保持测试完全隔离
+  const desktopClaimedIds =
+    options.home === undefined
+      ? new Set(scanClaudeDesktopCodeMetadata(defaultClaudeDesktopDirs()).keys())
+      : new Set<string>();
   const summaries: SessionSummary[] = [];
 
   for (const project of await readdirSafe(root)) {
@@ -35,8 +53,13 @@ export async function listClaudeSessions(options: ListSessionsOptions = {}): Pro
     const projectPath = join(root, project.name);
     for (const file of await readdirSafe(projectPath)) {
       if (!file.isFile() || !file.name.endsWith('.jsonl')) continue;
-      const summary = await readClaudeSummary(join(projectPath, file.name), project.name);
-      if (summary !== undefined) summaries.push(summary);
+      const filePath = join(projectPath, file.name);
+      const inspected = await readClaudeFileSummary(filePath, project.name);
+      if (inspected === undefined) continue;
+      if (isClaudeDesktopEntrypoint(inspected.entrypoint) || desktopClaimedIds.has(inspected.summary.sessionId)) {
+        continue;
+      }
+      summaries.push(inspected.summary);
     }
   }
   return finalizeSessionList(summaries, options.limit);
@@ -46,6 +69,7 @@ interface ClaudeHeadMeta {
   customTitle?: string;
   summary?: string;
   agentName?: string;
+  entrypoint?: string;
   cwd?: string;
   firstTimestamp?: string;
   firstUserText?: string;
@@ -53,7 +77,11 @@ interface ClaudeHeadMeta {
   hasConversation?: boolean;
 }
 
-async function readClaudeSummary(filePath: string, slug: string): Promise<SessionSummary | undefined> {
+export async function readClaudeFileSummary(
+  filePath: string,
+  slug: string,
+  options: ReadClaudeFileSummaryOptions = {},
+): Promise<ClaudeInspectedSummary | undefined> {
   const info = await stat(filePath).catch(() => undefined);
   if (info === undefined || !info.isFile()) return undefined;
   const sessionId = basename(filePath).replace(/\.jsonl$/u, '');
@@ -72,17 +100,22 @@ async function readClaudeSummary(filePath: string, slug: string): Promise<Sessio
     if (tail.length > 0) tailMeta = extractHeadMeta(parseJsonLines(tail));
   }
 
+  if (headMeta.hasConversation !== true && tailMeta?.hasConversation !== true) return undefined;
+  const agent = options.agent ?? 'claude-code';
   const summary: SessionSummary = {
-    agent: 'claude-code',
+    agent,
     sessionId,
     nativePath: filePath,
-    resumeHint: 'claude --resume ' + sessionId,
   };
-  if (headMeta.hasConversation !== true && tailMeta?.hasConversation !== true) return undefined;
+  const resumeHint = options.resumeHint ?? (agent === 'claude-code' ? 'claude --resume ' + sessionId : undefined);
+  if (resumeHint !== undefined) summary.resumeHint = resumeHint;
+
   // 重命名后的 custom-title / summary 追加在尾部，尾优先
+  const customTitle = tailMeta?.customTitle ?? headMeta.customTitle;
+  const summaryTitle = tailMeta?.summary ?? headMeta.summary;
   const title =
-    tailMeta?.customTitle ?? headMeta.customTitle ??
-    tailMeta?.summary ?? headMeta.summary ??
+    customTitle ??
+    summaryTitle ??
     tailMeta?.agentName ?? headMeta.agentName ??
     headMeta.firstUserText ?? tailMeta?.firstUserText;
   if (title !== undefined) summary.title = title;
@@ -91,7 +124,14 @@ async function readClaudeSummary(filePath: string, slug: string): Promise<Sessio
   const createdAt = headMeta.firstTimestamp;
   if (createdAt !== undefined) summary.createdAt = createdAt;
   summary.updatedAt = info.mtime.toISOString();
-  return summary;
+
+  const entrypoint = headMeta.entrypoint ?? tailMeta?.entrypoint;
+  return {
+    summary,
+    ...(entrypoint !== undefined ? { entrypoint } : {}),
+    ...(customTitle !== undefined ? { customTitle } : {}),
+    ...(summaryTitle !== undefined ? { summaryTitle } : {}),
+  };
 }
 
 function extractHeadMeta(lines: Array<Record<string, unknown>>): ClaudeHeadMeta {
@@ -109,6 +149,8 @@ function extractHeadMeta(lines: Array<Record<string, unknown>>): ClaudeHeadMeta 
       const name = textOf(line.agentName);
       if (name !== undefined && meta.agentName === undefined) meta.agentName = name;
     }
+    const entrypoint = textOf(line.entrypoint);
+    if (entrypoint !== undefined && meta.entrypoint === undefined) meta.entrypoint = entrypoint;
     const cwd = textOf(line.cwd);
     if (cwd !== undefined && cwd.startsWith('/') && meta.cwd === undefined) meta.cwd = cwd;
     // createdAt 取最早 timestamp；updatedAt 统一用 mtime

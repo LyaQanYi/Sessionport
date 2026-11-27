@@ -3,6 +3,7 @@ import type { AgentAdapter, AgentId } from '@sessionport/core';
 const LOADERS: Record<AgentId, () => Promise<AgentAdapter>> = {
   antigravity: async () => (await import('@sessionport/adapter-antigravity')).antigravityAdapter,
   'claude-code': async () => (await import('@sessionport/adapter-claude-code')).claudeCodeAdapter,
+  'claude-desktop': async () => (await import('@sessionport/adapter-claude-code')).claudeDesktopAdapter,
   codex: async () => (await import('@sessionport/adapter-codex')).codexAdapter,
   'command-code': async () => (await import('@sessionport/adapter-command-code')).commandCodeAdapter,
   cursor: async () => (await import('@sessionport/adapter-cursor')).cursorAdapter,
@@ -15,6 +16,7 @@ const LOADERS: Record<AgentId, () => Promise<AgentAdapter>> = {
 
 export const READABLE_AGENTS: readonly AgentId[] = [
   'claude-code',
+  'claude-desktop',
   'kimi-code',
   'command-code',
   'dsh',

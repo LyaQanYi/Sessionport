@@ -26,3 +26,21 @@ export {
 export { buildAssistantRow, buildUserRow, textBlock, toolResultBlock, toolUseBlock } from './rows.ts';
 export type { ClaudeRow, ClaudeUserRow, ClaudeAssistantRow, RowContext } from './rows.ts';
 export { claudeCodeAdapter } from './adapter.ts';
+export {
+  CLAUDE_DESKTOP_AGENT_ID,
+  CLAUDE_DESKTOP_DIR_ENV,
+  claudeDesktopAdapter,
+  claudeDesktopDirs,
+  defaultClaudeDesktopDirs,
+  detectClaudeDesktopDir,
+  isClaudeDesktopEntrypoint,
+  listClaudeDesktopSessions,
+  readClaudeDesktopSession,
+  scanClaudeDesktopCodeMetadata,
+  scanClaudeDesktopCoworkSessions,
+} from './desktop.ts';
+export type {
+  ClaudeDesktopSessionMeta,
+  ListClaudeDesktopOptions,
+  ReadClaudeDesktopOptions,
+} from './desktop.ts';

@@ -13,7 +13,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** 覆盖 Cursor 用户数据目录（默认按平台推断；测试/多 profile 用） */
@@ -244,4 +244,204 @@ export function workspaceIdentifierFor(workspaceId: string, cwd: string): Cursor
       scheme: 'file',
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// ~/.cursor（agent-transcripts / chats CLI 存储）
+// ---------------------------------------------------------------------------
+
+export interface CursorChatMeta {
+  cwd?: string;
+  createdAtMs?: number;
+  updatedAtMs?: number;
+}
+
+export interface CursorTranscriptFile {
+  composerId: string;
+  filePath: string;
+  projectSlug: string;
+  mtimeMs: number;
+  chatMeta?: CursorChatMeta;
+}
+
+/**
+ * 解析 Cursor ~/.cursor 根目录。
+ * 默认按 homedir()/.cursor；显式传 test temp home 时隔离到 <home>/.cursor（除非传的本身就是平台默认 UserData 目录）。
+ */
+export function cursorDotDir(explicitHome?: string): string {
+  const raw = explicitHome !== undefined && explicitHome.length > 0 ? explicitHome : process.env[CURSOR_HOME_ENV];
+  if (raw === undefined || raw.length === 0) return join(homedir(), '.cursor');
+  const expanded = expandHomePath(raw);
+  const abs = isAbsolute(expanded) ? expanded : resolve(expanded);
+  if (resolve(abs) === resolve(defaultCursorUserDataDir())) {
+    return join(homedir(), '.cursor');
+  }
+  return join(abs, '.cursor');
+}
+
+function readCursorChatsMetaMap(dotDir: string): Map<string, CursorChatMeta> {
+  const map = new Map<string, CursorChatMeta>();
+  const chatsRoot = join(dotDir, 'chats');
+  if (!existsSync(chatsRoot)) return map;
+  let hashes: string[];
+  try {
+    hashes = readdirSync(chatsRoot);
+  } catch {
+    return map;
+  }
+  for (const hashDir of hashes) {
+    const hashPath = join(chatsRoot, hashDir);
+    let sessions: string[];
+    try {
+      sessions = readdirSync(hashPath);
+    } catch {
+      continue;
+    }
+    for (const sid of sessions) {
+      const metaPath = join(hashPath, sid, 'meta.json');
+      if (!existsSync(metaPath)) continue;
+      try {
+        const parsed = JSON.parse(readFileSync(metaPath, 'utf8')) as Record<string, unknown>;
+        const meta: CursorChatMeta = {};
+        if (typeof parsed.cwd === 'string' && parsed.cwd.length > 0) meta.cwd = parsed.cwd;
+        if (typeof parsed.createdAtMs === 'number' && Number.isFinite(parsed.createdAtMs)) meta.createdAtMs = parsed.createdAtMs;
+        if (typeof parsed.updatedAtMs === 'number' && Number.isFinite(parsed.updatedAtMs)) meta.updatedAtMs = parsed.updatedAtMs;
+        map.set(sid, meta);
+      } catch {
+        // 坏 meta.json 跳过
+      }
+    }
+  }
+  return map;
+}
+
+/** 扫描 ~/.cursor/projects/<slug>/agent-transcripts 下所有根会话 JSONL（排除 subagents） */
+export function listCursorAgentTranscripts(dotDir: string): CursorTranscriptFile[] {
+  const projectsRoot = join(dotDir, 'projects');
+  if (!existsSync(projectsRoot)) return [];
+  const chatMetaMap = readCursorChatsMetaMap(dotDir);
+  const byId = new Map<string, CursorTranscriptFile>();
+
+  let slugs: string[];
+  try {
+    slugs = readdirSync(projectsRoot);
+  } catch {
+    return [];
+  }
+
+  for (const projectSlug of slugs) {
+    if (projectSlug.startsWith('.')) continue;
+    const atDir = join(projectsRoot, projectSlug, 'agent-transcripts');
+    if (!existsSync(atDir)) continue;
+    let entries;
+    try {
+      entries = readdirSync(atDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      let composerId: string | undefined;
+      let filePath: string | undefined;
+      if (entry.isDirectory()) {
+        const candidate = join(atDir, entry.name, entry.name + '.jsonl');
+        if (existsSync(candidate)) {
+          composerId = entry.name;
+          filePath = candidate;
+        }
+      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        composerId = entry.name.slice(0, -'.jsonl'.length);
+        filePath = join(atDir, entry.name);
+      }
+      if (composerId === undefined || filePath === undefined) continue;
+      let mtimeMs = 0;
+      try {
+        mtimeMs = statSync(filePath).mtimeMs;
+      } catch {
+        continue;
+      }
+      const existing = byId.get(composerId);
+      if (existing !== undefined && existing.mtimeMs >= mtimeMs) continue;
+      const chatMeta = chatMetaMap.get(composerId);
+      byId.set(composerId, {
+        composerId,
+        filePath,
+        projectSlug,
+        mtimeMs,
+        ...(chatMeta !== undefined ? { chatMeta } : {}),
+      });
+    }
+  }
+
+  return [...byId.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+export function findCursorAgentTranscript(dotDir: string, idOrPrefix: string): CursorTranscriptFile | undefined {
+  const list = listCursorAgentTranscripts(dotDir);
+  return list.find((item) => item.composerId === idOrPrefix) ?? list.find((item) => item.composerId.startsWith(idOrPrefix));
+}
+
+/** 列举同目录下的 subagents/*.jsonl */
+export function listCursorTranscriptSubagents(transcriptPath: string): string[] {
+  const subDir = join(dirname(transcriptPath), 'subagents');
+  if (!existsSync(subDir)) return [];
+  try {
+    return readdirSync(subDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
+      .map((entry) => join(subDir, entry.name))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** 尽量在本地文件系统上把 Cursor project slug（如 Users-me-Documents-Open-App）还原成真实存在的 cwd */
+export function cwdFromCursorProjectSlug(slug: string): string | undefined {
+  if (!slug || /^\d+$/.test(slug)) return undefined;
+  const parts = slug.split('-').filter((p) => p.length > 0);
+  if (parts.length === 0) return undefined;
+
+  const toSlugToken = (name: string): string =>
+    name.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+
+  let current = '/';
+  let idx = 0;
+  // 若首段并非根目录真实子项（如 private-var-... 中的 var），尝试直接作为顶级判断
+  while (idx < parts.length) {
+    let entries: string[];
+    try {
+      entries = readdirSync(current);
+    } catch {
+      return undefined;
+    }
+    const candidates: Array<{ next: string; consume: number }> = [];
+    for (const entry of entries) {
+      const tok = toSlugToken(entry);
+      if (!tok) continue;
+      const tokParts = tok.split('-');
+      if (idx + tokParts.length > parts.length) continue;
+      let match = true;
+      for (let k = 0; k < tokParts.length; k += 1) {
+        if (parts[idx + k]!.toLowerCase() !== tokParts[k]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        candidates.push({ next: join(current, entry), consume: tokParts.length });
+      }
+    }
+    if (candidates.length === 0) {
+      // macOS 上 var/folders... 实际在 /private/var/...
+      if (current === '/' && parts[0]?.toLowerCase() === 'var' && existsSync('/private/var')) {
+        current = '/private';
+        continue;
+      }
+      return undefined;
+    }
+    // 优先消费更多段（匹配带连字符/空格的目录名）
+    candidates.sort((a, b) => b.consume - a.consume);
+    current = candidates[0]!.next;
+    idx += candidates[0]!.consume;
+  }
+  return existsSync(current) ? current : undefined;
 }

@@ -8,6 +8,7 @@ import { AgentGlyph, agentLabel } from './agents.tsx';
 import { CommandPalette } from './CommandPalette.tsx';
 import { nextTheme } from './commandPalette.ts';
 import { HOME_TO_AGENT, useAgentPreferences } from './preferences.ts';
+import { countRootSessionsByAgent, filterRootSessions } from './sessionTree.ts';
 import { useT } from './i18n/I18nProvider.tsx';
 import { Kbd, WindowChromeProvider, cn } from './ui.tsx';
 import { SessionsPage } from './pages/SessionsPage.tsx';
@@ -78,11 +79,9 @@ export function App() {
   }, [pathsQuery.data]);
 
   const prefs = useAgentPreferences(detected);
-  const counts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const row of sessionsQuery.data?.sessions ?? []) map.set(row.agent, (map.get(row.agent) ?? 0) + 1);
-    return map;
-  }, [sessionsQuery.data]);
+  const allSessions = sessionsQuery.data?.sessions ?? [];
+  const rootSessions = useMemo(() => filterRootSessions(allSessions), [allSessions]);
+  const counts = useMemo(() => countRootSessionsByAgent(allSessions), [allSessions]);
 
   const themeIcon = useMemo(() => {
     if (theme === 'light') return <Sun className="h-3.5 w-3.5" />;
@@ -305,7 +304,7 @@ export function App() {
 
         {paletteOpen ? (
           <CommandPalette
-            sessions={sessionsQuery.data?.sessions}
+            sessions={rootSessions}
             loading={sessionsQuery.isLoading}
             theme={theme}
             onClose={() => setPaletteOpen(false)}

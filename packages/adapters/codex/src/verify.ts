@@ -1,10 +1,8 @@
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 
-import type { CodexLine } from './wire.ts';
-import { codexHome, parseRollout, sessionIdFromRolloutPath } from './wire.ts';
+import { codexHome, parseRollout, readRolloutText, sessionIdFromRolloutPath } from './wire.ts';
 
 export interface VerifyCheck {
   name: string;
@@ -44,7 +42,7 @@ export async function verifyCodexSession(options: VerifyCodexOptions): Promise<V
   checks.push({ name: 'file-exists', ok: exists, detail: filePath });
   if (!exists) return { ok: false, filePath, lines: 0, checks };
 
-  const text = readFileSync(filePath, 'utf8');
+  const text = readRolloutText(filePath);
   const parsed = parseRollout(text);
   checks.push({ name: 'jsonl-parses', ok: parsed.badLines === 0, detail: parsed.badLines + ' 行无法解析' });
   checks.push({ name: 'has-content', ok: parsed.lines.length > 0, detail: parsed.lines.length + ' 行' });
@@ -125,7 +123,7 @@ export async function verifyCodexSession(options: VerifyCodexOptions): Promise<V
 /** 计数：供 sync 判断目标端是否被续写 */
 export async function countCodexTarget(filePath: string): Promise<{ exists: boolean; units: number }> {
   try {
-    const parsed = parseRollout(readFileSync(filePath, 'utf8'));
+    const parsed = parseRollout(readRolloutText(filePath));
     return { exists: true, units: parsed.lines.length };
   } catch {
     return { exists: false, units: 0 };

@@ -10,6 +10,7 @@
  * 读取容错：缺 header/缺 composerData/坏 JSON/空占位气泡都会记 notices，不中断整个会话。
  */
 import { existsSync } from 'node:fs';
+import { basename } from 'node:path';
 
 import { IR_VERSION, finalizeSessionList } from '@sessionport/core';
 import type {
@@ -28,12 +29,16 @@ import type {
 } from '@sessionport/core';
 
 import {
+  cursorDotDir,
+  cwdFromCursorProjectSlug,
   expandHomePath,
+  findCursorAgentTranscript,
   fsPathFromWorkspaceIdentifier,
+  listCursorAgentTranscripts,
   listCursorWorkspaces,
   resolveCursorPaths,
 } from './paths.ts';
-import type { CursorPaths } from './paths.ts';
+import type { CursorPaths, CursorTranscriptFile } from './paths.ts';
 import {
   BUBBLE_TYPE_AI,
   BUBBLE_TYPE_HUMAN,
@@ -42,6 +47,7 @@ import {
   bubbleThinkingText,
   closeCursorDb,
   detectCursorVersion,
+  hasCursorDbContent,
   headerRecordFromRow,
   isRecord,
   isUuid,
@@ -65,6 +71,7 @@ import type {
 } from './wire.ts';
 import { isCursorPrecomputedDiff, precomputedDiffToUnifiedDiff } from './diff.ts';
 import { cursorToolName } from './toolformer.ts';
+import { inspectCursorTranscript, readCursorTranscriptSession } from './transcript.ts';
 
 /** core 的 AgentId 目前还没有 'cursor'（集成时由 core 补），这里做一次集中断言 */
 export const CURSOR_AGENT_ID = 'cursor' as unknown as AgentId;
@@ -168,50 +175,153 @@ function matchComposerId(db: ReturnType<typeof openCursorDb>, wanted: string): s
 // 列表
 // ---------------------------------------------------------------------------
 
-export async function listCursorSessions(options: ListSessionsOptions | string = {}): Promise<CursorSessionSummary[]> {
-  const home = typeof options === 'string' ? expandHomePath(options) : undefined;
-  const { home: resolvedHome, dbPath } = resolveCursorPaths({
-    home: home ?? (typeof options === 'string' ? undefined : options.home),
-  });
-  const limit = typeof options === 'string' ? undefined : options.limit;
-  if (!existsSync(dbPath)) return [];
+function buildCursorListSummary(
+  db: ReturnType<typeof openCursorDb>,
+  row: CursorHeaderRow,
+  dbPath: string,
+  workspaces: Map<string, ReturnType<typeof listCursorWorkspaces>[number]>,
+  transcriptMap: Map<string, CursorTranscriptFile>,
+  isSubagentRow: boolean,
+): CursorSessionSummary | undefined {
+  const hasDb = hasCursorDbContent(db, row.composerId);
+  const transcript = transcriptMap.get(row.composerId);
+  const inspected = !hasDb && transcript !== undefined ? inspectCursorTranscript(transcript.filePath) : undefined;
+  // 过滤既没有 composerData 气泡又没有有效 agent-transcripts 的空草稿/幽灵行
+  if (!hasDb && (inspected === undefined || !inspected.hasConversation)) return undefined;
 
-  const db = openCursorDb(dbPath, { readOnly: true });
+  const header = headerRecordFromRow(row)?.header;
+  const subagentParent =
+    typeof header?.subagentInfo?.parentComposerId === 'string' && header.subagentInfo.parentComposerId.length > 0
+      ? header.subagentInfo.parentComposerId
+      : undefined;
+  if (isSubagentRow && subagentParent === undefined) return undefined;
+
+  const nativePath = hasDb ? dbPath : transcript!.filePath;
+  const summary: CursorSessionSummary = {
+    agent: CURSOR_AGENT_ID,
+    sessionId: row.composerId,
+    id: row.composerId,
+    nativePath,
+    path: nativePath,
+  };
+  const headerTitle = typeof header?.name === 'string' && header.name.trim().length > 0 ? header.name.trim() : undefined;
+  const subagentFallback =
+    isSubagentRow && typeof row.subagentTypeName === 'string' && row.subagentTypeName.trim().length > 0
+      ? row.subagentTypeName.trim()
+      : undefined;
+  const title = headerTitle ?? subagentFallback ?? inspected?.firstUserText;
+  if (title !== undefined) summary.title = title;
+
+  const cwd =
+    fsPathFromWorkspaceIdentifier(header?.workspaceIdentifier) ??
+    (row.workspaceId !== null ? workspaces.get(row.workspaceId)?.cwd : undefined) ??
+    transcript?.chatMeta?.cwd ??
+    (transcript !== undefined ? cwdFromCursorProjectSlug(transcript.projectSlug) : undefined);
+  if (cwd !== undefined) summary.cwd = cwd;
+
+  const createdAt = msToIso(row.createdAt ?? header?.createdAt ?? transcript?.chatMeta?.createdAtMs);
+  if (createdAt !== undefined) summary.createdAt = createdAt;
+  const updatedAt =
+    msToIso(row.lastUpdatedAt ?? row.recency ?? header?.lastUpdatedAt ?? transcript?.chatMeta?.updatedAtMs) ??
+    (transcript !== undefined ? new Date(transcript.mtimeMs).toISOString() : undefined);
+  if (updatedAt !== undefined) summary.updatedAt = updatedAt;
+
+  if (row.isArchived === 1 || header?.isArchived === true) summary.archived = true;
+  if (subagentParent !== undefined) summary.parentSessionId = subagentParent;
+  return summary;
+}
+
+export async function listCursorSessions(options: ListSessionsOptions | string = {}): Promise<CursorSessionSummary[]> {
+  const explicitHome = typeof options === 'string' ? expandHomePath(options) : options.home;
+  const { home: resolvedHome, dbPath } = resolveCursorPaths({ home: explicitHome });
+  const dotDir = cursorDotDir(explicitHome);
+  const limit = typeof options === 'string' ? undefined : options.limit;
+  const includeChildren = typeof options === 'string' ? false : options.includeChildren === true;
+
+  const transcripts = listCursorAgentTranscripts(dotDir);
+  const transcriptMap = new Map<string, CursorTranscriptFile>(transcripts.map((item) => [item.composerId, item]));
+  const hasDbFile = existsSync(dbPath);
+  if (!hasDbFile && transcripts.length === 0) return [];
+
+  const summaries: CursorSessionSummary[] = [];
+  const includedIds = new Set<string>();
+  const seenIds = new Set<string>();
+  const subagentIds = new Set<string>();
+  let allHeaders: CursorHeaderRow[] = [];
+  let workspaces = new Map<string, ReturnType<typeof listCursorWorkspaces>[number]>();
+
+  const db = hasDbFile ? openCursorDb(dbPath, { readOnly: true }) : undefined;
   try {
-    const rows = readHeaderRows(db, { includeSubagents: false });
-    const workspaces = new Map(listCursorWorkspaces(resolvedHome).map((info) => [info.workspaceId, info]));
-    const summaries: CursorSessionSummary[] = [];
-    for (const row of rows) {
-      const header = headerRecordFromRow(row)?.header;
+    if (db !== undefined) {
+      allHeaders = readHeaderRows(db, { includeSubagents: true });
+      for (const r of allHeaders) {
+        if (r.isSubagent === 1) subagentIds.add(r.composerId);
+      }
+      const rows = readHeaderRows(db, { includeSubagents: false });
+      workspaces = new Map(listCursorWorkspaces(resolvedHome).map((info) => [info.workspaceId, info]));
+
+      for (const row of rows) {
+        seenIds.add(row.composerId);
+        const summary = buildCursorListSummary(db, row, dbPath, workspaces, transcriptMap, false);
+        if (summary === undefined) continue;
+        summaries.push(summary);
+        includedIds.add(summary.sessionId);
+      }
+    }
+
+    for (const transcript of transcripts) {
+      if (seenIds.has(transcript.composerId) || subagentIds.has(transcript.composerId)) continue;
+      const inspected = inspectCursorTranscript(transcript.filePath);
+      if (!inspected.hasConversation) continue;
       const summary: CursorSessionSummary = {
         agent: CURSOR_AGENT_ID,
-        sessionId: row.composerId,
-        id: row.composerId,
-        nativePath: dbPath,
-        path: dbPath,
+        sessionId: transcript.composerId,
+        id: transcript.composerId,
+        nativePath: transcript.filePath,
+        path: transcript.filePath,
       };
-      const title = typeof header?.name === 'string' && header.name.trim().length > 0 ? header.name.trim() : undefined;
-      if (title !== undefined) summary.title = title;
-      const cwd =
-        fsPathFromWorkspaceIdentifier(header?.workspaceIdentifier) ??
-        (row.workspaceId !== null ? workspaces.get(row.workspaceId)?.cwd : undefined);
+      if (inspected.firstUserText !== undefined) summary.title = inspected.firstUserText;
+      const cwd = transcript.chatMeta?.cwd ?? cwdFromCursorProjectSlug(transcript.projectSlug);
       if (cwd !== undefined) summary.cwd = cwd;
-      const createdAt = msToIso(row.createdAt ?? header?.createdAt);
+      const createdAt = msToIso(transcript.chatMeta?.createdAtMs);
       if (createdAt !== undefined) summary.createdAt = createdAt;
-      const updatedAt = msToIso(row.lastUpdatedAt ?? row.recency ?? header?.lastUpdatedAt);
-      if (updatedAt !== undefined) summary.updatedAt = updatedAt;
-      if (row.isArchived === 1 || header?.isArchived === true) summary.archived = true;
-      const subagentParent =
-        typeof header?.subagentInfo?.parentComposerId === 'string' && header.subagentInfo.parentComposerId.length > 0
-          ? header.subagentInfo.parentComposerId
-          : undefined;
-      if (subagentParent !== undefined) summary.parentSessionId = subagentParent;
+      const updatedAt = msToIso(transcript.chatMeta?.updatedAtMs) ?? new Date(transcript.mtimeMs).toISOString();
+      summary.updatedAt = updatedAt;
       summaries.push(summary);
+      includedIds.add(summary.sessionId);
     }
-    return finalizeSessionList(summaries, limit) as CursorSessionSummary[];
+
+    if (includeChildren && db !== undefined) {
+      const candidates: CursorSessionSummary[] = [];
+      for (const row of allHeaders) {
+        if (row.isSubagent !== 1 || seenIds.has(row.composerId)) continue;
+        seenIds.add(row.composerId);
+        const candidate = buildCursorListSummary(db, row, dbPath, workspaces, transcriptMap, true);
+        if (candidate !== undefined) candidates.push(candidate);
+      }
+      // 仅挂载父链能连回已有会话的子代理，避免已清理父会话产生孤儿卡片
+      let progress = true;
+      let pending = candidates;
+      while (progress && pending.length > 0) {
+        progress = false;
+        const nextPending: CursorSessionSummary[] = [];
+        for (const child of pending) {
+          if (child.parentSessionId !== undefined && includedIds.has(child.parentSessionId)) {
+            summaries.push(child);
+            includedIds.add(child.sessionId);
+            progress = true;
+          } else {
+            nextPending.push(child);
+          }
+        }
+        pending = nextPending;
+      }
+    }
   } finally {
-    closeCursorDb(db);
+    if (db !== undefined) closeCursorDb(db);
   }
+
+  return finalizeSessionList(summaries, limit) as CursorSessionSummary[];
 }
 
 // ---------------------------------------------------------------------------
@@ -225,10 +335,87 @@ interface LoadedComposer {
   row?: CursorHeaderRow;
 }
 
+function transcriptHintsFromRow(
+  row: CursorHeaderRow | undefined,
+  home: string,
+  transcript: CursorTranscriptFile | undefined,
+  options: ReadCursorOptions,
+): Parameters<typeof readCursorTranscriptSession>[1] {
+  const header = row === undefined ? undefined : headerRecordFromRow(row)?.header;
+  const headerTitle = typeof header?.name === 'string' && header.name.trim().length > 0 ? header.name.trim() : undefined;
+  const workspaces = row?.workspaceId ? new Map(listCursorWorkspaces(home).map((w) => [w.workspaceId, w])) : undefined;
+  const cwd =
+    fsPathFromWorkspaceIdentifier(header?.workspaceIdentifier) ??
+    (row?.workspaceId != null ? workspaces?.get(row.workspaceId)?.cwd : undefined) ??
+    transcript?.chatMeta?.cwd ??
+    (transcript !== undefined ? cwdFromCursorProjectSlug(transcript.projectSlug) : undefined);
+  const createdAt = msToIso(row?.createdAt ?? header?.createdAt ?? transcript?.chatMeta?.createdAtMs);
+  const updatedAt =
+    msToIso(row?.lastUpdatedAt ?? row?.recency ?? header?.lastUpdatedAt ?? transcript?.chatMeta?.updatedAtMs) ??
+    (transcript !== undefined ? new Date(transcript.mtimeMs).toISOString() : undefined);
+  const archived = row?.isArchived === 1 || header?.isArchived === true;
+  return {
+    composerId: row?.composerId ?? transcript?.composerId,
+    title: options.title ?? headerTitle,
+    cwd,
+    createdAt,
+    updatedAt,
+    archived,
+    includeChildren: options.includeChildren,
+  };
+}
+
 export async function readCursorSession(input: string, options: ReadCursorOptions = {}): Promise<IrBundle> {
-  const target = resolveCursorSessionTarget(input, options);
+  const trimmed = input.trim();
+  const dotDir = cursorDotDir(options.home);
+  const expandedInput = expandHomePath(trimmed);
+
+  // 直接传 agent-transcripts/*.jsonl 路径读取
+  if (expandedInput.endsWith('.jsonl') && existsSync(expandedInput)) {
+    const composerId = basename(expandedInput, '.jsonl');
+    const transcript = findCursorAgentTranscript(dotDir, composerId);
+    const { home, dbPath } = resolveCursorPaths(options);
+    let row: CursorHeaderRow | undefined;
+    if (existsSync(dbPath)) {
+      const db = openCursorDb(dbPath, { readOnly: true });
+      try {
+        row = readHeaderRow(db, composerId);
+      } finally {
+        closeCursorDb(db);
+      }
+    }
+    return readCursorTranscriptSession(expandedInput, transcriptHintsFromRow(row, home, transcript, options));
+  }
+
+  let target: CursorSessionTarget;
+  try {
+    target = resolveCursorSessionTarget(input, options);
+  } catch (err) {
+    // 只有未显式指定缺失的 dbPath 时，才允许回落到 ~/.cursor agent-transcripts（如 CLI 会话）
+    if (options.dbPath === undefined && !trimmed.includes('#') && trimmed !== 'last') {
+      const transcript = findCursorAgentTranscript(dotDir, trimmed);
+      if (transcript !== undefined) {
+        return readCursorTranscriptSession(
+          transcript.filePath,
+          transcriptHintsFromRow(undefined, resolveCursorPaths(options).home, transcript, options),
+        );
+      }
+    }
+    throw err;
+  }
+
   const db = openCursorDb(target.dbPath, { readOnly: true });
   try {
+    if (!hasCursorDbContent(db, target.composerId)) {
+      const transcript = findCursorAgentTranscript(dotDir, target.composerId);
+      if (transcript !== undefined) {
+        const row = readHeaderRow(db, target.composerId);
+        return readCursorTranscriptSession(
+          transcript.filePath,
+          transcriptHintsFromRow(row, target.home, transcript, options),
+        );
+      }
+    }
     const loaded = loadComposerSession(db, target.composerId, target.home, target.dbPath, options);
     const children: IrChildSession[] = [];
     if (options.includeChildren !== false) {

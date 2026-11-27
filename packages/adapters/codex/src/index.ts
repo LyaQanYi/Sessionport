@@ -8,14 +8,23 @@ export { verifyCodexSession, countCodexTarget, codexDisplayName, resumeSmokeCode
 export type { CodexResumeSmokeOptions, CodexResumeSmokeResult } from './verify.ts';
 export type { VerifyCheck, VerifyCodexReport, VerifyCodexOptions } from './verify.ts';
 export {
+  archivedSessionsRoot,
+  classifyCodexThread,
   codexHome,
   codexRolloutPath,
+  decompressZstd,
+  isPaginatedSegmentPath,
+  isRolloutFilename,
   listRolloutFiles,
   parseRollout,
   readRollout,
+  readRolloutHead,
+  readRolloutText,
   readSessionIndex,
+  readStateThreads,
   rolloutTimestamp,
+  rolloutTimestampFromPath,
   sessionIdFromRolloutPath,
 } from './wire.ts';
-export type { CodexLine, CodexSessionMeta, CodexIndexEntry } from './wire.ts';
+export type { CodexLine, CodexSessionMeta, CodexIndexEntry, CodexStateThreadRow, CodexThreadClassification } from './wire.ts';
 export { codexAdapter } from './adapter.ts';

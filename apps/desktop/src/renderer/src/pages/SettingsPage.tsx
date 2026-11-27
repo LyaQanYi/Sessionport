@@ -12,6 +12,7 @@ import { Badge, Button, SettingsBlock, SettingsCard, SettingsRow, SegmentedContr
 const AGENT_FOR_HOME: Record<string, string> = {
   kimi: 'kimi-code',
   claude: 'claude-code',
+  claudeDesktop: 'claude-desktop',
   commandCode: 'command-code',
   dsh: 'dsh',
   codex: 'codex',

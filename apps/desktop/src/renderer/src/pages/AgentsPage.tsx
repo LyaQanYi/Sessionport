@@ -4,6 +4,7 @@ import { AlertTriangle, Blocks, Check, Eye, EyeOff, FolderOpen, MessageSquare, R
 import { api } from '../api.ts';
 import { AgentGlyph, AGENT_META, agentLabel } from '../agents.tsx';
 import type { AgentPreferences } from '../preferences.ts';
+import { countRootSessionsByAgent } from '../sessionTree.ts';
 import { useT } from '../i18n/I18nProvider.tsx';
 import { Badge, Button, EmptyState, Spinner, Topbar, cn } from '../ui.tsx';
 
@@ -13,6 +14,7 @@ const RESUME_SMOKE_AGENTS = new Set(['claude-code', 'codex', 'command-code', 'ds
 const HOME_KEY: Record<string, string> = {
   'kimi-code': 'kimi',
   'claude-code': 'claude',
+  'claude-desktop': 'claudeDesktop',
   'command-code': 'commandCode',
   dsh: 'dsh',
   codex: 'codex',
@@ -39,8 +41,7 @@ export function AgentsPage(props: { onOpenAgent: (agent: string) => void; prefs:
   const pathsQuery = useQuery({ queryKey: ['paths'], queryFn: api.paths });
 
   const sessions = sessionsQuery.data?.sessions ?? [];
-  const counts = new Map<string, number>();
-  for (const row of sessions) counts.set(row.agent, (counts.get(row.agent) ?? 0) + 1);
+  const counts = countRootSessionsByAgent(sessions);
   const readable = new Set<string>(capsQuery.data?.readable ?? []);
   const writable = new Set<string>(capsQuery.data?.writable ?? []);
   const antigravityApiAvailable = Boolean(capsQuery.data?.antigravityApiAvailable);
