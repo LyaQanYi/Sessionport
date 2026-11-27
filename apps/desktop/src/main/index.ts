@@ -14,7 +14,7 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 600,
     show: !smoke,
-    title: 'sessionport',
+    title: 'Sessionport',
     backgroundColor: '#0b0c0f',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {

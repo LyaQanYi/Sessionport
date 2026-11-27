@@ -155,7 +155,7 @@ export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: Th
 
           <SettingsBlock title={t('settings.about')}>
             <SettingsCard>
-              <SettingsRow label="sessionport desktop" description={t('settings.about.desc')}>
+              <SettingsRow label="Sessionport Desktop" description={t('settings.about.desc')}>
                 <Badge variant="outline">v{paths?.version ?? '0.0.0'}</Badge>
               </SettingsRow>
               <SettingsRow label={t('settings.about.runtime')} description={'Electron ' + (paths?.electron ?? '—') + ' · ' + (window.sessionport?.platform ?? '—')}>

@@ -1,4 +1,4 @@
-# sessionport
+# Sessionport
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -18,7 +18,7 @@ Not a pasted transcript, not a summarized context blob: a native session the tar
 ## Why
 
 Every agent CLI keeps its conversation history in a private format. Switching tools means losing the thread.
-Existing tools either translate one direction, or re-feed a summarized context blob. sessionport does neither:
+Existing tools either translate one direction, or re-feed a summarized context blob. Sessionport does neither:
 
 - **IR**: a normalized append-only event stream (`message` / `reasoning` / `tool_call` / `tool_result` / `boundary`), chained by `parentId`.
 - **Adapters**: one per agent, responsible only for `native -> IR` and `IR -> native`.
@@ -44,7 +44,7 @@ Requires Node >= 22.18 (TypeScript runs directly via built-in type stripping; no
 
 ```bash
 # from a checkout (development / hacking on adapters):
-git clone https://github.com/LyaQanYi/Sessionport && cd sessionport
+git clone https://github.com/LyaQanYi/Sessionport && cd Sessionport
 pnpm install
 
 # 1. What is in this session?
@@ -186,7 +186,7 @@ sessionport import --into zcode claude:<id>     [--open] [--verify]
 sessionport import --into qoder workbuddy:<id>  [--open] [--verify]
 ```
 
-| Pair | Official path | sessionport role |
+| Pair | Official path | Sessionport role |
 |---|---|---|
 | Claude Code → ZCode | ZCode onboarding / Settings → migrate sessions (scans `~/.claude/projects`) | ensure the Claude transcript exists, guide, verify against `tasks-index.sqlite` |
 | WorkBuddy → Qoder | Qoder Settings → Data import → WorkBuddy | confirm the source store, guide, verify against `~/.qoder-cn/projects` |
@@ -288,7 +288,7 @@ SESSIONPORT_OPENCODE_RESUME=1 SESSIONPORT_OPENCODE_MODEL=opencode-go/glm-5.2 pnp
 Adapter contributions must include golden fixtures with the CLI version they were verified against —
 see [CONTRIBUTING.md](./CONTRIBUTING.md). Please report vulnerabilities per [SECURITY.md](./SECURITY.md).
 
-Session logs contain prompts, code, and sometimes secrets: sessionport is local-first with zero telemetry.
+Session logs contain prompts, code, and sometimes secrets: Sessionport is local-first with zero telemetry.
 
 ## License
 

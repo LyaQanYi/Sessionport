@@ -1,4 +1,4 @@
-# sessionport
+# Sessionport
 
 [English](README.md) | **简体中文**
 
@@ -18,7 +18,7 @@
 ## 为什么
 
 每家 agent CLI 都把对话历史存在自己的私有格式里。换工具就意味着丢掉上下文。
-现有工具要么只做单向翻译，要么把摘要重新灌进去。sessionport 两者都不做：
+现有工具要么只做单向翻译，要么把摘要重新灌进去。Sessionport 两者都不做：
 
 - **IR**：归一化的追加式事件流（`message` / `reasoning` / `tool_call` / `tool_result` / `boundary`），用 `parentId` 串成链。
 - **适配器**：每家 agent 一个，只负责 `native -> IR` 和 `IR -> native`。
@@ -43,7 +43,7 @@ sesport inspect "kimi:./session_.../"
 
 ```bash
 # 从仓库源码使用（开发 / 改适配器）：
-git clone https://github.com/LyaQanYi/Sessionport && cd sessionport
+git clone https://github.com/LyaQanYi/Sessionport && cd Sessionport
 pnpm install
 
 # 1. 这个会话里有什么？
@@ -159,7 +159,7 @@ sessionport import --into zcode claude:<id>     [--open] [--verify]
 sessionport import --into qoder workbuddy:<id>  [--open] [--verify]
 ```
 
-| 组合 | 官方路径 | sessionport 的角色 |
+| 组合 | 官方路径 | Sessionport 的角色 |
 |---|---|---|
 | Claude Code → ZCode | ZCode 首次引导 / 设置 → 迁移会话（扫描 `~/.claude/projects`） | 确保 Claude transcript 存在、给出步骤、对着 `tasks-index.sqlite` 验证 |
 | WorkBuddy → Qoder | Qoder 设置 → 数据导入 → WorkBuddy | 确认源数据、给出步骤、对着 `~/.qoder-cn/projects` 验证 |
@@ -258,7 +258,7 @@ SESSIONPORT_OPENCODE_RESUME=1 SESSIONPORT_OPENCODE_MODEL=opencode-go/glm-5.2 pnp
 新增适配器必须附带基准 fixtures，并注明验证时使用的 CLI 版本——见 [CONTRIBUTING.zh-CN.md](./CONTRIBUTING.zh-CN.md)（[English](./CONTRIBUTING.md)）。
 漏洞请按 [SECURITY.zh-CN.md](./SECURITY.zh-CN.md)（[English](./SECURITY.md)）报告。
 
-会话日志包含 prompt、代码，有时还有密钥：sessionport 是本地优先、零遥测的。
+会话日志包含 prompt、代码，有时还有密钥：Sessionport 是本地优先、零遥测的。
 
 ## License
 

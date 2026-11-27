@@ -1,4 +1,4 @@
-# sessionport 交接说明（2026-11-21）
+# Sessionport 交接说明（2026-11-21）
 
 给接手者（Antigravity / 其他 agent）的完整上下文。读完这份 + `README.md` + `DESIGN.md` 就能继续干活。
 
@@ -6,7 +6,7 @@
 
 ## 1. 这个项目是什么
 
-**sessionport**（npm 包名 `sesport`，bins：`sesport` / `sesp` / `sessionport`）
+**Sessionport**（npm 包名 `sesport`，bins：`sesport` / `sesp` / `sessionport`）
 
 把**正在进行的 AI 编程对话**从一个 CLI/桌面工具迁移到另一个，并且能真的续上。
 不是"复制粘贴聊天记录"，也不是"摘要成一段 context"，而是写出**目标端自己能加载的原生会话**。

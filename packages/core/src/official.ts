@@ -37,7 +37,7 @@ export const OFFICIAL_IMPORTS: OfficialSupport[] = [
       '打开 ZCode',
       '首次引导里勾选「迁移会话数据」，或进入 设置 → 迁移会话数据',
       '选择「从 Claude Code 迁移历史会话数据」，勾选要导入的会话并开始',
-      '导回 sessionport 验证：import --into zcode --source <来源> --verify',
+      '导回 Sessionport 验证：import --into zcode --source <来源> --verify',
     ],
     notes: [
       'ZCode 内置 ClaudeNativeSessionImportRepo，扫描 ~/.claude/projects（以及 CLAUDE_CONFIG_DIR/HOME）',
@@ -55,7 +55,7 @@ export const OFFICIAL_IMPORTS: OfficialSupport[] = [
       '打开 Qoder → 设置 → 数据导入',
       '选择 WorkBuddy → 重新检测',
       '勾选要导入的会话（还可一并导入 MCP / 记忆）→ 开始导入',
-      '导回 sessionport 验证：import --into qoder --source <来源> --verify',
+      '导回 Sessionport 验证：import --into qoder --source <来源> --verify',
     ],
     notes: [
       'Qoder「设置 → 数据导入」原生支持从 WorkBuddy（以及其它来源）导入会话、MCP、记忆',

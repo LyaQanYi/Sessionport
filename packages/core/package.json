@@ -17,7 +17,7 @@
   "engines": {
     "node": ">=24"
   },
-  "description": "sessionport core: IR schema, loss collector, sync registry and session listing",
+  "description": "Sessionport core: IR schema, loss collector, sync registry and session listing",
   "repository": {
     "type": "git",
     "url": "https://github.com/LyaQanYi/Sessionport.git",
@@ -38,7 +38,7 @@
     "dsh"
   ],
   "author": {
-    "name": "sessionport contributors"
+    "name": "Sessionport contributors"
   },
   "files": [
     "src",

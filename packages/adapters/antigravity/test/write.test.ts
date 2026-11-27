@@ -279,7 +279,7 @@ test('配置 lsAddress + csrfToken 时自动查询 projectId 并调用 Conversat
     assert.equal(receivedBody.model, 'gemini-4-neon');
     assert.deepEqual(receivedBody.tags, ['sessionport', 'from:claude-code']);
     const promptArr = receivedBody.prompt as Array<{ text?: string }>;
-    assert.ok(promptArr[0]?.text?.includes('sessionport'));
+    assert.ok(promptArr[0]?.text?.includes('Sessionport'));
     assert.ok(promptArr[0]?.text?.includes(outcome.paths[0]!));
 
     assert.equal(outcome.targetId, 'conv-api-created-777');

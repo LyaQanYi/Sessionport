@@ -34,7 +34,7 @@ import { getAdapter, prefixTable, WRITE_TARGETS } from './adapters.ts';
 import { openTargetApp, planOfficialImport, officialSupport, verifyOfficialImport, type OfficialTarget } from './official.ts';
 
 const USAGE = [
-  'sessionport — 在 AI 编程 agent 之间搬运会话',
+  'Sessionport — 在 AI 编程 agent 之间搬运会话',
   '',
   '用法:',
   '  sessionport inspect <source>',

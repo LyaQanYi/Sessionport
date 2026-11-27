@@ -198,7 +198,7 @@ export function buildAntigravityHandoff(
     `- **Total Root Events**: ${root.events.length}` + (omittedEvents > 0 ? ` (${omittedEvents} earlier events omitted from inline excerpt)` : ''),
     `- **Lossless IR Archive**: \`${opts.irPath}\``,
     '',
-    '> Migrated via sessionport official context handoff. Antigravity renders this as a new starter conversation rather than native multi-turn history bubbles; use `read_file` on the IR archive above if you need omitted earlier steps.',
+    '> Migrated via Sessionport official context handoff. Antigravity renders this as a new starter conversation rather than native multi-turn history bubbles; use `read_file` on the IR archive above if you need omitted earlier steps.',
   ];
 
   if (cappedRequests.length > 0) {
@@ -226,7 +226,7 @@ export function buildAntigravityHandoff(
 
   const promptCap = Math.min(maxChars, 14000);
   const promptHeader = [
-    `Continue this coding session migrated by sessionport from \`${sourceAgent}\` (session \`${sourceId}\`).`,
+    `Continue this coding session migrated by Sessionport from \`${sourceAgent}\` (session \`${sourceId}\`).`,
     ...(opts.cwd ? [`Workspace: \`${opts.cwd}\``] : []),
     `Handoff file: \`${opts.mdPath}\``,
     `Full lossless IR JSON: \`${opts.irPath}\``,

@@ -1,11 +1,11 @@
-# sessionport · 设计与规划 v0.1
+# Sessionport · 设计与规划 v0.1
 
 > 内部规划文档（中文）。开源后 README / 代码 / API 文档用英文，本文档保留为设计档案。
 > 最后更新：2026-10-19
 
 ## 0. 一页摘要
 
-sessionport 是一个本地优先的开源 CLI，把 AI 编程 agent 之间的会话变成可移植资产：
+Sessionport 是一个本地优先的开源 CLI，把 AI 编程 agent 之间的会话变成可移植资产：
 在 A agent 里进行到一半的会话，一条命令变成 B agent 里可原生 `/resume` 的会话，继续跑。
 
 与现有工具的本质区别：不是"把上下文打包重喂"，而是 **IR 级无损往返**——
@@ -19,7 +19,7 @@ sessionport 是一个本地优先的开源 CLI，把 AI 编程 agent 之间的�
 | v1 核心场景 | 跨 agent 续聊（一次性迁移 + 目标端原生 resume） |
 | 首批 adapter | claude-code、codex、opencode、kimi-code |
 | LICENSE | Apache-2.0（含专利授权条款） |
-| 命名 | **sessionport** |
+| 命名 | **Sessionport** |
 | npm 发布名 | **`sesport`**（2026-10-22 确认：npm `sessionport` 已被同赛道项目 azizmass/sessionport 占用；bin 同时提供 `sesport` 与 `sessionport`） |
 | GitHub 仓库 | `LyaQanYi/Sessionport`（2026-10-21 创建；同名项目较多，因此 npm 用 `sesport`） |
 | 技术栈 | TypeScript（Node ≥ 24，直接执行 TS；sqlite 用内置 node:sqlite，暂不引入 better-sqlite3） |
