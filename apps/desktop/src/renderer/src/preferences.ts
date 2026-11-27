@@ -17,6 +17,11 @@ export const HOME_TO_AGENT: Record<string, string> = {
   antigravity: 'antigravity',
 };
 
+/** agent id → 本机数据目录 key */
+export const AGENT_TO_HOME: Record<string, string> = Object.fromEntries(
+  Object.entries(HOME_TO_AGENT).map(([homeKey, agent]) => [agent, homeKey]),
+);
+
 export const ALL_AGENTS = ['claude-code', 'claude-desktop', 'codex', 'command-code', 'dsh', 'opencode', 'kimi-code', 'cursor', 'qoder', 'workbuddy', 'antigravity'];
 
 function readStored(): string[] | null {

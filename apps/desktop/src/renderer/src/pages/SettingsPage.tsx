@@ -1,27 +1,13 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, FolderOpen, Info, Monitor, Moon, Settings2, Sun } from 'lucide-react';
+import { ChevronDown, FolderOpen, Info, Monitor, Moon, RefreshCw, Settings2, Sun } from 'lucide-react';
 
 import { api } from '../api.ts';
 import type { ThemeMode } from '../App.tsx';
 import { AgentGlyph, agentLabel } from '../agents.tsx';
 import { useT } from '../i18n/I18nProvider.tsx';
-import { ALL_AGENTS, type AgentPreferences } from '../preferences.ts';
+import { AGENT_TO_HOME, ALL_AGENTS, type AgentPreferences } from '../preferences.ts';
 import { Badge, Button, SettingsBlock, SettingsCard, SettingsRow, SegmentedControl, Spinner, Switch, Topbar, cn } from '../ui.tsx';
-
-const AGENT_FOR_HOME: Record<string, string> = {
-  kimi: 'kimi-code',
-  claude: 'claude-code',
-  claudeDesktop: 'claude-desktop',
-  commandCode: 'command-code',
-  dsh: 'dsh',
-  codex: 'codex',
-  opencode: 'opencode',
-  cursor: 'cursor',
-  qoder: 'qoder',
-  workbuddy: 'workbuddy',
-  antigravity: 'antigravity',
-};
 
 export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: ThemeMode) => void; prefs: AgentPreferences }) {
   const { t, preference, setPreference } = useT();
@@ -66,10 +52,27 @@ export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: Th
             </SettingsCard>
           </SettingsBlock>
 
-          <SettingsBlock title={t('settings.harness')} description={t('settings.harness.desc')}>
+          <SettingsBlock
+            title={t('settings.harness')}
+            description={t('settings.harness.desc')}
+            actions={
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={pathsQuery.isFetching}
+                onClick={() => void pathsQuery.refetch()}
+              >
+                <RefreshCw className={cn('h-3.5 w-3.5', pathsQuery.isFetching && 'animate-spin')} />
+                {t('common.redetect')}
+              </Button>
+            }
+          >
             <SettingsCard>
               {ALL_AGENTS.map((agent) => {
-                const detected = props.prefs.detected.includes(agent);
+                const homeKey = AGENT_TO_HOME[agent];
+                const home = homeKey ? paths?.homes?.[homeKey] : undefined;
+                const loadingHome = pathsQuery.isLoading && !home;
+                const detected = home ? home.exists : props.prefs.detected.includes(agent);
                 const enabled = props.prefs.enabled.includes(agent);
                 return (
                   <SettingsRow
@@ -80,9 +83,41 @@ export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: Th
                         {agentLabel(agent)}
                       </span>
                     }
-                    description={detected ? t('settings.harness.detected') : t('settings.harness.notDetected')}
+                    description={
+                      loadingHome ? (
+                        <span className="inline-flex items-center gap-1.5 text-fg-3">
+                          <Spinner className="h-3 w-3" />
+                          {t('common.detecting')}
+                        </span>
+                      ) : home ? (
+                        <span className="block truncate font-mono text-3xs" title={home.path}>
+                          {home.path}
+                        </span>
+                      ) : detected ? (
+                        t('settings.harness.detected')
+                      ) : (
+                        t('settings.harness.notDetected')
+                      )
+                    }
                   >
-                    {detected ? <Badge variant="success">{t('settings.harness.installed')}</Badge> : <Badge variant="outline">{t('settings.harness.notDetectedBadge')}</Badge>}
+                    {loadingHome ? null : detected ? (
+                      <Badge variant="success">{t('settings.paths.detected')}</Badge>
+                    ) : (
+                      <Badge variant="outline">{t('settings.harness.notDetectedBadge')}</Badge>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!homeKey || !home?.exists}
+                      title={home?.path}
+                      onClick={() => {
+                        if (homeKey) void api.openPath(homeKey).catch(() => undefined);
+                      }}
+                    >
+                      <FolderOpen className="h-3.5 w-3.5" />
+                      {t('settings.paths.open')}
+                    </Button>
+                    <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-border" />
                     <Switch
                       checked={enabled}
                       onChange={() => props.prefs.toggle(agent)}
@@ -96,47 +131,10 @@ export function SettingsPage(props: { theme: ThemeMode; onThemeChange: (mode: Th
                 label={t('settings.harness.policy')}
                 description={props.prefs.customized ? t('settings.harness.customized') : t('settings.harness.followDetected')}
               >
-                <Button variant="outline" size="sm" onClick={props.prefs.resetToDetected}>
+                <Button variant="outline" size="sm" disabled={!props.prefs.customized} onClick={props.prefs.resetToDetected}>
                   {t('settings.harness.reset')}
                 </Button>
               </SettingsRow>
-            </SettingsCard>
-          </SettingsBlock>
-
-          <SettingsBlock
-            title={t('settings.paths')}
-            description={t('settings.paths.desc')}
-            actions={
-              <Button variant="ghost" size="sm" onClick={() => void pathsQuery.refetch()}>
-                {t('common.redetect')}
-              </Button>
-            }
-          >
-            <SettingsCard>
-              {pathsQuery.isLoading ? (
-                <div className="flex items-center gap-2 px-4 py-3 text-caption text-fg-2">
-                  <Spinner /> {t('common.detecting')}
-                </div>
-              ) : (
-                Object.entries(paths?.homes ?? {}).map(([key, home]) => (
-                  <SettingsRow
-                    key={key}
-                    label={
-                      <span className="flex items-center gap-2">
-                        <AgentGlyph agent={AGENT_FOR_HOME[key] ?? key} />
-                        {home.label}
-                      </span>
-                    }
-                    description={<span className="font-mono text-3xs">{home.path}</span>}
-                  >
-                    {home.exists ? <Badge variant="success">{t('settings.paths.detected')}</Badge> : <Badge variant="outline">{t('settings.paths.notDetected')}</Badge>}
-                    <Button variant="outline" size="sm" disabled={!home.exists} onClick={() => void api.openPath(key).catch(() => undefined)}>
-                      <FolderOpen className="h-3.5 w-3.5" />
-                      {t('settings.paths.open')}
-                    </Button>
-                  </SettingsRow>
-                ))
-              )}
             </SettingsCard>
           </SettingsBlock>
 

@@ -242,10 +242,10 @@ export function SegmentedControl<T extends string>(props: {
 export function SettingsBlock(props: { title: string; description?: ReactNode; actions?: ReactNode; children: ReactNode }): ReactNode {
   return (
     <section className="space-y-2.5">
-      <div className="flex min-h-7 items-center gap-2">
-        <h2 className="text-section text-fg-1">{props.title}</h2>
+      <div className="flex min-h-7 flex-wrap items-center gap-x-2 gap-y-1">
+        <h2 className="shrink-0 text-section text-fg-1">{props.title}</h2>
         {props.description ? <span className="text-caption text-fg-3">{props.description}</span> : null}
-        {props.actions ? <div className="ml-auto flex items-center gap-2">{props.actions}</div> : null}
+        {props.actions ? <div className="ml-auto flex shrink-0 items-center gap-2">{props.actions}</div> : null}
       </div>
       {props.children}
     </section>
@@ -259,7 +259,7 @@ export function SettingsCard(props: { children: ReactNode; className?: string })
 export function SettingsRow(props: { label: ReactNode; description?: ReactNode; children?: ReactNode; className?: string }): ReactNode {
   return (
     <div className={cn('flex min-h-[44px] items-center gap-4 px-4 py-2.5', props.className)}>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="text-body text-fg-1">{props.label}</div>
         {props.description ? <div className="mt-0.5 text-caption text-fg-2">{props.description}</div> : null}
       </div>
