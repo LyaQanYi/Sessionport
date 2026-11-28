@@ -228,17 +228,29 @@ The migration page also lists the vendor's own import flows (ZCode ← Claude Co
 with a one-click "open app" and a "verify import" button that reads the target app's own store, plus a
 persistent backup & undo history panel at the bottom for one-click rollback across recent writes.
 
-| Session browser | Adapters | Settings |
-|---|---|---|
-| ![session browser](docs/desktop-sessions.png) | ![adapters](docs/desktop-agents.png) | ![settings](docs/desktop-settings.png) |
-
-| Reader | Migration |
+| Session browser (Dark) | Session browser (Light) |
 |---|---|
-| ![reader](docs/desktop-reader.png) | ![migration](docs/desktop-migrate.png) |
+| ![session browser (dark)](docs/desktop-sessions.png) | ![session browser (light)](docs/desktop-sessions-light.png) |
 
-| Command palette (⌘K) |
-|---|
-| ![command palette](docs/desktop-palette.png) |
+| Adapters (Dark) | Adapters (Light) |
+|---|---|
+| ![adapters (dark)](docs/desktop-agents.png) | ![adapters (light)](docs/desktop-agents-light.png) |
+
+| Settings (Dark) | Settings (Light) |
+|---|---|
+| ![settings (dark)](docs/desktop-settings.png) | ![settings (light)](docs/desktop-settings-light.png) |
+
+| Reader (Dark) | Reader (Light) |
+|---|---|
+| ![reader (dark)](docs/desktop-reader.png) | ![reader (light)](docs/desktop-reader-light.png) |
+
+| Migration (Dark) | Migration (Light) |
+|---|---|
+| ![migration (dark)](docs/desktop-migrate.png) | ![migration (light)](docs/desktop-migrate-light.png) |
+
+| Command palette · ⌘K (Dark) | Command palette · ⌘K (Light) |
+|---|---|
+| ![command palette (dark)](docs/desktop-palette.png) | ![command palette (light)](docs/desktop-palette-light.png) |
 
 _Sessions group by project or time; the sidebar lists only the harnesses you enabled (auto-detected
 from installed data directories, toggle them in Settings), and Settings stays pinned at the bottom.

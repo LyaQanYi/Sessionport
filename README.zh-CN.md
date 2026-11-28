@@ -199,17 +199,29 @@ IPC 是主进程里一份很小的类型化白名单，带 zod 校验。
 迁移页还会列出厂商自己的导入流程（ZCode ← Claude Code、Qoder ← WorkBuddy），
 带「一键打开 app」和「验证导入」按钮（直接读目标 app 自己的存储），并在底部提供常驻的备份与撤销历史面板，可对近期写入随时一键回滚。
 
-| 会话浏览 | 适配器 | 设置 |
-|---|---|---|
-| ![会话浏览](docs/desktop-sessions.png) | ![适配器](docs/desktop-agents.png) | ![设置](docs/desktop-settings.png) |
-
-| 阅读器 | 迁移 |
+| 会话浏览（深色） | 会话浏览（浅色） |
 |---|---|
-| ![阅读器](docs/desktop-reader.png) | ![迁移](docs/desktop-migrate.png) |
+| ![会话浏览（深色）](docs/desktop-sessions.png) | ![会话浏览（浅色）](docs/desktop-sessions-light.png) |
 
-| 命令面板（⌘K） |
-|---|
-| ![命令面板](docs/desktop-palette.png) |
+| 适配器（深色） | 适配器（浅色） |
+|---|---|
+| ![适配器（深色）](docs/desktop-agents.png) | ![适配器（浅色）](docs/desktop-agents-light.png) |
+
+| 设置（深色） | 设置（浅色） |
+|---|---|
+| ![设置（深色）](docs/desktop-settings.png) | ![设置（浅色）](docs/desktop-settings-light.png) |
+
+| 阅读器（深色） | 阅读器（浅色） |
+|---|---|
+| ![阅读器（深色）](docs/desktop-reader.png) | ![阅读器（浅色）](docs/desktop-reader-light.png) |
+
+| 迁移（深色） | 迁移（浅色） |
+|---|---|
+| ![迁移（深色）](docs/desktop-migrate.png) | ![迁移（浅色）](docs/desktop-migrate-light.png) |
+
+| 命令面板 · ⌘K（深色） | 命令面板 · ⌘K（浅色） |
+|---|---|
+| ![命令面板（深色）](docs/desktop-palette.png) | ![命令面板（浅色）](docs/desktop-palette-light.png) |
 
 _会话可以按项目或时间分组；侧栏只列出你启用的 harness（首次启动自动检测已安装的数据目录，
 可在设置里开关），设置固定在底部。浅色/深色主题跟随系统。UI 设计语言参考：
