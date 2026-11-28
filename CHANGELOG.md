@@ -3,7 +3,10 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are pre-1.0.
 
-## [Unreleased]
+## [0.1.14] — 2026-11-28
+
+npm: `sesport@0.1.14` (bins `sesport` / `sesp` / `sessionport`). Desktop dmg/zip attached to the
+`v0.1.14` GitHub release.
 
 ### Added
 
@@ -21,6 +24,37 @@ All notable changes to this project are documented here. Format loosely follows
     and `ANTIGRAVITY_CSRF_TOKEN` are present (with automatic workspace `project_id` lookup,
     `--handoff-only` / Desktop checkbox fallback, copy-prompt & Open Antigravity actions, explicit
     degradation losses, and `supportsInPlaceRewrite: false` to prevent `merge-back`).
+- **Separate read-only `claude-desktop` adapter.** Added `packages/adapters/claude-code/src/desktop.ts`
+  and registered `claude-desktop` in core, CLI, and Desktop to scan macOS/desktop `Claude-3p` /
+  `Claude` `claude-code-sessions` and `local-agent-mode-sessions` Cowork transcripts independently,
+  while excluding `claude-desktop*` entrypoints and Desktop-claimed sessions from `claude-code`.
+- **Unified multi-level expandable session tree and unlimited listing.** Added
+  `apps/desktop/src/renderer/src/sessionTree.ts` with cycle-safe forest construction,
+  ancestor-preserving search filtering, level-by-level expansion with indent guide lines and
+  nested-count pills in `SessionsPage.tsx`, and root-session counts across Sidebar, `AgentsPage`,
+  `CommandPalette`, and `MigratePage`. Desktop `listSessions()` now loads without truncation
+  (`limit: null, includeChildren: true`), and the CLI supports `--limit 0` for unlimited listing.
+
+### Changed
+
+- **Desktop UI redesign, official harness icons, unified Settings, and `Sessionport` branding.**
+  Redesigned `ReaderPage` (paired tool cards, safe markdown rendering, and search/filter bar),
+  redesigned `MigratePage` (searchable source session picker, clearer layout, state hygiene, and
+  tokens), polished macOS window chrome and overview pages, replaced custom harness icons with
+  official harness icons, removed duplicate session filter pills, merged Harness and data directories
+  into a unified **Harnesses & data directories** card in `SettingsPage`, and standardized
+  user-facing branding to `Sessionport`.
+
+### Fixed
+
+- **Codex session discovery and subagent mounting.** Added multi-frame-safe zstd decompression for
+  `.jsonl.zst`, `archived_sessions/` scanning, `<threadId>_<segId>` paginated rollout grouping with
+  `ordinal` deduplication, read-only `state_5.sqlite` enrichment, Guardian filtering, and spawned
+  subagent mounting (`bundle.children` and `includeChildren`).
+- **Cursor session discovery and subagent mounting.** Filtered empty draft/ghost `composerHeaders`
+  via `hasCursorDbContent`, added `agent-transcripts` and `chats/*/meta.json` fallback discovery
+  (`packages/adapters/cursor/src/transcript.ts`), and mounted subagent parent chains when
+  `includeChildren: true`.
 
 ## [0.1.13] — 2026-11-26
 
